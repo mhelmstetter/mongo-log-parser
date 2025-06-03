@@ -43,7 +43,6 @@ public class LogLineAccumulator {
     public void addExecution(long amt) {
         count++;
         total += amt;
-        System.out.println("count: " + count + ", total: " + total);
         if (amt > max) {
             max = amt;
         }
