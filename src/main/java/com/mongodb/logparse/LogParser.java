@@ -5,8 +5,10 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileReader;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -70,6 +72,16 @@ public class LogParser implements Callable<Integer> {
 	@Option(names = { "--debug" }, description = "Enable debug logging")
 	private boolean debug = false;
 
+	// NEW: Ignored lines analysis options
+	@Option(names = {"--ignored-output"}, description = "Output file for ignored lines analysis")
+	private String ignoredOutputFile;
+
+	@Option(names = {"--categorize-ignored"}, description = "Categorize and count ignored line types")
+	private boolean categorizeIgnored = false;
+
+	@Option(names = {"--sample-ignored-rate"}, description = "Sample rate for ignored lines (1-100, default 1)")
+	private int ignoredSampleRate = 1;
+
 	// Constants for operation types
 	public static final String FIND = "find";
 	public static final String FIND_AND_MODIFY = "findAndModify";
@@ -89,6 +101,12 @@ public class LogParser implements Callable<Integer> {
 
 	private Map<Namespace, Map<Set<String>, AtomicInteger>> shapesByNamespace = new HashMap<>();
 	private Accumulator shapeAccumulator = new Accumulator();
+
+	// NEW: Fields for ignored lines analysis
+	private Map<String, AtomicLong> ignoredCategories = new HashMap<>();
+	private List<String> sampledIgnoredLines = new ArrayList<>();
+	private AtomicLong ignoredLineCounter = new AtomicLong(0);
+	private PrintWriter ignoredWriter = null;
 
 	// Improved ignore list - more specific filtering
 	private static List<String> ignore = Arrays.asList("\"c\":\"NETWORK\"", "\"c\":\"ACCESS\"", "\"c\":\"CONNPOOL\"",
@@ -117,6 +135,9 @@ public class LogParser implements Callable<Integer> {
 		operationTypeStats.entrySet().stream()
 				.sorted((e1, e2) -> Long.compare(e2.getValue().get(), e1.getValue().get()))
 				.forEach(entry -> logger.info("  {}: {}", entry.getKey(), entry.getValue()));
+
+		// NEW: Report ignored lines analysis
+		reportIgnoredAnalysis();
 
 		if (csvOutputFile != null) {
 			logger.info("Writing CSV report to: {}", csvOutputFile);
@@ -153,6 +174,16 @@ public class LogParser implements Callable<Integer> {
 			in = new BufferedReader(new FileReader(file));
 		}
 
+		// NEW: Initialize ignored lines output if requested
+		if (ignoredOutputFile != null) {
+			try {
+				ignoredWriter = new PrintWriter(new FileWriter(ignoredOutputFile));
+			} catch (IOException e) {
+				logger.error("Failed to create ignored lines output file: {}", ignoredOutputFile, e);
+				ignoredOutputFile = null; // Disable if we can't create the file
+			}
+		}
+
 		int numThreads = Runtime.getRuntime().availableProcessors();
 		ExecutorService executor = Executors.newFixedThreadPool(numThreads);
 		CompletionService<ProcessingStats> completionService = new ExecutorCompletionService<>(executor);
@@ -175,6 +206,9 @@ public class LogParser implements Callable<Integer> {
 
 			if (ignoreLine(currentLine)) {
 				ignoredCount++;
+
+				// NEW: Process ignored line for analysis
+				processIgnoredLine(currentLine);
 
 				// Sample some ignored lines for analysis
 				if (debug && ignoredSamples < 10) {
@@ -244,6 +278,11 @@ public class LogParser implements Callable<Integer> {
 			reportParsedQueries();
 		}
 
+		// NEW: Close ignored lines writer
+		if (ignoredWriter != null) {
+			ignoredWriter.close();
+		}
+
 		in.close();
 		long end = System.currentTimeMillis();
 		long dur = (end - start);
@@ -307,6 +346,238 @@ public class LogParser implements Callable<Integer> {
 			}
 		}
 		return false;
+	}
+
+	// NEW: Method to categorize ignored lines
+	private String categorizeIgnoredLine(String line) {
+		// Network operations
+		if (line.contains("\"c\":\"NETWORK\"")) {
+			if (line.contains("Connection accepted")) {
+				return "NETWORK_CONNECTION_ACCEPTED";
+			} else if (line.contains("Connection ended")) {
+				return "NETWORK_CONNECTION_ENDED";
+			} else if (line.contains("client metadata")) {
+				return "NETWORK_CLIENT_METADATA";
+			} else if (line.contains("TLS handshake")) {
+				return "NETWORK_TLS_HANDSHAKE";
+			} else if (line.contains("Interrupted operation as its client disconnected")) {
+				return "NETWORK_CLIENT_DISCONNECTED";
+			} else if (line.contains("connectionCount")) {
+				return "NETWORK_CONNECTION_COUNT";
+			} else {
+				return "NETWORK_OTHER";
+			}
+		}
+		
+		// Access/Authentication operations
+		if (line.contains("\"c\":\"ACCESS\"")) {
+			if (line.contains("Successfully authenticated")) {
+				return "ACCESS_AUTH_SUCCESS";
+			} else if (line.contains("Auth metrics report")) {
+				return "ACCESS_AUTH_METRICS";
+			} else if (line.contains("Failed to authenticate")) {
+				return "ACCESS_AUTH_FAILED";
+			} else {
+				return "ACCESS_OTHER";
+			}
+		}
+		
+		// Storage operations
+		if (line.contains("\"c\":\"STORAGE\"")) {
+			if (line.contains("WiredTiger")) {
+				return "STORAGE_WIREDTIGER";
+			} else {
+				return "STORAGE_OTHER";
+			}
+		}
+		
+		// Control operations
+		if (line.contains("\"c\":\"CONTROL\"")) {
+			return "CONTROL_OPERATIONS";
+		}
+		
+		// Connection pool
+		if (line.contains("\"c\":\"CONNPOOL\"")) {
+			return "CONNPOOL_OPERATIONS";
+		}
+		
+		// Sharding operations
+		if (line.contains("\"c\":\"SHARDING\"")) {
+			return "SHARDING_OPERATIONS";
+		}
+		
+		// Administrative commands
+		if (line.contains("\"hello\":1") || line.contains("\"isMaster\":1")) {
+			return "ADMIN_HELLO_ISMASTER";
+		}
+		
+		if (line.contains("\"ping\":1")) {
+			return "ADMIN_PING";
+		}
+		
+		if (line.contains("\"serverStatus\":1")) {
+			return "ADMIN_SERVER_STATUS";
+		}
+		
+		if (line.contains("\"replSetHeartbeat\"")) {
+			return "REPLICATION_HEARTBEAT";
+		}
+		
+		if (line.contains("\"replSetGetStatus\":1")) {
+			return "REPLICATION_STATUS";
+		}
+		
+		// Profile operations
+		if (line.contains("\"profile\":")) {
+			return "PROFILING_OPERATIONS";
+		}
+		
+		// TTL Monitor
+		if (line.contains("\"ctx\":\"TTLMonitor\"")) {
+			return "TTL_MONITOR";
+		}
+		
+		// Session operations
+		if (line.contains("\"endSessions\"")) {
+			return "SESSION_END";
+		}
+		
+		// Database stats
+		if (line.contains("\"dbstats\":1") || line.contains("\"collStats\"")) {
+			return "DATABASE_STATS";
+		}
+		
+		// Index operations
+		if (line.contains("\"listIndexes\"")) {
+			return "INDEX_OPERATIONS";
+		}
+		
+		// Build info and parameters
+		if (line.contains("\"buildInfo\"") || line.contains("\"getParameter\"") || 
+			line.contains("\"getCmdLineOpts\"")) {
+			return "SYSTEM_INFO";
+		}
+		
+		// Log rotation
+		if (line.contains("\"logRotate\"")) {
+			return "LOG_ROTATION";
+		}
+		
+		// Default write concern
+		if (line.contains("\"getDefaultRWConcern\"")) {
+			return "WRITE_CONCERN_CONFIG";
+		}
+		
+		// List databases
+		if (line.contains("\"listDatabases\"")) {
+			return "DATABASE_LIST";
+		}
+		
+		// Non-JSON lines
+		if (!line.trim().startsWith("{")) {
+			return "NON_JSON";
+		}
+		
+		return "UNCATEGORIZED";
+	}
+
+	// NEW: Method to increment category counts
+	private void incrementIgnoredCategory(String category) {
+		synchronized (ignoredCategories) {
+			ignoredCategories.computeIfAbsent(category, k -> new AtomicLong(0)).incrementAndGet();
+		}
+	}
+
+	// NEW: Method to process ignored lines
+	private void processIgnoredLine(String line) {
+		if (categorizeIgnored) {
+			String category = categorizeIgnoredLine(line);
+			incrementIgnoredCategory(category);
+		}
+		
+		if (ignoredOutputFile != null) {
+			// Sample lines based on the sampling rate
+			long lineNumber = ignoredLineCounter.incrementAndGet();
+			if (lineNumber % ignoredSampleRate == 0) {
+				if (ignoredWriter != null) {
+					ignoredWriter.println(line);
+				}
+			}
+		}
+	}
+
+	// NEW: Method to report ignored lines analysis
+	private void reportIgnoredAnalysis() {
+		if (categorizeIgnored && !ignoredCategories.isEmpty()) {
+			logger.info("=== IGNORED LINES ANALYSIS ===");
+			
+			// Sort by count (descending)
+			ignoredCategories.entrySet().stream()
+				.sorted((e1, e2) -> Long.compare(e2.getValue().get(), e1.getValue().get()))
+				.forEach(entry -> {
+					String category = entry.getKey();
+					long count = entry.getValue().get();
+					double percentage = (count * 100.0) / ignoredCount;
+					logger.info("  {}: {} ({:.1f}%)", category, count, percentage);
+				});
+			
+			logger.info("Total ignored lines: {}", ignoredCount);
+			
+			// Identify potential issues
+			analyzeForIssues();
+		}
+		
+		if (ignoredOutputFile != null) {
+			logger.info("Ignored lines sample written to: {} (sampling rate: 1 in {})", 
+					   ignoredOutputFile, ignoredSampleRate);
+		}
+	}
+
+	// NEW: Method to analyze for potential issues
+	private void analyzeForIssues() {
+		logger.info("=== POTENTIAL ISSUES DETECTED ===");
+		
+		long totalIgnored = ignoredCount;
+		
+		// Check for excessive connections
+		long connectionAccepted = ignoredCategories.getOrDefault("NETWORK_CONNECTION_ACCEPTED", new AtomicLong(0)).get();
+		long connectionEnded = ignoredCategories.getOrDefault("NETWORK_CONNECTION_ENDED", new AtomicLong(0)).get();
+		
+		if (connectionAccepted > 1000) {
+			logger.warn("⚠️  HIGH CONNECTION ACTIVITY: {} connections accepted", connectionAccepted);
+		}
+		
+		if (Math.abs(connectionAccepted - connectionEnded) > connectionAccepted * 0.1) {
+			logger.warn("⚠️  CONNECTION IMBALANCE: {} accepted vs {} ended ({}% difference)", 
+					   connectionAccepted, connectionEnded, 
+					   Math.abs(connectionAccepted - connectionEnded) * 100 / Math.max(connectionAccepted, 1));
+		}
+		
+		// Check for client disconnections
+		long clientDisconnected = ignoredCategories.getOrDefault("NETWORK_CLIENT_DISCONNECTED", new AtomicLong(0)).get();
+		if (clientDisconnected > 100) {
+			logger.warn("⚠️  HIGH CLIENT DISCONNECTIONS: {} interrupted operations", clientDisconnected);
+		}
+		
+		// Check for authentication issues
+		long authFailed = ignoredCategories.getOrDefault("ACCESS_AUTH_FAILED", new AtomicLong(0)).get();
+		if (authFailed > 10) {
+			logger.warn("⚠️  AUTHENTICATION FAILURES: {} failed authentications", authFailed);
+		}
+		
+		// Check for excessive heartbeats
+		long heartbeats = ignoredCategories.getOrDefault("REPLICATION_HEARTBEAT", new AtomicLong(0)).get();
+		if (heartbeats > totalIgnored * 0.3) {
+			logger.warn("⚠️  EXCESSIVE REPLICATION HEARTBEATS: {} ({}% of ignored lines)", 
+					   heartbeats, heartbeats * 100 / totalIgnored);
+		}
+		
+		// Check for admin command spam
+		long adminPings = ignoredCategories.getOrDefault("ADMIN_PING", new AtomicLong(0)).get();
+		if (adminPings > totalIgnored * 0.2) {
+			logger.warn("⚠️  EXCESSIVE ADMIN PINGS: {} ({}% of ignored lines)", 
+					   adminPings, adminPings * 100 / totalIgnored);
+		}
 	}
 
 	public Accumulator getAccumulator() {
