@@ -35,7 +35,6 @@ public class Accumulator {
 
 	int count = 0;
 	protected synchronized void accumulate(SlowQuery slowQuery) {
-		System.out.println(++count);
 		accumulate(null, slowQuery.opType.getType(), slowQuery.ns, slowQuery.durationMillis, slowQuery.keysExamined,
 				slowQuery.docsExamined, slowQuery.nreturned, slowQuery.reslen, slowQuery.bytesRead);
 	}
