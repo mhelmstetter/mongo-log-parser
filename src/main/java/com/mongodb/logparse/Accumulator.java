@@ -12,9 +12,9 @@ public class Accumulator {
     private Map<AccumulatorKey, LogLineAccumulator> accumulators = new HashMap<AccumulatorKey, LogLineAccumulator>();
 
     private String[] headers = new String[] { 
-    	    "Namespace", "Operation", "Count", "ReslenMB", "ReadMB", 
-    	    "MinMs", "MaxMs", "AvgMs", "TotalSec", "AvgKeysEx", 
-    	    "AvgDocsEx", "AvgReturn", "ExRetRatio" 
+    	    "Namespace", "Operation", "Count", "MinMs", "MaxMs", "AvgMs", 
+    	    "P95Ms", "TotalSec", "AvgKeysEx", "AvgDocsEx", "KeysP95", 
+    	    "DocsP95", "TotalKeysK", "TotalDocsK", "AvgReturn", "ExRetRatio" 
     	};
 
     protected void accumulate(File file, String command, String dbName, String collName, Integer execTime) {

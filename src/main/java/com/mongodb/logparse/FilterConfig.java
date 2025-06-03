@@ -47,7 +47,6 @@ public class FilterConfig {
             "\"replSetGetStatus\":1",
             
             // System databases (usually internal)
-            "\"$db\":\"admin\"",
             "\"$db\":\"local\"", 
             "\"$db\":\"config\"",
             "\"ns\":\"local.oplog.rs\"",
