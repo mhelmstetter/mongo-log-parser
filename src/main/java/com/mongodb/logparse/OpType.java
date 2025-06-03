@@ -1,18 +1,17 @@
 package com.mongodb.logparse;
 
-
 public enum OpType {
     CMD(1, "command", true, false),
     QUERY(2, "find", true, true),
-    GETMORE(3, "getmore", true, false), // FIXME does this actually support query shape?
-    INSERT(4, "insert", false, false),  // FIXME do we want to compute a query shape for the object inserted?
+    GETMORE(3, "getmore", true, false),
+    INSERT(4, "insert", false, false),
     UPDATE(5, "update", true, true),
     UPDATE_W(6, "update_w", true, true),
     REMOVE(7, "remove", true, false),
-	AGGREGATE(8, "aggregate", true, true),
-	FIND_AND_MODIFY(9, "findAndModify", true, true),
-	DISTINCT(10, "distinct", true, true),
-	COUNT(10, "COUNT", true, true);
+    AGGREGATE(8, "aggregate", true, true),
+    FIND_AND_MODIFY(9, "findAndModify", true, true),
+    DISTINCT(10, "distinct", true, true),
+    COUNT(11, "COUNT", true, true);
 
     OpType(final int pCode, final String pOpType, final boolean pSupportsQueryShape, final boolean pSupportsExecStats) {
         this.code = pCode;
@@ -43,7 +42,7 @@ public enum OpType {
 
         if (lowerOpType.equals("command")) {
           return OpType.CMD;
-        } else if (lowerOpType.equals("query")) {
+        } else if (lowerOpType.equals("query") || lowerOpType.equals("find")) {
           return OpType.QUERY;
         } else if (lowerOpType.equals("getmore")) {
           return OpType.GETMORE;
@@ -51,12 +50,20 @@ public enum OpType {
           return OpType.INSERT;
         } else if (lowerOpType.equals("update")) {
           return OpType.UPDATE;
-        } else if (lowerOpType.equals("remove")) {
+        } else if (lowerOpType.equals("remove") || lowerOpType.equals("delete")) {
           return OpType.REMOVE;
+        } else if (lowerOpType.equals("aggregate")) {
+          return OpType.AGGREGATE;
+        } else if (lowerOpType.equals("findandmodify")) {
+          return OpType.FIND_AND_MODIFY;
+        } else if (lowerOpType.equals("distinct")) {
+          return OpType.DISTINCT;
+        } else if (lowerOpType.equals("count")) {
+          return OpType.COUNT;
         }
 
         return null;
-      }
+    }
 
     public static OpType findByCode(final int pCode) {
         switch(pCode) {
@@ -71,7 +78,17 @@ public enum OpType {
         case 5:
             return OpType.UPDATE;
         case 6:
+            return OpType.UPDATE_W;
+        case 7:
             return OpType.REMOVE;
+        case 8:
+            return OpType.AGGREGATE;
+        case 9:
+            return OpType.FIND_AND_MODIFY;
+        case 10:
+            return OpType.DISTINCT;
+        case 11:
+            return OpType.COUNT;
         default:
             throw new IllegalArgumentException("Unknown OpType: _code=" + pCode);
         }
@@ -82,9 +99,7 @@ public enum OpType {
 
         if (lowerOpType.equals("command")) {
             return OpType.CMD;
-        } else if (lowerOpType.equals("query")) {
-            return OpType.QUERY;
-        } else if (lowerOpType.equals("find")) {
+        } else if (lowerOpType.equals("query") || lowerOpType.equals("find")) {
             return OpType.QUERY;
         } else if (lowerOpType.equals("getmore")) {
             return OpType.GETMORE;
@@ -96,11 +111,18 @@ public enum OpType {
             } else if (opType.equals("COMMAND")) {
                 return OpType.UPDATE;
             } else {
-                throw new IllegalArgumentException("Unknown op opType: " +opType);
+                throw new IllegalArgumentException("Unknown op opType: " + opType);
             }
-            
-        } else if (lowerOpType.equals("remove")) {
+        } else if (lowerOpType.equals("remove") || lowerOpType.equals("delete")) {
             return OpType.REMOVE;
+        } else if (lowerOpType.equals("aggregate")) {
+            return OpType.AGGREGATE;
+        } else if (lowerOpType.equals("findandmodify")) {
+            return OpType.FIND_AND_MODIFY;
+        } else if (lowerOpType.equals("distinct")) {
+            return OpType.DISTINCT;
+        } else if (lowerOpType.equals("count")) {
+            return OpType.COUNT;
         }
 
         return null;
