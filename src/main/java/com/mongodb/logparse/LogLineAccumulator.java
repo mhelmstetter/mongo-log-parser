@@ -27,12 +27,10 @@ public class LogLineAccumulator {
     
     private long bytesRead = 0;
     
-    
     DescriptiveStatistics executionStats = new DescriptiveStatistics();
     
     DescriptiveStatistics keysExaminedStats = new DescriptiveStatistics();
     DescriptiveStatistics docsExaminedStats = new DescriptiveStatistics();
-    
     
     public LogLineAccumulator(File file, String command, Namespace namespace2) {
         this.namespace = namespace2;
@@ -71,7 +69,7 @@ public class LogLineAccumulator {
     }
     
     public long getAvgDocsExamined() {
-        return totalDocsExamined/count;
+        return count > 0 ? totalDocsExamined/count : 0;
     }
     
     public long getTotalDocsExamined() {
@@ -80,23 +78,25 @@ public class LogLineAccumulator {
     
     public String toString() {
         return String.format("%-65s %-20s %-10s %-10.1f %-10d %-10d %-10d %-10d %-10d %-10d %-12d %-10d %-10d", 
-        		namespace, operation, count, reslen/ONE_MB_DOUBLE, bytesRead/ONE_MB, min, max, total/count, total/1000,
-                totalKeysExamined/count, totalDocsExamined/count, 
-                //getKeysExaminedPercentile95(), getDocsExaminedPercentile95(), totalKeysExamined/1000.0, totalDocsExamined/1000.0, 
-                totalReturned/count, getScannedReturnRatio());
-        
+                namespace, operation, count, reslen/ONE_MB_DOUBLE, bytesRead/ONE_MB, min, max, 
+                count > 0 ? total/count : 0, total/1000,
+                count > 0 ? totalKeysExamined/count : 0, 
+                count > 0 ? totalDocsExamined/count : 0, 
+                count > 0 ? totalReturned/count : 0, 
+                getScannedReturnRatio());
     }
     
     public String toCsvString() {
-        return String.format("%s,%s,%d,%d,%d,%10d,%10.0f,%10d,%10d,%10d,%10.0f,%10.0f,%12.1f,%12.1f,%10d,%10d", namespace, operation, count, 
-                min, max, total/count, getPercentile95(), total/1000,
-                totalKeysExamined/count, totalDocsExamined/count, 
+        return String.format("%s,%s,%d,%d,%d,%d,%.0f,%d,%d,%d,%.0f,%.0f,%.1f,%.1f,%d,%d", 
+                namespace, operation, count, 
+                min, max, count > 0 ? total/count : 0, getPercentile95(), total/1000,
+                count > 0 ? totalKeysExamined/count : 0, 
+                count > 0 ? totalDocsExamined/count : 0, 
                 getKeysExaminedPercentile95(), getDocsExaminedPercentile95(), 
-                totalKeysExamined/1000.0, totalDocsExamined/1000.0, totalReturned/count, getScannedReturnRatio());
-        
+                totalKeysExamined/1000.0, totalDocsExamined/1000.0, 
+                count > 0 ? totalReturned/count : 0, 
+                getScannedReturnRatio());
     }
-    
-    
 
     public long getScannedReturnRatio() {
         if (totalReturned > 0) {
@@ -106,18 +106,26 @@ public class LogLineAccumulator {
     }
 
     public void addExamined(Long keysExamined, Long docsExamined) {
-        totalDocsExamined += docsExamined;
-        totalKeysExamined += keysExamined;
+        if (docsExamined != null) {
+            totalDocsExamined += docsExamined;
+        }
+        if (keysExamined != null) {
+            totalKeysExamined += keysExamined;
+        }
         //keysExaminedStats.addValue(keysExamined);
         //docsExaminedStats.addValue(docsExamined);
     }
     
     public void addReturned(Long nReturned) {
-        totalReturned += nReturned;
+        if (nReturned != null) {
+            totalReturned += nReturned;
+        }
     }
     
     public void addReslen(Long reslen) {
-        this.reslen += reslen;
+        if (reslen != null) {
+            this.reslen += reslen;
+        }
     }
 
     public long getCount() {
@@ -129,15 +137,16 @@ public class LogLineAccumulator {
     }
 
     public long getAvg() {
-        return total/count;
+        return count > 0 ? total/count : 0;
     }
 
     public long getAvgReturned() {
-        return totalReturned/count;
+        return count > 0 ? totalReturned/count : 0;
     }
 
-	public void addBytesRead(Long bytesRead) {
-		this.bytesRead += bytesRead; 
-	}
-
+    public void addBytesRead(Long bytesRead) {
+        if (bytesRead != null) {
+            this.bytesRead += bytesRead;
+        }
+    }
 }

@@ -21,6 +21,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.ZipInputStream;
 
@@ -34,298 +35,330 @@ import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
-import java.util.concurrent.atomic.AtomicLong;
-
-
-
 /**
- * MongoDB Log Parser - Unified class combining LogParser interface, 
+ * MongoDB Log Parser - Unified class combining LogParser interface,
  * AbstractLogParser, LogParserApp, and LogParserJson functionality
  */
-@Command(name = "logParser", mixinStandardHelpOptions = true, version = "1.0", 
-         description = "Parse MongoDB log files and generate performance reports")
+@Command(name = "logParser", mixinStandardHelpOptions = true, version = "1.0", description = "Parse MongoDB log files and generate performance reports")
 public class LogParser implements Callable<Integer> {
 
-    static final Logger logger = LoggerFactory.getLogger(LogParser.class);
-    
-  //Add these fields to LogParser class
-    private AtomicLong totalParseErrors = new AtomicLong(0);
-    private AtomicLong totalNoAttr = new AtomicLong(0);
-    private AtomicLong totalNoCommand = new AtomicLong(0);
-    private AtomicLong totalNoNs = new AtomicLong(0);
-    private AtomicLong totalFoundOps = new AtomicLong(0);
+	static final Logger logger = LoggerFactory.getLogger(LogParser.class);
 
-    @Option(names = {"-f", "--files"}, description = "MongoDB log file(s)", required = true)
-    private String[] fileNames;
+	// Add these fields to LogParser class
+	private AtomicLong totalParseErrors = new AtomicLong(0);
+	private AtomicLong totalNoAttr = new AtomicLong(0);
+	private AtomicLong totalNoCommand = new AtomicLong(0);
+	private AtomicLong totalNoNs = new AtomicLong(0);
+	private AtomicLong totalFoundOps = new AtomicLong(0);
+	private Map<String, AtomicLong> operationTypeStats = new HashMap<>();
 
-    @Option(names = {"-q", "--queries"}, description = "Parse queries")
-    private boolean parseQueries = false;
+	@Option(names = { "-f", "--files" }, description = "MongoDB log file(s)", required = true)
+	private String[] fileNames;
 
-    @Option(names = {"--replay"}, description = "Replay operations")
-    private boolean replay = false;
+	@Option(names = { "-q", "--queries" }, description = "Parse queries")
+	private boolean parseQueries = false;
 
-    @Option(names = {"--uri"}, description = "MongoDB connection string URI")
-    private String uri;
+	@Option(names = { "--replay" }, description = "Replay operations")
+	private boolean replay = false;
 
-    @Option(names = {"-c", "--csv"}, description = "CSV output file")
-    private String csvOutputFile;
+	@Option(names = { "--uri" }, description = "MongoDB connection string URI")
+	private String uri;
 
-    // Constants for operation types
-    public static final String FIND = "find";
-    public static final String FIND_AND_MODIFY = "findAndModify";
-    public static final String UPDATE = "update";
-    public static final String INSERT = "insert";
-    public static final String DELETE = "delete";
-    public static final String DELETE_W = "delete_w";
-    public static final String COUNT = "count";
-    public static final String UPDATE_W = "update_w";
-    public static final String GETMORE = "getMore";
+	@Option(names = { "-c", "--csv" }, description = "CSV output file")
+	private String csvOutputFile;
 
-    private String currentLine = null;
-    private Accumulator accumulator;
-    private int unmatchedCount = 0;
-    private int ignoredCount = 0;
-    private int processedCount = 0;
+	@Option(names = { "--debug" }, description = "Enable debug logging")
+	private boolean debug = false;
 
-    private Map<Namespace, Map<Set<String>, AtomicInteger>> shapesByNamespace = new HashMap<>();
-    private Accumulator shapeAccumulator = new Accumulator();
+	// Constants for operation types
+	public static final String FIND = "find";
+	public static final String FIND_AND_MODIFY = "findAndModify";
+	public static final String UPDATE = "update";
+	public static final String INSERT = "insert";
+	public static final String DELETE = "delete";
+	public static final String DELETE_W = "delete_w";
+	public static final String COUNT = "count";
+	public static final String UPDATE_W = "update_w";
+	public static final String GETMORE = "getMore";
 
-    private static List<String> ignore = Arrays.asList("\"c\":\"NETWORK\"", "\"c\":\"ACCESS\"", 
-            "\"c\":\"CONNPOOL\"", "\"c\":\"STORAGE\"", "\"c\":\"SHARDING\"", "\"c\":\"CONTROL\"",
-            "\"profile\":", "\"killCursors\":", "\"hello\":1", "\"isMaster\":1", "\"ping\":1", 
-            "\"saslContinue\":1", "\"replSetHeartbeat\":\"", "\"serverStatus\":1", "\"replSetGetStatus\":1", 
-            "\"buildInfo\"", "\"getParameter\":", "\"getCmdLineOpts\":1", "\"logRotate\":\"", 
-            "\"getDefaultRWConcern\":1", "\"listDatabases\":1", "\"endSessions\":", "\"ctx\":\"TTLMonitor\"",
-            "\"$db\":\"admin\"", "\"$db\":\"local\"", "\"$db\":\"config\"", "\"ns\":\"local.clustermanager\"", 
-            "\"dbstats\":1", "\"listIndexes\":\"", "\"collStats\":\"");
+	private String currentLine = null;
+	private Accumulator accumulator;
+	private int unmatchedCount = 0;
+	private int ignoredCount = 0;
+	private int processedCount = 0;
 
-    public LogParser() {
-        accumulator = new Accumulator();
-    }
+	private Map<Namespace, Map<Set<String>, AtomicInteger>> shapesByNamespace = new HashMap<>();
+	private Accumulator shapeAccumulator = new Accumulator();
 
-    @Override
-    public Integer call() throws Exception {
-        logger.info("Starting MongoDB log parsing with {} processors", Runtime.getRuntime().availableProcessors());
-        
-        read();
-        
-        logger.info("Parsing complete. Total processed: {}, Ignored: {}", 
-                   processedCount, ignoredCount);
-        
-        if (csvOutputFile != null) {
-            logger.info("Writing CSV report to: {}", csvOutputFile);
-            reportCsv();
-        } else {
-            report();
-        }
-        
-        return 0;
-    }
+	// Improved ignore list - more specific filtering
+	private static List<String> ignore = Arrays.asList("\"c\":\"NETWORK\"", "\"c\":\"ACCESS\"", "\"c\":\"CONNPOOL\"",
+			"\"c\":\"STORAGE\"", "\"c\":\"SHARDING\"", "\"c\":\"CONTROL\"", "\"hello\":1", "\"isMaster\":1",
+			"\"ping\":1", "\"saslContinue\":1", "\"replSetHeartbeat\":\"", "\"serverStatus\":1",
+			"\"replSetGetStatus\":1", "\"buildInfo\"", "\"getParameter\":", "\"getCmdLineOpts\":1", "\"logRotate\":\"",
+			"\"getDefaultRWConcern\":1", "\"listDatabases\":1", "\"endSessions\":", "\"ctx\":\"TTLMonitor\"",
+			"\"ns\":\"local.clustermanager\"", "\"ns\":\"local.oplog.rs\"", "\"ns\":\"config.system.sessions\"",
+			"\"ns\":\"config.mongos\"", "\"dbstats\":1", "\"listIndexes\":\"", "\"collStats\":\"", "\"profile\":0",
+			"\"profile\":1", "\"profile\":2", "\"ns\":\"local.oplog.rs\"", "replSetUpdatePosition");
 
-    public void read() throws IOException, ExecutionException, InterruptedException {
-        for (String fileName : fileNames) {
-            File f = new File(fileName);
-            read(f);
-        }
-    }
-    
-    public void read(File file) throws IOException, ExecutionException, InterruptedException {
-        String guess = MimeTypes.guessContentTypeFromName(file.getName());
-        logger.info("MIME type guess: {}", guess); // Changed from debug to info
+	public LogParser() {
+		accumulator = new Accumulator();
+	}
 
-        BufferedReader in = null;
+	@Override
+	public Integer call() throws Exception {
+		logger.info("Starting MongoDB log parsing with {} processors", Runtime.getRuntime().availableProcessors());
 
-        if (guess != null && guess.equals(MimeTypes.GZIP)) {
-            FileInputStream fis = new FileInputStream(file);
-            GZIPInputStream gzis = new GZIPInputStream(fis);
-            in = new BufferedReader(new InputStreamReader(gzis));
-        } else if (guess != null && guess.equals(MimeTypes.ZIP)) {
-            FileInputStream fis = new FileInputStream(file);
-            ZipInputStream zis = new ZipInputStream(fis);
-            in = new BufferedReader(new InputStreamReader(zis));
-        } else {
-            in = new BufferedReader(new FileReader(file));
-        }
+		read();
 
-        int numThreads = Runtime.getRuntime().availableProcessors();
-        ExecutorService executor = Executors.newFixedThreadPool(numThreads);
-        CompletionService<ProcessingStats> completionService = new ExecutorCompletionService<>(executor);
+		logger.info("Parsing complete. Total processed: {}, Ignored: {}", processedCount, ignoredCount);
 
-        unmatchedCount = 0;
-        ignoredCount = 0;
-        processedCount = 0;
-        int lineNum = 0;
-        int submittedTasks = 0;
-        long start = System.currentTimeMillis();
-        List<String> lines = new ArrayList<>();
+		// Report operation type statistics
+		logger.info("Operation type breakdown:");
+		operationTypeStats.entrySet().stream()
+				.sorted((e1, e2) -> Long.compare(e2.getValue().get(), e1.getValue().get()))
+				.forEach(entry -> logger.info("  {}: {}", entry.getKey(), entry.getValue()));
 
-        logger.info("Processing file: {}", file.getName());
+		if (csvOutputFile != null) {
+			logger.info("Writing CSV report to: {}", csvOutputFile);
+			reportCsv();
+		} else {
+			report();
+		}
 
-        while ((currentLine = in.readLine()) != null) {
-            lineNum++;
-            
-            if (ignoreLine(currentLine)) {
-                ignoredCount++;
-                continue;
-            }
+		return 0;
+	}
 
-            lines.add(currentLine);
-            processedCount++;
+	public void read() throws IOException, ExecutionException, InterruptedException {
+		for (String fileName : fileNames) {
+			File f = new File(fileName);
+			read(f);
+		}
+	}
 
-            if (lines.size() >= 25000) {
-                // Submit the chunk for processing
-                completionService.submit(new LogParserTask(new ArrayList<>(lines), file, accumulator));
-                submittedTasks++;
-                lines.clear();
-            }
+	public void read(File file) throws IOException, ExecutionException, InterruptedException {
+		String guess = MimeTypes.guessContentTypeFromName(file.getName());
+		logger.info("MIME type guess: {}", guess);
 
-            if (lineNum % 50000 == 0) {
-                logger.info("Read {} lines (ignored: {}, queued for processing: {})", lineNum, ignoredCount, processedCount);
-            }
-        }
+		BufferedReader in = null;
 
-        // Submit the last chunk if there are remaining lines
-        if (!lines.isEmpty()) {
-            completionService.submit(new LogParserTask(new ArrayList<>(lines), file, accumulator));
-            submittedTasks++;
-        }
+		if (guess != null && guess.equals(MimeTypes.GZIP)) {
+			FileInputStream fis = new FileInputStream(file);
+			GZIPInputStream gzis = new GZIPInputStream(fis);
+			in = new BufferedReader(new InputStreamReader(gzis));
+		} else if (guess != null && guess.equals(MimeTypes.ZIP)) {
+			FileInputStream fis = new FileInputStream(file);
+			ZipInputStream zis = new ZipInputStream(fis);
+			in = new BufferedReader(new InputStreamReader(zis));
+		} else {
+			in = new BufferedReader(new FileReader(file));
+		}
 
-        // IMPORTANT: Wait for all tasks to complete and collect their results
-        logger.info("Waiting for {} tasks to complete...", submittedTasks);
-        for (int i = 0; i < submittedTasks; i++) {
-            try {
-                ProcessingStats stats = completionService.take().get();
-                totalParseErrors.addAndGet(stats.parseErrors);
-                totalNoAttr.addAndGet(stats.noAttr);
-                totalNoCommand.addAndGet(stats.noCommand);
-                totalNoNs.addAndGet(stats.noNs);
-                totalFoundOps.addAndGet(stats.foundOps);
-                
-                if (i % 10 == 0 || i == submittedTasks - 1) {
-                    logger.info("Completed {}/{} tasks", i + 1, submittedTasks);
-                }
-            } catch (ExecutionException e) {
-                logger.error("Task execution failed", e);
-            }
-        }
+		int numThreads = Runtime.getRuntime().availableProcessors();
+		ExecutorService executor = Executors.newFixedThreadPool(numThreads);
+		CompletionService<ProcessingStats> completionService = new ExecutorCompletionService<>(executor);
 
-        // Shutdown the executor
-        executor.shutdown();
-        try {
-            if (!executor.awaitTermination(60, TimeUnit.SECONDS)) {
-                logger.warn("Executor did not terminate gracefully");
-                executor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            logger.warn("Executor interrupted");
-            Thread.currentThread().interrupt();
-        }
+		unmatchedCount = 0;
+		ignoredCount = 0;
+		processedCount = 0;
+		int lineNum = 0;
+		int submittedTasks = 0;
+		long start = System.currentTimeMillis();
+		List<String> lines = new ArrayList<>();
 
-        if (parseQueries) {
-            reportParsedQueries();
-        }
+		logger.info("Processing file: {}", file.getName());
 
-        in.close();
-        long end = System.currentTimeMillis();
-        long dur = (end - start);
-        
-        // Enhanced logging with detailed statistics
-        logger.info("File processing complete - Duration: {}ms", dur);
-        logger.info("Lines read: {}, Ignored: {}, Processed: {}", lineNum, ignoredCount, processedCount);
-        logger.info("Parse errors: {}, No attr: {}, No command: {}, No namespace: {}", 
-                   totalParseErrors.get(), totalNoAttr.get(), totalNoCommand.get(), totalNoNs.get());
-        logger.info("Successfully parsed operations: {}", totalFoundOps.get());
-        
-        if (totalFoundOps.get() == 0) {
-            logger.warn("WARNING: No operations were successfully parsed!");
-            logger.warn("This might indicate:");
-            logger.warn("  - Wrong log format");
-            logger.warn("  - All operations are being filtered out");
-            logger.warn("  - JSON parsing issues");
-        }
-    }
+		// Add sampling of ignored lines for analysis
+		int ignoredSamples = 0;
 
-    static Long getMetric(JSONObject attr, String key) {
-        if (attr.has(key)) {
-            return Long.valueOf(attr.getInt(key));
-        }
-        return null;
-    }
+		while ((currentLine = in.readLine()) != null) {
+			lineNum++;
 
-    private void reportParsedQueries() {
-        for (Namespace namespace : shapesByNamespace.keySet()) {
-            Map<Set<String>, AtomicInteger> shapeCounter = shapesByNamespace.get(namespace);
+			if (ignoreLine(currentLine)) {
+				ignoredCount++;
 
-            for (Map.Entry<Set<String>, AtomicInteger> entry : shapeCounter.entrySet()) {
-                Set<String> key = entry.getKey();
-                AtomicInteger value = entry.getValue();
-                System.out.println(namespace + "|" + key + "|" + value);
-            }
-        }
-        System.out.println("------------------\n");
-        shapeAccumulator.report();
-        System.out.println("------------------\n");
-    }
+				// Sample some ignored lines for analysis
+				if (debug && ignoredSamples < 10) {
+					logger.info("IGNORED LINE SAMPLE {}: {}", ignoredSamples + 1,
+							currentLine.substring(0, Math.min(300, currentLine.length())));
+					ignoredSamples++;
+				}
+				continue;
+			}
 
-    private static boolean ignoreLine(String line) {
-        for (String keyword : ignore) {
-            if (line.contains(keyword)) {
-                return true;
-            }
-        }
-        return false;
-    }
+			lines.add(currentLine);
+			processedCount++;
 
-    public Accumulator getAccumulator() {
-        return accumulator;
-    }
+			if (lines.size() >= 25000) {
+				// Submit the chunk for processing
+				completionService.submit(
+						new LogParserTask(new ArrayList<>(lines), file, accumulator, operationTypeStats, debug));
+				submittedTasks++;
+				lines.clear();
+			}
 
-    public void report() {
-        accumulator.report();
-    }
-    
-    public void reportCsv() throws FileNotFoundException {
-        accumulator.reportCsv(csvOutputFile);
-    }
+			if (lineNum % 50000 == 0) {
+				logger.info("Read {} lines (ignored: {}, queued for processing: {})", lineNum, ignoredCount,
+						processedCount);
+			}
+		}
 
-    public int getUnmatchedCount() {
-        return unmatchedCount;
-    }
+		// Submit the last chunk if there are remaining lines
+		if (!lines.isEmpty()) {
+			completionService
+					.submit(new LogParserTask(new ArrayList<>(lines), file, accumulator, operationTypeStats, debug));
+			submittedTasks++;
+		}
 
-    public boolean isParseQueries() {
-        return parseQueries;
-    }
+		// IMPORTANT: Wait for all tasks to complete and collect their results
+		logger.info("Waiting for {} tasks to complete...", submittedTasks);
+		for (int i = 0; i < submittedTasks; i++) {
+			try {
+				ProcessingStats stats = completionService.take().get();
+				totalParseErrors.addAndGet(stats.parseErrors);
+				totalNoAttr.addAndGet(stats.noAttr);
+				totalNoCommand.addAndGet(stats.noCommand);
+				totalNoNs.addAndGet(stats.noNs);
+				totalFoundOps.addAndGet(stats.foundOps);
 
-    public void setParseQueries(boolean parseQueries) {
-        this.parseQueries = parseQueries;
-    }
+				if (i % 10 == 0 || i == submittedTasks - 1) {
+					logger.info("Completed {}/{} tasks", i + 1, submittedTasks);
+				}
+			} catch (ExecutionException e) {
+				logger.error("Task execution failed", e);
+			}
+		}
 
-    public boolean isReplay() {
-        return replay;
-    }
+		// Shutdown the executor
+		executor.shutdown();
+		try {
+			if (!executor.awaitTermination(60, TimeUnit.SECONDS)) {
+				logger.warn("Executor did not terminate gracefully");
+				executor.shutdownNow();
+			}
+		} catch (InterruptedException e) {
+			logger.warn("Executor interrupted");
+			Thread.currentThread().interrupt();
+		}
 
-    public void setReplay(boolean replay) {
-        this.replay = replay;
-    }
+		if (parseQueries) {
+			reportParsedQueries();
+		}
 
-    public String getUri() {
-        return uri;
-    }
+		in.close();
+		long end = System.currentTimeMillis();
+		long dur = (end - start);
 
-    public void setUri(String uri) {
-        this.uri = uri;
-    }
+		// Enhanced logging with detailed statistics
+		logger.info("File processing complete - Duration: {}ms", dur);
+		logger.info("Lines read: {}, Ignored: {}, Processed: {}", lineNum, ignoredCount, processedCount);
+		logger.info("Parse errors: {}, No attr: {}, No command: {}, No namespace: {}", totalParseErrors.get(),
+				totalNoAttr.get(), totalNoCommand.get(), totalNoNs.get());
+		logger.info("Successfully parsed operations: {}", totalFoundOps.get());
 
-    public String[] getFileNames() {
-        return fileNames;
-    }
+		if (totalFoundOps.get() == 0) {
+			logger.warn("WARNING: No operations were successfully parsed!");
+			logger.warn("This might indicate:");
+			logger.warn("  - Wrong log format");
+			logger.warn("  - All operations are being filtered out");
+			logger.warn("  - JSON parsing issues");
+		}
+	}
 
-    public void setFileNames(String[] fileNames) {
-        this.fileNames = fileNames;
-    }
+	static Long getMetric(JSONObject attr, String key) {
+		if (attr.has(key)) {
+			return Long.valueOf(attr.getInt(key));
+		}
+		return null;
+	}
 
-    public static void main(String[] args) {
-        int exitCode = new CommandLine(new LogParser()).execute(args);
-        System.exit(exitCode);
-    }
+	private void reportParsedQueries() {
+		for (Namespace namespace : shapesByNamespace.keySet()) {
+			Map<Set<String>, AtomicInteger> shapeCounter = shapesByNamespace.get(namespace);
+
+			for (Map.Entry<Set<String>, AtomicInteger> entry : shapeCounter.entrySet()) {
+				Set<String> key = entry.getKey();
+				AtomicInteger value = entry.getValue();
+				System.out.println(namespace + "|" + key + "|" + value);
+			}
+		}
+		System.out.println("------------------\n");
+		shapeAccumulator.report();
+		System.out.println("------------------\n");
+	}
+
+	// Improved ignoreLine method to be more selective
+	private static boolean ignoreLine(String line) {
+		// Don't ignore lines that don't look like JSON at all
+		if (!line.trim().startsWith("{")) {
+			return true;
+		}
+
+		// Don't ignore lines that contain our target operations
+		if (line.contains("\"find\":") || line.contains("\"aggregate\":") || line.contains("\"update\":")
+				|| line.contains("\"insert\":") || line.contains("\"delete\":") || line.contains("\"findAndModify\":")
+				|| line.contains("\"getMore\":") || line.contains("\"count\":") || line.contains("\"distinct\":")) {
+			return false;  // Always process these
+		}
+
+		// Apply the ignore list
+		for (String keyword : ignore) {
+			if (line.contains(keyword)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	public Accumulator getAccumulator() {
+		return accumulator;
+	}
+
+	public void report() {
+		accumulator.report();
+	}
+
+	public void reportCsv() throws FileNotFoundException {
+		accumulator.reportCsv(csvOutputFile);
+	}
+
+	public int getUnmatchedCount() {
+		return unmatchedCount;
+	}
+
+	public boolean isParseQueries() {
+		return parseQueries;
+	}
+
+	public void setParseQueries(boolean parseQueries) {
+		this.parseQueries = parseQueries;
+	}
+
+	public boolean isReplay() {
+		return replay;
+	}
+
+	public void setReplay(boolean replay) {
+		this.replay = replay;
+	}
+
+	public String getUri() {
+		return uri;
+	}
+
+	public void setUri(String uri) {
+		this.uri = uri;
+	}
+
+	public String[] getFileNames() {
+		return fileNames;
+	}
+
+	public void setFileNames(String[] fileNames) {
+		this.fileNames = fileNames;
+	}
+
+	public static void main(String[] args) {
+		int exitCode = new CommandLine(new LogParser()).execute(args);
+		System.exit(exitCode);
+	}
 }

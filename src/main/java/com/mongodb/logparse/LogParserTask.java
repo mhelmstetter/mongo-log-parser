@@ -1,22 +1,29 @@
 package com.mongodb.logparse;
 
 import java.io.File;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.json.JSONException;
 import org.json.JSONObject;
 
-// Replace the LogParserTask class with this improved version:
 class LogParserTask implements Callable<ProcessingStats> {
     private List<String> linesChunk;
     private final Accumulator accumulator;
     private final File file;
+    private final Map<String, AtomicLong> operationTypeStats;
+    private final boolean debug;
 
-    public LogParserTask(List<String> linesChunk, File file, Accumulator accumulator) {
+    public LogParserTask(List<String> linesChunk, File file, Accumulator accumulator, 
+                        Map<String, AtomicLong> operationTypeStats, boolean debug) {
         this.linesChunk = linesChunk;
         this.file = file;
         this.accumulator = accumulator;
+        this.operationTypeStats = operationTypeStats;
+        this.debug = debug;
     }
 
     @Override
@@ -26,6 +33,7 @@ class LogParserTask implements Callable<ProcessingStats> {
         long localNoCommand = 0;
         long localNoNs = 0;
         long localFoundOps = 0;
+        int debugCount = 0;
 
         for (String currentLine : linesChunk) {
             JSONObject jo = null;
@@ -35,7 +43,7 @@ class LogParserTask implements Callable<ProcessingStats> {
                 if (currentLine.length() > 0) {
                     localParseErrors++;
                     // Log first few parse errors for debugging
-                    if (localParseErrors <= 3) {
+                    if (debug && localParseErrors <= 3) {
                         LogParser.logger.warn("Parse error in thread {}: {}", 
                                    Thread.currentThread().getName(), 
                                    currentLine.substring(0, Math.min(200, currentLine.length())));
@@ -50,7 +58,7 @@ class LogParserTask implements Callable<ProcessingStats> {
             } else {
                 localNoAttr++;
                 // Log sample of non-attr entries
-                if (localNoAttr <= 3) {
+                if (debug && localNoAttr <= 3) {
                     LogParser.logger.info("No 'attr' field (thread {}): {}", 
                                Thread.currentThread().getName(),
                                currentLine.substring(0, Math.min(300, currentLine.length())));
@@ -59,14 +67,17 @@ class LogParserTask implements Callable<ProcessingStats> {
             }
             
             Namespace ns = null;
+            SlowQuery slowQuery = new SlowQuery();
+            
+            // Handle different log entry types
             if (attr.has("command")) {
-                SlowQuery slowQuery = new SlowQuery();
+                // This is a COMMAND type log entry
                 if (attr.has("ns")) {
                     ns = new Namespace(attr.getString("ns"));
                     slowQuery.ns = ns;
                 } else {
                     localNoNs++;
-                    if (localNoNs <= 3) {
+                    if (debug && localNoNs <= 3) {
                         LogParser.logger.info("No 'ns' field in command (thread {}): {}", 
                                    Thread.currentThread().getName(),
                                    attr.toString().substring(0, Math.min(200, attr.toString().length())));
@@ -89,44 +100,152 @@ class LogParserTask implements Callable<ProcessingStats> {
                 slowQuery.opType = null;
                 JSONObject command = attr.getJSONObject("command");
                 
-                // Enhanced operation type detection with logging
+                // Enhanced operation type detection
                 if (command.has("find")) {
-                    String find = command.getString("find");
-                    slowQuery.opType = OpType.QUERY;
+                    Object findVal = command.get("find");
+                    if (findVal instanceof String) {
+                        String find = (String) findVal;
+                        slowQuery.opType = OpType.QUERY;
+                        ns.setCollectionName(find);
+                    } else {
+                        slowQuery.opType = OpType.QUERY;
+                    }
+                    incrementOperationStat("find");
                 } else if (command.has("aggregate")) {
                     slowQuery.opType = OpType.AGGREGATE;
+                    Object aggregateVal = command.get("aggregate");
+                    if (aggregateVal instanceof String) {
+                        String coll = (String) aggregateVal;
+                        if (!coll.equals("1")) {  // aggregate: 1 means database-level aggregation
+                            ns.setCollectionName(coll);
+                        }
+                    }
+                    // If aggregate value is not a string (e.g., array), we'll use the ns from the log
+                    incrementOperationStat("aggregate");
                 } else if (command.has("findAndModify")) {
                     slowQuery.opType = OpType.FIND_AND_MODIFY;
-                    ns.setCollectionName(command.getString("findAndModify"));
+                    Object findAndModifyVal = command.get("findAndModify");
+                    if (findAndModifyVal instanceof String) {
+                        ns.setCollectionName((String) findAndModifyVal);
+                    }
+                    incrementOperationStat("findAndModify");
                 } else if (command.has("update")) {
                     slowQuery.opType = OpType.UPDATE;
-                    ns.setCollectionName(command.getString("update"));
+                    Object updateVal = command.get("update");
+                    if (updateVal instanceof String) {
+                        ns.setCollectionName((String) updateVal);
+                    }
+                    incrementOperationStat("update");
                 } else if (command.has("insert")) {
                     slowQuery.opType = OpType.INSERT;
-                    ns.setCollectionName(command.getString("insert"));
+                    Object insertVal = command.get("insert");
+                    if (insertVal instanceof String) {
+                        ns.setCollectionName((String) insertVal);
+                    }
+                    incrementOperationStat("insert");
                 } else if (command.has("delete")) {
                     slowQuery.opType = OpType.REMOVE;
-                    ns.setCollectionName(command.getString("delete"));
+                    Object deleteVal = command.get("delete");
+                    if (deleteVal instanceof String) {
+                        ns.setCollectionName((String) deleteVal);
+                    }
+                    incrementOperationStat("delete");
                 } else if (command.has("getMore")) {
                     slowQuery.opType = OpType.GETMORE;
                     if (command.has("collection")) {
-                        ns.setCollectionName(command.getString("collection"));
+                        Object collectionVal = command.get("collection");
+                        if (collectionVal instanceof String) {
+                            ns.setCollectionName((String) collectionVal);
+                        }
                     }
-                } else if (command.has("u")) {
-                    slowQuery.opType = OpType.UPDATE_W;
-                } else if (command.has("distinct")) {
-                    slowQuery.opType = OpType.DISTINCT;
+                    incrementOperationStat("getMore");
                 } else if (command.has("count")) {
                     slowQuery.opType = OpType.COUNT;
+                    // Handle both count: "collection" and count: 1 formats
+                    Object countVal = command.get("count");
+                    if (countVal instanceof String) {
+                        ns.setCollectionName((String) countVal);
+                    }
+                    incrementOperationStat("count");
+                } else if (command.has("distinct")) {
+                    slowQuery.opType = OpType.DISTINCT;
+                    Object distinctVal = command.get("distinct");
+                    if (distinctVal instanceof String) {
+                        ns.setCollectionName((String) distinctVal);
+                    }
+                    incrementOperationStat("distinct");
+                } else if (command.has("remove")) {  // Legacy format
+                    slowQuery.opType = OpType.REMOVE;
+                    incrementOperationStat("remove");
+                } else if (command.has("u")) {  // Write operations format
+                    slowQuery.opType = OpType.UPDATE_W;
+                    incrementOperationStat("update_w");
+                } else if (command.has("d")) {  // Delete operations format  
+                    slowQuery.opType = OpType.REMOVE;
+                    incrementOperationStat("delete_w");
+                } else if (command.has("i")) {  // Insert operations format
+                    slowQuery.opType = OpType.INSERT;
+                    incrementOperationStat("insert_w");
                 } else {
-                    // Log unknown commands for the first few occurrences
-                    if (localFoundOps == 0) {
-                        LogParser.logger.info("Unknown command type (thread {}): {}", 
-                                   Thread.currentThread().getName(),
-                                   command.toString().substring(0, Math.min(300, command.toString().length())));
+                    // Check for MongoDB shard operations first
+                    boolean foundOperation = false;
+                    
+                    if (command.has("_shardsvrMoveRange")) {
+                        slowQuery.opType = OpType.CMD;
+                        incrementOperationStat("shardMigration");
+                        foundOperation = true;
+                    } else if (command.has("_shardsvrCloneCatalogData")) {
+                        slowQuery.opType = OpType.CMD;
+                        incrementOperationStat("shardClone");
+                        foundOperation = true;
+                    } else if (command.has("_shardsvrCommitChunkMigration")) {
+                        slowQuery.opType = OpType.CMD;
+                        incrementOperationStat("shardCommit");
+                        foundOperation = true;
+                    } else {
+                        // Check for other common operations that might be missed
+                        Iterator<String> keys = command.keys();
+                        while (keys.hasNext()) {
+                            String key = keys.next();
+                            if (key.equals("drop") || key.equals("dropDatabase") || key.equals("dropIndexes") ||
+                                key.equals("createIndexes") || key.equals("collMod") || key.equals("renameCollection") ||
+                                key.equals("validate") || key.equals("compact") || key.equals("reIndex") ||
+                                key.equals("explain") || key.equals("profile") || key.equals("currentOp") ||
+                                key.equals("killOp") || key.equals("fsync") || key.equals("eval") ||
+                                key.equals("listCollections") || key.equals("listIndexes") || key.equals("isMaster") ||
+                                key.equals("ping") || key.equals("buildInfo") || key.equals("serverStatus") ||
+                                key.equals("replSetGetStatus") || key.equals("hello") || key.equals("collStats") ||
+                                key.equals("dbStats") || key.equals("replSetUpdatePosition") || key.equals("getParameter") ||
+                                key.equals("setParameter") || key.equals("planCacheClear") || key.equals("configureFailPoint") ||
+                                key.equals("getCmdLineOpts") || key.equals("logRotate") || key.equals("shutdown") ||
+                                key.equals("killCursors") || key.equals("endSessions") || key.equals("startSession") ||
+                                key.equals("abortTransaction") || key.equals("commitTransaction") || key.equals("startTransaction")) {
+                                
+                                // These are administrative/system operations, mark as CMD
+                                slowQuery.opType = OpType.CMD;
+                                incrementOperationStat(key);
+                                foundOperation = true;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (!foundOperation) {
+                        // Log unknown command structure for debugging - but only first few per thread
+                        if (debug && debugCount < 10) {
+                            LogParser.logger.warn("Unknown command structure (thread {}) #{}: {}", 
+                                       Thread.currentThread().getName(), debugCount + 1,
+                                       command.toString().substring(0, Math.min(500, command.toString().length())));
+                            debugCount++;
+                        }
+                        
+                        // Still count it as an operation, but mark as unknown
+                        slowQuery.opType = OpType.CMD;  // Treat unknown as command for now
+                        incrementOperationStat("unknown");
                     }
                 }
                 
+                // Handle storage metrics
                 if (attr.has("storage")) {
                     JSONObject storage = attr.getJSONObject("storage");
                     if (storage != null) {
@@ -142,11 +261,13 @@ class LogParserTask implements Callable<ProcessingStats> {
                 }
                 
                 if (slowQuery.opType != null) {
+                    // Handle execution stats
                     if (attr.has("nreturned")) {
                         slowQuery.docsExamined = LogParser.getMetric(attr, "docsExamined");
                         slowQuery.keysExamined = LogParser.getMetric(attr, "keysExamined");
                         slowQuery.nreturned = LogParser.getMetric(attr, "nreturned");
                     }
+                    
                     slowQuery.durationMillis = LogParser.getMetric(attr, "durationMillis");
                     
                     synchronized (accumulator) {
@@ -154,9 +275,85 @@ class LogParserTask implements Callable<ProcessingStats> {
                     }
                     localFoundOps++;
                 }
+            } else if (attr.has("type")) {
+                // This might be a WRITE operation log entry
+                String operationType = attr.getString("type");
+                
+                if (attr.has("ns")) {
+                    ns = new Namespace(attr.getString("ns"));
+                    slowQuery.ns = ns;
+                } else {
+                    localNoNs++;
+                    continue;
+                }
+                
+                // Set operation type based on the "type" field
+                if (operationType.equals("update")) {
+                    slowQuery.opType = OpType.UPDATE_W;
+                    incrementOperationStat("update_w");
+                } else if (operationType.equals("remove") || operationType.equals("delete")) {
+                    slowQuery.opType = OpType.REMOVE;
+                    incrementOperationStat("delete_w");
+                } else if (operationType.equals("insert")) {
+                    slowQuery.opType = OpType.INSERT;
+                    incrementOperationStat("insert_w");
+                } else {
+                    slowQuery.opType = OpType.CMD;
+                    incrementOperationStat("write_" + operationType);
+                }
+                
+                // Handle common WRITE operation fields
+                if (attr.has("queryHash")) {
+                    slowQuery.queryHash = attr.getString("queryHash");
+                }
+                
+                if (attr.has("reslen")) {
+                    slowQuery.reslen = LogParser.getMetric(attr, "reslen");
+                }
+                
+                if (attr.has("remote")) {
+                    slowQuery.remote = attr.getString("remote");
+                }
+                
+                if (attr.has("keysExamined")) {
+                    slowQuery.keysExamined = LogParser.getMetric(attr, "keysExamined");
+                }
+                
+                if (attr.has("docsExamined")) {
+                    slowQuery.docsExamined = LogParser.getMetric(attr, "docsExamined");
+                }
+                
+                if (attr.has("nMatched") || attr.has("nModified") || attr.has("nUpserted")) {
+                    // For write operations, use nModified or nUpserted as nreturned equivalent
+                    Long nModified = LogParser.getMetric(attr, "nModified");
+                    Long nUpserted = LogParser.getMetric(attr, "nUpserted");
+                    if (nModified != null) {
+                        slowQuery.nreturned = nModified;
+                    } else if (nUpserted != null) {
+                        slowQuery.nreturned = nUpserted;
+                    }
+                }
+                
+                // Handle storage metrics
+                if (attr.has("storage")) {
+                    JSONObject storage = attr.getJSONObject("storage");
+                    if (storage != null && storage.has("data")) {
+                        JSONObject data = storage.getJSONObject("data");
+                        if (data.has("bytesRead")) {
+                            slowQuery.bytesRead = LogParser.getMetric(data, "bytesRead");
+                        }
+                    }
+                }
+                
+                slowQuery.durationMillis = LogParser.getMetric(attr, "durationMillis");
+                
+                synchronized (accumulator) {
+                    accumulator.accumulate(slowQuery);
+                }
+                localFoundOps++;
             } else {
                 localNoCommand++;
-                if (localNoCommand <= 3) {
+                if (debug && localNoCommand <= 3) {
                     LogParser.logger.info("No 'command' field in attr (thread {}): {}", 
                                Thread.currentThread().getName(),
                                attr.toString().substring(0, Math.min(200, attr.toString().length())));
@@ -171,5 +368,11 @@ class LogParserTask implements Callable<ProcessingStats> {
         
         this.linesChunk = null;
         return new ProcessingStats(localParseErrors, localNoAttr, localNoCommand, localNoNs, localFoundOps);
+    }
+    
+    private void incrementOperationStat(String operationType) {
+        synchronized (operationTypeStats) {
+            operationTypeStats.computeIfAbsent(operationType, k -> new AtomicLong(0)).incrementAndGet();
+        }
     }
 }
