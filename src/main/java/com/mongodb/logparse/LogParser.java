@@ -24,7 +24,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.ZipInputStream;
 
-import org.json.JSONException;
 import org.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,6 +34,10 @@ import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
+import java.util.concurrent.atomic.AtomicLong;
+
+
+
 /**
  * MongoDB Log Parser - Unified class combining LogParser interface, 
  * AbstractLogParser, LogParserApp, and LogParserJson functionality
@@ -43,7 +46,14 @@ import picocli.CommandLine.Option;
          description = "Parse MongoDB log files and generate performance reports")
 public class LogParser implements Callable<Integer> {
 
-    private static final Logger logger = LoggerFactory.getLogger(LogParser.class);
+    static final Logger logger = LoggerFactory.getLogger(LogParser.class);
+    
+  //Add these fields to LogParser class
+    private AtomicLong totalParseErrors = new AtomicLong(0);
+    private AtomicLong totalNoAttr = new AtomicLong(0);
+    private AtomicLong totalNoCommand = new AtomicLong(0);
+    private AtomicLong totalNoNs = new AtomicLong(0);
+    private AtomicLong totalFoundOps = new AtomicLong(0);
 
     @Option(names = {"-f", "--files"}, description = "MongoDB log file(s)", required = true)
     private String[] fileNames;
@@ -118,10 +128,10 @@ public class LogParser implements Callable<Integer> {
             read(f);
         }
     }
-
+    
     public void read(File file) throws IOException, ExecutionException, InterruptedException {
         String guess = MimeTypes.guessContentTypeFromName(file.getName());
-        logger.debug("MIME type guess: {}", guess);
+        logger.info("MIME type guess: {}", guess); // Changed from debug to info
 
         BufferedReader in = null;
 
@@ -139,12 +149,13 @@ public class LogParser implements Callable<Integer> {
 
         int numThreads = Runtime.getRuntime().availableProcessors();
         ExecutorService executor = Executors.newFixedThreadPool(numThreads);
-        CompletionService<Void> completionService = new ExecutorCompletionService<>(executor);
+        CompletionService<ProcessingStats> completionService = new ExecutorCompletionService<>(executor);
 
         unmatchedCount = 0;
         ignoredCount = 0;
         processedCount = 0;
         int lineNum = 0;
+        int submittedTasks = 0;
         long start = System.currentTimeMillis();
         List<String> lines = new ArrayList<>();
 
@@ -162,25 +173,49 @@ public class LogParser implements Callable<Integer> {
             processedCount++;
 
             if (lines.size() >= 25000) {
-                // Submit the chunk for processing as soon as it's filled
+                // Submit the chunk for processing
                 completionService.submit(new LogParserTask(new ArrayList<>(lines), file, accumulator));
+                submittedTasks++;
                 lines.clear();
             }
 
             if (lineNum % 50000 == 0) {
-                logger.info("Processed {} lines (ignored: {}, processed: {})", lineNum, ignoredCount, processedCount);
+                logger.info("Read {} lines (ignored: {}, queued for processing: {})", lineNum, ignoredCount, processedCount);
             }
         }
 
         // Submit the last chunk if there are remaining lines
         if (!lines.isEmpty()) {
             completionService.submit(new LogParserTask(new ArrayList<>(lines), file, accumulator));
+            submittedTasks++;
+        }
+
+        // IMPORTANT: Wait for all tasks to complete and collect their results
+        logger.info("Waiting for {} tasks to complete...", submittedTasks);
+        for (int i = 0; i < submittedTasks; i++) {
+            try {
+                ProcessingStats stats = completionService.take().get();
+                totalParseErrors.addAndGet(stats.parseErrors);
+                totalNoAttr.addAndGet(stats.noAttr);
+                totalNoCommand.addAndGet(stats.noCommand);
+                totalNoNs.addAndGet(stats.noNs);
+                totalFoundOps.addAndGet(stats.foundOps);
+                
+                if (i % 10 == 0 || i == submittedTasks - 1) {
+                    logger.info("Completed {}/{} tasks", i + 1, submittedTasks);
+                }
+            } catch (ExecutionException e) {
+                logger.error("Task execution failed", e);
+            }
         }
 
         // Shutdown the executor
         executor.shutdown();
         try {
-            executor.awaitTermination(999, TimeUnit.DAYS);
+            if (!executor.awaitTermination(60, TimeUnit.SECONDS)) {
+                logger.warn("Executor did not terminate gracefully");
+                executor.shutdownNow();
+            }
         } catch (InterruptedException e) {
             logger.warn("Executor interrupted");
             Thread.currentThread().interrupt();
@@ -193,15 +228,24 @@ public class LogParser implements Callable<Integer> {
         in.close();
         long end = System.currentTimeMillis();
         long dur = (end - start);
-        logger.info("File processing complete - Duration: {}ms, Total lines: {}, Processed: {}, Ignored: {}", 
-                   dur, lineNum, processedCount, ignoredCount);
         
-        // Log breakdown of why operations weren't parsed
-        int totalTasks = (processedCount / 25000) + (processedCount % 25000 > 0 ? 1 : 0);
-        logger.info("Submitted {} processing tasks for {} lines", totalTasks, processedCount);
+        // Enhanced logging with detailed statistics
+        logger.info("File processing complete - Duration: {}ms", dur);
+        logger.info("Lines read: {}, Ignored: {}, Processed: {}", lineNum, ignoredCount, processedCount);
+        logger.info("Parse errors: {}, No attr: {}, No command: {}, No namespace: {}", 
+                   totalParseErrors.get(), totalNoAttr.get(), totalNoCommand.get(), totalNoNs.get());
+        logger.info("Successfully parsed operations: {}", totalFoundOps.get());
+        
+        if (totalFoundOps.get() == 0) {
+            logger.warn("WARNING: No operations were successfully parsed!");
+            logger.warn("This might indicate:");
+            logger.warn("  - Wrong log format");
+            logger.warn("  - All operations are being filtered out");
+            logger.warn("  - JSON parsing issues");
+        }
     }
 
-    private static Long getMetric(JSONObject attr, String key) {
+    static Long getMetric(JSONObject attr, String key) {
         if (attr.has(key)) {
             return Long.valueOf(attr.getInt(key));
         }
@@ -278,149 +322,6 @@ public class LogParser implements Callable<Integer> {
 
     public void setFileNames(String[] fileNames) {
         this.fileNames = fileNames;
-    }
-
-    // Task to parse a chunk of log lines
-    static class LogParserTask implements Callable<Void> {
-        private List<String> linesChunk;
-        private final Accumulator accumulator;
-		private int localParseErrors;
-		private int localNoAttr;
-		private int localFoundOps;
-		private int localNoCommand;
-
-        public LogParserTask(List<String> linesChunk, File file, Accumulator accumulator) {
-            this.linesChunk = linesChunk;
-            this.accumulator = accumulator;
-        }
-
-        @Override
-        public Void call() throws Exception {
-            
-            int localNoNs = 0;
-			for (String currentLine : linesChunk) {
-                
-                JSONObject jo = null;
-                try {
-                    jo = new JSONObject(currentLine);
-                } catch (JSONException jse) {
-                    if (currentLine.length() > 0) {
-                        localParseErrors++;
-                        // Only log first few parse errors to avoid spam
-                        if (localParseErrors <= 2) {
-                            logger.warn("Error parsing line: {}", currentLine.substring(0, Math.min(100, currentLine.length())));
-                        }
-                    }
-                    continue;
-                }
-                
-                JSONObject attr = null;
-                if (jo.has("attr")) {
-                    attr = jo.getJSONObject("attr");
-                } else {
-                    localNoAttr++;
-                    // Log a sample of entries without 'attr' to understand the structure
-                    if (localNoAttr <= 2) {
-                        logger.debug("No 'attr' field in log entry: {}", currentLine.substring(0, Math.min(150, currentLine.length())));
-                    }
-                    continue;
-                }
-                
-                Namespace ns = null;
-                if (attr.has("command")) {
-                    SlowQuery slowQuery = new SlowQuery();
-                    if (attr.has("ns")) {
-                        ns = new Namespace(attr.getString("ns"));
-                        slowQuery.ns = ns;
-                    } else {
-                        localNoNs++;
-                        continue;
-                    }
-                    
-                    if (attr.has("queryHash")) {
-                        slowQuery.queryHash = attr.getString("queryHash");
-                    }
-                    
-                    if (attr.has("reslen")) {
-                        slowQuery.reslen = getMetric(attr, "reslen");
-                    }
-                    
-                    if (attr.has("remote")) {
-                        slowQuery.queryHash = attr.getString("queryHash");
-                    }
-                    
-                    slowQuery.opType = null;
-                    JSONObject command = attr.getJSONObject("command");
-                    if (command.has("find")) {
-                        String find = command.getString("find");
-                        slowQuery.opType = OpType.QUERY;
-                    } else if (command.has("aggregate")) {
-                        slowQuery.opType = OpType.AGGREGATE;
-                    } else if (command.has("findAndModify")) {
-                        slowQuery.opType = OpType.FIND_AND_MODIFY;
-                        ns.setCollectionName(command.getString("findAndModify"));
-                    } else if (command.has("update")) {
-                        slowQuery.opType = OpType.UPDATE;
-                        ns.setCollectionName(command.getString("update"));
-                    } else if (command.has("insert")) {
-                        slowQuery.opType = OpType.INSERT;
-                        ns.setCollectionName(command.getString("insert"));
-                    } else if (command.has("delete")) {
-                        slowQuery.opType = OpType.REMOVE;
-                        ns.setCollectionName(command.getString("delete"));
-                    } else if (command.has("getMore")) {
-                        slowQuery.opType = OpType.GETMORE;
-                        ns.setCollectionName(command.getString("collection"));
-                    } else if (command.has("u")) {
-                        slowQuery.opType = OpType.UPDATE_W;
-                    } else if (command.has("distinct")) {
-                        slowQuery.opType = OpType.DISTINCT;
-                    } else if (command.has("count")) {
-                        slowQuery.opType = OpType.COUNT;
-                    } else {
-                        logger.debug("Unknown command: {}", command);
-                    }
-                    
-                    if (attr.has("storage")) {
-                        JSONObject storage = attr.getJSONObject("storage");
-                        if (storage != null) {
-                            if (storage.has("bytesRead")) {
-                                slowQuery.bytesRead = getMetric(storage, "bytesRead");
-                            } else if (storage.has("data")) {
-                                JSONObject data = storage.getJSONObject("data");
-                                slowQuery.bytesRead = getMetric(data, "bytesRead");
-                            }
-                        }
-                    }
-                    
-                    if (slowQuery.opType != null) {
-                        if (attr.has("nreturned")) {
-                            slowQuery.docsExamined = getMetric(attr, "docsExamined");
-                            slowQuery.keysExamined = getMetric(attr, "keysExamined");
-                            slowQuery.nreturned = getMetric(attr, "nreturned");
-                        }
-                        slowQuery.durationMillis = getMetric(attr, "durationMillis");
-                        accumulator.accumulate(slowQuery);
-                        localFoundOps++;
-                    }
-                } else {
-                    localNoCommand++;
-                    // Log sample of entries without 'command' to understand what we're missing
-                    if (localNoCommand <= 2) {
-                        logger.debug("No 'command' field in attr: {}", attr.toString().substring(0, Math.min(150, attr.toString().length())));
-                    }
-                }
-            }
-            
-            // Log summary for this chunk if there were significant issues
-            if (localParseErrors > 0 || localNoAttr > 1000 || localNoCommand > 1000) {
-                logger.debug("Chunk processed - Parse errors: {}, No attr: {}, No command: {}, No ns: {}, Found ops: {}", 
-                           localParseErrors, localNoAttr, localNoCommand, localNoNs, localFoundOps);
-            }
-            
-            this.linesChunk = null;
-            return null;
-        }
     }
 
     public static void main(String[] args) {
