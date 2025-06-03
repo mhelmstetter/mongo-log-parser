@@ -368,7 +368,7 @@ public class LogParser implements Callable<Integer> {
                     String category = entry.getKey();
                     long count = entry.getValue().get();
                     double percentage = (count * 100.0) / Math.max(ignoredCount, 1);
-                    logger.info("  {}: {} ({:.1f}%)", category, count, percentage);
+                    logger.info("  {}: {} ({}%)", category, count, String.format("%.1f", percentage));
                 });
             
             if (ignoredAnalysisFile != null) {
@@ -384,20 +384,23 @@ public class LogParser implements Callable<Integer> {
         }
         
         logger.info("=== TTL Operations Report ===");
-        System.out.println(String.format("%-50s %-10s %-12s %-10s %-10s %-10s", 
+        
+        // Fixed header with consistent column widths
+        System.out.println(String.format("%-50s %10s %12s %10s %10s %10s", 
                 "Namespace", "Count", "TotalDeleted", "AvgDeleted", "MinMs", "MaxMs"));
-        System.out.println("=".repeat(100));
+        System.out.println("=".repeat(104)); // Adjusted separator length
         
         ttlAccumulator.getAccumulators().values().stream()
                 .sorted((a, b) -> Long.compare(b.getCount(), a.getCount()))
                 .forEach(acc -> {
+                    String namespace = acc.toString().split(" ")[0]; // Extract namespace part only
                     long totalDeleted = acc.getAvgReturned() * acc.getCount();
-                    System.out.println(String.format("%-50s %-10d %-12d %-10d %-10d %-10d",
-                            acc.toString().split(" ")[0], // Extract namespace from toString
+                    System.out.println(String.format("%-50s %10d %12d %10d %10d %10d",
+                            namespace,
                             acc.getCount(),
                             totalDeleted,
                             acc.getAvgReturned(),
-                            0, // Would need to track min separately in LogLineAccumulator  
+                            acc.getMin(),
                             acc.getMax()));
                 });
     }
