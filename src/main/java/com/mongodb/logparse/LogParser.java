@@ -38,10 +38,10 @@ import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
 /**
- * Enhanced MongoDB Log Parser with unified filtering and TTL operation reporting
+ * Enhanced MongoDB Log Parser with unified filtering, TTL operation reporting, and plan cache analysis
  */
-@Command(name = "logParser", mixinStandardHelpOptions = true, version = "1.1", 
-         description = "Parse MongoDB log files with configurable filtering and comprehensive reporting")
+@Command(name = "logParser", mixinStandardHelpOptions = true, version = "1.2", 
+         description = "Parse MongoDB log files with configurable filtering, comprehensive reporting, and plan cache analysis")
 public class LogParser implements Callable<Integer> {
 
     static final Logger logger = LoggerFactory.getLogger(LogParser.class);
@@ -64,6 +64,12 @@ public class LogParser implements Callable<Integer> {
     @Option(names = {"--ignored-analysis"}, description = "Output file for ignored lines analysis")
     private String ignoredAnalysisFile;
 
+    @Option(names = {"--plan-cache-csv"}, description = "CSV output file for plan cache analysis")
+    private String planCacheCsvFile;
+
+    @Option(names = {"--enable-plan-cache"}, description = "Enable plan cache key analysis")
+    private boolean enablePlanCacheAnalysis = true;
+
     // Statistics tracking
     private AtomicLong totalParseErrors = new AtomicLong(0);
     private AtomicLong totalNoAttr = new AtomicLong(0);
@@ -75,6 +81,7 @@ public class LogParser implements Callable<Integer> {
     private String currentLine = null;
     private Accumulator accumulator;
     private Accumulator ttlAccumulator; // Separate accumulator for TTL operations
+    private PlanCacheAccumulator planCacheAccumulator; // New accumulator for plan cache analysis
     private FilterConfig filterConfig;
     private int unmatchedCount = 0;
     private int ignoredCount = 0;
@@ -99,6 +106,12 @@ public class LogParser implements Callable<Integer> {
 
         loadConfiguration();
         ttlAccumulator = new Accumulator();
+        
+        if (enablePlanCacheAnalysis) {
+            planCacheAccumulator = new PlanCacheAccumulator();
+            logger.info("Plan cache analysis enabled");
+        }
+        
         read();
 
         logger.info("Parsing complete. Total processed: {}, Ignored: {}", processedCount, ignoredCount);
@@ -113,6 +126,18 @@ public class LogParser implements Callable<Integer> {
         }
 
         reportTtlOperations();
+        
+        // Generate plan cache reports if enabled
+        if (enablePlanCacheAnalysis && planCacheAccumulator != null) {
+            planCacheAccumulator.report();
+            planCacheAccumulator.reportByQueryHash();
+            
+            if (planCacheCsvFile != null) {
+                logger.info("Writing plan cache CSV report to: {}", planCacheCsvFile);
+                planCacheAccumulator.reportCsv(planCacheCsvFile);
+            }
+        }
+
         return 0;
     }
 
@@ -181,7 +206,8 @@ public class LogParser implements Callable<Integer> {
 
             if (lines.size() >= 25000) {
                 completionService.submit(
-                    new LogParserTask(new ArrayList<>(lines), file, accumulator, operationTypeStats, debug));
+                    new LogParserTask(new ArrayList<>(lines), file, accumulator, planCacheAccumulator, 
+                                    operationTypeStats, enablePlanCacheAnalysis, debug));
                 submittedTasks++;
                 lines.clear();
             }
@@ -194,7 +220,8 @@ public class LogParser implements Callable<Integer> {
         // Submit remaining lines
         if (!lines.isEmpty()) {
             completionService.submit(
-                new LogParserTask(new ArrayList<>(lines), file, accumulator, operationTypeStats, debug));
+                new LogParserTask(new ArrayList<>(lines), file, accumulator, planCacheAccumulator,
+                                operationTypeStats, enablePlanCacheAnalysis, debug));
             submittedTasks++;
         }
 

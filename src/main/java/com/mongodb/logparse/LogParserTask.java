@@ -13,16 +13,22 @@ import org.json.JSONObject;
 class LogParserTask implements Callable<ProcessingStats> {
     private List<String> linesChunk;
     private final Accumulator accumulator;
+    private final PlanCacheAccumulator planCacheAccumulator;
     private final File file;
     private final Map<String, AtomicLong> operationTypeStats;
+    private final boolean enablePlanCacheAnalysis;
     private final boolean debug;
 
     public LogParserTask(List<String> linesChunk, File file, Accumulator accumulator, 
-                        Map<String, AtomicLong> operationTypeStats, boolean debug) {
+                        PlanCacheAccumulator planCacheAccumulator,
+                        Map<String, AtomicLong> operationTypeStats, 
+                        boolean enablePlanCacheAnalysis, boolean debug) {
         this.linesChunk = linesChunk;
         this.file = file;
         this.accumulator = accumulator;
+        this.planCacheAccumulator = planCacheAccumulator;
         this.operationTypeStats = operationTypeStats;
+        this.enablePlanCacheAnalysis = enablePlanCacheAnalysis;
         this.debug = debug;
     }
 
@@ -98,6 +104,9 @@ class LogParserTask implements Callable<ProcessingStats> {
                 // Set common attributes
                 setCommonAttributes(attr, slowQuery);
                 
+                // Extract plan cache information
+                extractPlanCacheInfo(attr, slowQuery);
+                
                 JSONObject command = attr.getJSONObject("command");
                 
                 // Enhanced operation type detection
@@ -111,12 +120,21 @@ class LogParserTask implements Callable<ProcessingStats> {
                     synchronized (accumulator) {
                         accumulator.accumulate(slowQuery);
                     }
+                    
+                    // Add to plan cache accumulator if enabled and has plan cache key
+                    if (enablePlanCacheAnalysis && planCacheAccumulator != null && slowQuery.planCacheKey != null) {
+                        synchronized (planCacheAccumulator) {
+                            planCacheAccumulator.accumulate(slowQuery);
+                        }
+                    }
+                    
                     localFoundOps++;
                 }
                 
             } else if (attr.has("type")) {
                 // This is a WRITE operation log entry
                 if (processWriteOperation(attr, slowQuery)) {
+                    extractPlanCacheInfo(attr, slowQuery);
                     processExecutionStats(attr, slowQuery);
                     processStorageMetrics(attr, slowQuery);
                     
@@ -125,6 +143,14 @@ class LogParserTask implements Callable<ProcessingStats> {
                     synchronized (accumulator) {
                         accumulator.accumulate(slowQuery);
                     }
+                    
+                    // Add to plan cache accumulator if enabled and has plan cache key
+                    if (enablePlanCacheAnalysis && planCacheAccumulator != null && slowQuery.planCacheKey != null) {
+                        synchronized (planCacheAccumulator) {
+                            planCacheAccumulator.accumulate(slowQuery);
+                        }
+                    }
+                    
                     localFoundOps++;
                 }
                 
@@ -154,6 +180,30 @@ class LogParserTask implements Callable<ProcessingStats> {
         
         this.linesChunk = null;
         return new ProcessingStats(localParseErrors, localNoAttr, localNoCommand, localNoNs, localFoundOps);
+    }
+    
+    private void extractPlanCacheInfo(JSONObject attr, SlowQuery slowQuery) {
+        // Extract planCacheKey
+        if (attr.has("planCacheKey")) {
+            try {
+                slowQuery.planCacheKey = attr.getString("planCacheKey");
+            } catch (JSONException e) {
+                if (debug) {
+                    LogParser.logger.debug("Error extracting planCacheKey: {}", e.getMessage());
+                }
+            }
+        }
+        
+        // Extract planSummary
+        if (attr.has("planSummary")) {
+            try {
+                slowQuery.planSummary = attr.getString("planSummary");
+            } catch (JSONException e) {
+                if (debug) {
+                    LogParser.logger.debug("Error extracting planSummary: {}", e.getMessage());
+                }
+            }
+        }
     }
     
     private boolean processIndexOperation(JSONObject jo, JSONObject attr, SlowQuery slowQuery) {
