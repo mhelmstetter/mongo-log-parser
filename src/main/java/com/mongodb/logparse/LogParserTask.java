@@ -174,7 +174,97 @@ class LogParserTask implements Callable<ProcessingStats> {
                         ns.setCollectionName((String) distinctVal);
                     }
                     incrementOperationStat("distinct");
-                } else if (command.has("remove")) {  // Legacy format
+                }
+                // NEW: Handle WRITE-level operations that have command.q structure
+                else if (command.has("q")) {
+                    // This is a WRITE-level operation (remove, update, etc.)
+                    // The operation type is determined by attr.type, not the command structure
+                    
+                    if (attr.has("type")) {
+                        String writeType = attr.getString("type");
+                        
+                        if (writeType.equals("remove")) {
+                            slowQuery.opType = OpType.REMOVE;
+                            incrementOperationStat("delete_write");
+                        } else if (writeType.equals("update")) {
+                            slowQuery.opType = OpType.UPDATE_W;
+                            incrementOperationStat("update_write");
+                        } else if (writeType.equals("insert")) {
+                            slowQuery.opType = OpType.INSERT;
+                            incrementOperationStat("insert_write");
+                        } else {
+                            slowQuery.opType = OpType.CMD;
+                            incrementOperationStat("write_" + writeType);
+                        }
+                        
+                        // Handle common WRITE operation metrics
+                        if (attr.has("planSummary")) {
+                            // This indicates it's a query-like operation, extract metrics
+                            if (attr.has("keysExamined")) {
+                                slowQuery.keysExamined = LogParser.getMetric(attr, "keysExamined");
+                            }
+                            
+                            if (attr.has("docsExamined")) {
+                                slowQuery.docsExamined = LogParser.getMetric(attr, "docsExamined");
+                            }
+                            
+                            // For delete operations, use ndeleted as nreturned
+                            if (attr.has("ndeleted")) {
+                                slowQuery.nreturned = LogParser.getMetric(attr, "ndeleted");
+                            }
+                            
+                            // For update operations, use nModified
+                            if (attr.has("nModified")) {
+                                slowQuery.nreturned = LogParser.getMetric(attr, "nModified");
+                            }
+                            
+                            // For insert operations, use ninserted
+                            if (attr.has("ninserted")) {
+                                slowQuery.nreturned = LogParser.getMetric(attr, "ninserted");
+                            }
+                        }
+                        
+                        // Extract standard metrics
+                        if (attr.has("reslen")) {
+                            slowQuery.reslen = LogParser.getMetric(attr, "reslen");
+                        }
+                        
+                        if (attr.has("remote")) {
+                            slowQuery.remote = attr.getString("remote");
+                        }
+                        
+                        // Handle storage metrics for WRITE operations
+                        if (attr.has("storage")) {
+                            JSONObject storage = attr.getJSONObject("storage");
+                            if (storage != null && storage.has("data")) {
+                                JSONObject data = storage.getJSONObject("data");
+                                if (data.has("bytesRead")) {
+                                    slowQuery.bytesRead = LogParser.getMetric(data, "bytesRead");
+                                }
+                            }
+                        }
+                        
+                        slowQuery.durationMillis = LogParser.getMetric(attr, "durationMillis");
+                        
+                        synchronized (accumulator) {
+                            accumulator.accumulate(slowQuery);
+                        }
+                        localFoundOps++;
+                        
+                    } else {
+                        // command.q exists but no type - shouldn't happen in modern logs
+                        slowQuery.opType = OpType.CMD;
+                        incrementOperationStat("unknown_q_command");
+                        
+                        slowQuery.durationMillis = LogParser.getMetric(attr, "durationMillis");
+                        
+                        synchronized (accumulator) {
+                            accumulator.accumulate(slowQuery);
+                        }
+                        localFoundOps++;
+                    }
+                }
+                else if (command.has("remove")) {  // Legacy format
                     slowQuery.opType = OpType.REMOVE;
                     incrementOperationStat("remove");
                 } else if (command.has("u")) {  // Write operations format
@@ -352,6 +442,17 @@ class LogParserTask implements Callable<ProcessingStats> {
                 }
                 localFoundOps++;
             } else {
+                // Check if this is an incomplete/internal entry that should be filtered
+                if (isIncompleteLogEntry(attr)) {
+                    // Don't count these as "no command" - they're filtered internal messages
+                    if (debug && localFoundOps <= 3) {
+                        LogParser.logger.debug("Filtered incomplete entry (thread {}): {}", 
+                                   Thread.currentThread().getName(),
+                                   attr.toString().substring(0, Math.min(200, attr.toString().length())));
+                    }
+                    continue;
+                }
+                
                 localNoCommand++;
                 if (debug && localNoCommand <= 3) {
                     LogParser.logger.info("No 'command' field in attr (thread {}): {}", 
@@ -368,6 +469,41 @@ class LogParserTask implements Callable<ProcessingStats> {
         
         this.linesChunk = null;
         return new ProcessingStats(localParseErrors, localNoAttr, localNoCommand, localNoNs, localFoundOps);
+    }
+    
+    // NEW: Method to check for incomplete log entries
+    private boolean isIncompleteLogEntry(JSONObject attr) {
+        // Filter out entries that are clearly incomplete or internal
+        
+        // WiredTiger storage engine messages
+        if (attr.has("message")) {
+            try {
+                JSONObject message = attr.getJSONObject("message");
+                if (message.has("msg")) {
+                    return true;
+                }
+            } catch (JSONException e) {
+                // If message is not a JSON object, it might be a string - still filter it
+                return true;
+            }
+        }
+        
+        // Performance timing without operation context
+        if (attr.has("elapsedMicros") && !attr.has("command") && !attr.has("q")) {
+            return true;
+        }
+        
+        // Standalone operation IDs without context
+        if (attr.has("opId") && attr.length() == 1) {
+            return true;
+        }
+        
+        // Sessions without operations
+        if (attr.has("session") && !attr.has("command") && !attr.has("q")) {
+            return true;
+        }
+        
+        return false;
     }
     
     private void incrementOperationStat(String operationType) {

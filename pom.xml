@@ -28,11 +28,11 @@
 						</goals>
 						<configuration>
 							<outputDirectory>${basedir}/bin</outputDirectory>
-							<finalName>MongoLogParse</finalName>
+							<finalName>MongoLogParser</finalName>
 							<transformers>
 								<transformer
 									implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-									<mainClass>com.mongodb.logparse.LogFilter</mainClass>
+									<mainClass>com.mongodb.logparse.LogParser</mainClass>
 								</transformer>
 							</transformers>
 							<createDependencyReducedPom>false</createDependencyReducedPom>
