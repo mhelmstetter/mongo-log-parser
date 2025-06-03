@@ -133,7 +133,7 @@ public class LogLineAccumulator {
     }
     
     public String toString() {
-        return String.format("%-65s %-20s %-10s %-10.1f %-10d %-10d %-10d %-10d %-10d %-10d %-12d %-10d %-10d", 
+        return String.format("%-65s %-20s %10d %10.1f %10d %10d %10d %10d %10d %10d %10d %10d %10d", 
                 namespace, operation, count, reslen/ONE_MB_DOUBLE, bytesRead/1048576, 
                 getMin(), max, getAvg(), total/1000,
                 count > 0 ? totalKeysExamined/count : 0, 

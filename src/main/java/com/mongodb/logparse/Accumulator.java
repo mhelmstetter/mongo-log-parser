@@ -11,9 +11,11 @@ public class Accumulator {
 
     private Map<AccumulatorKey, LogLineAccumulator> accumulators = new HashMap<AccumulatorKey, LogLineAccumulator>();
 
-    private String[] headers = new String[] { "Namespace", "operation", "count", "reslenMB", "readMB", "min_ms", "max_ms", "avg_ms",
-            "totalSec", "avgKeysEx", "avgDocsEx",
-            "avgReturn", "exRetRatio" };
+    private String[] headers = new String[] { 
+    	    "Namespace", "Operation", "Count", "ReslenMB", "ReadMB", 
+    	    "MinMs", "MaxMs", "AvgMs", "TotalSec", "AvgKeysEx", 
+    	    "AvgDocsEx", "AvgReturn", "ExRetRatio" 
+    	};
 
     protected void accumulate(File file, String command, String dbName, String collName, Integer execTime) {
         // TODO add an option to accumulate per file, for now glob all files
@@ -74,23 +76,17 @@ public class Accumulator {
     }
 
     public void report() {
-        System.out.println(String
-                .format("%-65s %-20s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s", headers));
-
+        System.out.println(String.format("%-65s %-20s %10s %10s %10s %10s %10s %10s %10s %10s %10s %10s %10s", 
+                "Namespace", "operation", "count", "reslenMB", "readMB", "min_ms", "max_ms", "avg_ms",
+                "totalSec", "avgKeysEx", "avgDocsEx", "avgReturn", "exRetRatio"));
+        System.out.println("=".repeat(170));
         accumulators.values().stream().sorted(Comparator.comparingLong(LogLineAccumulator::getCount).reversed())
                 .forEach(acc -> System.out.println(acc));
     }
 
     public void reportCsv(String fileName) throws FileNotFoundException {
         PrintWriter writer = new PrintWriter(fileName);
-        for (int i = 0; i < headers.length; i++) {
-            writer.print(headers[i]);
-            if (i + 1 < headers.length) {
-                writer.print(",");
-            }
-        }
-        writer.println();
-
+        writer.println(String.join(",", headers));
         accumulators.values().stream()
             .sorted(Comparator.comparingLong(LogLineAccumulator::getCount).reversed())
             .forEach(acc -> writer.println(acc.toCsvString()));
