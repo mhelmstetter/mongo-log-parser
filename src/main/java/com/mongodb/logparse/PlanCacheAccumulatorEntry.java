@@ -21,10 +21,17 @@ public class PlanCacheAccumulatorEntry {
     private long bytesRead = 0;
     private long collectionScanCount = 0;
     
+    // New: Planning time tracking
+    private long totalPlanningTimeMicros = 0;
+    private long planningTimeCount = 0;
+    private long minPlanningTimeMicros = Long.MAX_VALUE;
+    private long maxPlanningTimeMicros = Long.MIN_VALUE;
+    
     // Statistics for percentiles
     private DescriptiveStatistics executionStats = new DescriptiveStatistics();
     private DescriptiveStatistics keysExaminedStats = new DescriptiveStatistics();
     private DescriptiveStatistics docsExaminedStats = new DescriptiveStatistics();
+    private DescriptiveStatistics planningTimeStats = new DescriptiveStatistics();
     
     public PlanCacheAccumulatorEntry(PlanCacheKey key) {
         this.key = key;
@@ -74,8 +81,25 @@ public class PlanCacheAccumulatorEntry {
             bytesRead += slowQuery.bytesRead;
         }
         
-        // Track collection scans
-        if (isCollectionScan()) {
+        // NEW: Track planning time
+        if (slowQuery.planningTimeMicros != null) {
+            planningTimeCount++;
+            totalPlanningTimeMicros += slowQuery.planningTimeMicros;
+            
+            if (slowQuery.planningTimeMicros > maxPlanningTimeMicros) {
+                maxPlanningTimeMicros = slowQuery.planningTimeMicros;
+            }
+            if (slowQuery.planningTimeMicros < minPlanningTimeMicros) {
+                minPlanningTimeMicros = slowQuery.planningTimeMicros;
+            }
+            
+            if (planningTimeStats.getN() < 10000) {
+                planningTimeStats.addValue(slowQuery.planningTimeMicros);
+            }
+        }
+        
+        // FIXED: Track collection scans based on current query's plan summary
+        if (slowQuery.planSummary != null && slowQuery.planSummary.contains("COLLSCAN")) {
             collectionScanCount++;
         }
     }
@@ -141,25 +165,53 @@ public class PlanCacheAccumulatorEntry {
         return count > 0 ? (collectionScanCount * 100.0) / count : 0.0;
     }
     
+    // NEW: Planning time getters (converted to milliseconds)
+    public long getMinPlanningTimeMs() {
+        return planningTimeCount > 0 ? Math.round(minPlanningTimeMicros / 1000.0) : 0;
+    }
+    
+    public long getMaxPlanningTimeMs() {
+        return planningTimeCount > 0 ? Math.round(maxPlanningTimeMicros / 1000.0) : 0;
+    }
+    
+    public long getAvgPlanningTimeMs() {
+        return planningTimeCount > 0 ? Math.round((totalPlanningTimeMicros / planningTimeCount) / 1000.0) : 0;
+    }
+    
+    public double getPlanningTimePercentile95Ms() {
+        return planningTimeStats.getN() > 0 ? planningTimeStats.getPercentile(95) / 1000.0 : 0.0;
+    }
+    
     @Override
     public String toString() {
-        String truncatedPlanCacheKey = key.getPlanCacheKey() != null ? 
-            (key.getPlanCacheKey().length() > 20 ? 
-                key.getPlanCacheKey().substring(0, 17) + "..." : key.getPlanCacheKey()) : "null";
-                
-        String truncatedQueryHash = key.getQueryHash() != null ?
-            (key.getQueryHash().length() > 15 ? 
-                key.getQueryHash().substring(0, 12) + "..." : key.getQueryHash()) : "null";
-                
-        String truncatedPlanSummary = key.getPlanSummary() != null ?
-            (key.getPlanSummary().length() > 30 ? 
-                key.getPlanSummary().substring(0, 27) + "..." : key.getPlanSummary()) : "UNKNOWN";
+        // Dynamic truncation based on reasonable limits
+        String truncatedNamespace = truncateString(key.getNamespace().toString(), 45);
+        String truncatedPlanCacheKey = truncateString(key.getPlanCacheKey(), 12);
+        String truncatedQueryHash = truncateString(key.getQueryHash(), 10);
+        String truncatedPlanSummary = truncateString(key.getPlanSummary(), 35);
         
-        return String.format("%-50s %-20s %-15s %-30s %8d %8d %8d %8d %8.0f %10d %10d %10d %8d %8.1f",
-                key.getNamespace().toString(),
+        // Determine plan type for cleaner display
+        String planType = "UNKNOWN";
+        if (key.getPlanSummary() != null) {
+            if (key.getPlanSummary().contains("COLLSCAN")) {
+                planType = "COLLSCAN";
+            } else if (key.getPlanSummary().contains("IXSCAN")) {
+                planType = "IXSCAN";
+            } else if (key.getPlanSummary().contains("COUNTSCAN")) {
+                planType = "COUNTSCAN";
+            } else if (key.getPlanSummary().contains("DISTINCT_SCAN")) {
+                planType = "DISTINCT";
+            } else if (key.getPlanSummary().contains("TEXT")) {
+                planType = "TEXT";
+            }
+        }
+        
+        return String.format("%-45s %-12s %-10s %-35s %8s %8d %8d %8d %8d %8.0f %10d %10d %10d %8d %8d %8d",
+                truncatedNamespace,
                 truncatedPlanCacheKey,
                 truncatedQueryHash,
                 truncatedPlanSummary,
+                planType,
                 count,
                 getMin(),
                 max,
@@ -169,15 +221,34 @@ public class PlanCacheAccumulatorEntry {
                 getAvgKeysExamined(),
                 getAvgDocsExamined(),
                 getAvgReturned(),
-                getCollectionScanPercentage());
+                getMinPlanningTimeMs(),
+                getMaxPlanningTimeMs(),
+                getAvgPlanningTimeMs());
     }
     
     public String toCsvString() {
-        return String.format("%s,%s,%s,%s,%d,%d,%d,%d,%.0f,%d,%d,%d,%.0f,%.0f,%.1f,%.1f,%d,%d,%d,%.1f",
+        // Determine plan type
+        String planType = "UNKNOWN";
+        if (key.getPlanSummary() != null) {
+            if (key.getPlanSummary().contains("COLLSCAN")) {
+                planType = "COLLSCAN";
+            } else if (key.getPlanSummary().contains("IXSCAN")) {
+                planType = "IXSCAN";
+            } else if (key.getPlanSummary().contains("COUNTSCAN")) {
+                planType = "COUNTSCAN";
+            } else if (key.getPlanSummary().contains("DISTINCT_SCAN")) {
+                planType = "DISTINCT";
+            } else if (key.getPlanSummary().contains("TEXT")) {
+                planType = "TEXT";
+            }
+        }
+        
+        return String.format("%s,%s,%s,%s,%s,%d,%d,%d,%d,%.0f,%d,%d,%d,%.0f,%.0f,%.1f,%.1f,%d,%d,%d,%.1f,%d,%d,%d,%.0f",
                 key.getNamespace(),
                 escapeCsv(key.getPlanCacheKey()),
                 escapeCsv(key.getQueryHash()),
                 escapeCsv(key.getPlanSummary()),
+                planType,
                 count,
                 getMin(),
                 max,
@@ -193,7 +264,24 @@ public class PlanCacheAccumulatorEntry {
                 getAvgReturned(),
                 getScannedReturnRatio(),
                 collectionScanCount,
-                getCollectionScanPercentage());
+                getCollectionScanPercentage(),
+                getMinPlanningTimeMs(),
+                getMaxPlanningTimeMs(),
+                getAvgPlanningTimeMs(),
+                getPlanningTimePercentile95Ms());
+    }
+    
+    private String truncateString(String value, int maxLength) {
+        if (value == null) {
+            return "null";
+        }
+        if (value.length() <= maxLength) {
+            return value;
+        }
+        if (maxLength <= 3) {
+            return value.substring(0, maxLength);
+        }
+        return value.substring(0, maxLength - 3) + "...";
     }
     
     private String escapeCsv(String value) {
