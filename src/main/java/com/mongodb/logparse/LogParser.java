@@ -412,17 +412,42 @@ public class LogParser implements Callable<Integer> {
         
         logger.info("=== TTL Operations Report ===");
         
-        // Fixed header with consistent column widths
-        System.out.println(String.format("%-50s %10s %12s %10s %10s %10s", 
-                "Namespace", "Count", "TotalDeleted", "AvgDeleted", "MinMs", "MaxMs"));
-        System.out.println("=".repeat(104)); // Adjusted separator length
+        // Calculate the maximum namespace width
+        int calculatedWidth = ttlAccumulator.getAccumulators().values().stream()
+            .mapToInt(acc -> {
+                String namespace = acc.toString().split(" ")[0];
+                return namespace.length();
+            })
+            .max()
+            .orElse("Namespace".length());
+            
+        // Set minimum width to header length, maximum to reasonable limit
+        final int maxNamespaceWidth = Math.min(Math.max(calculatedWidth, "Namespace".length()), 55);
         
+        // Create dynamic format string
+        String headerFormat = String.format("%%-%ds %%10s %%12s %%10s %%10s %%10s", maxNamespaceWidth);
+        String dataFormat = String.format("%%-%ds %%10d %%12d %%10d %%10d %%10d", maxNamespaceWidth);
+        int separatorLength = maxNamespaceWidth + 10 + 12 + 10 + 10 + 10 + 5; // +5 for spaces
+        
+        // Print header
+        System.out.println(String.format(headerFormat, 
+                "Namespace", "Count", "TotalDeleted", "AvgDeleted", "MinMs", "MaxMs"));
+        System.out.println("=".repeat(separatorLength));
+        
+        // Print TTL stats with consistent formatting
         ttlAccumulator.getAccumulators().values().stream()
                 .sorted((a, b) -> Long.compare(b.getCount(), a.getCount()))
                 .forEach(acc -> {
                     String namespace = acc.toString().split(" ")[0]; // Extract namespace part only
+                    
+                    // Truncate namespace if it's too long
+                    if (namespace.length() > maxNamespaceWidth) {
+                        namespace = namespace.substring(0, maxNamespaceWidth - 3) + "...";
+                    }
+                    
                     long totalDeleted = acc.getAvgReturned() * acc.getCount();
-                    System.out.println(String.format("%-50s %10d %12d %10d %10d %10d",
+                    
+                    System.out.println(String.format(dataFormat,
                             namespace,
                             acc.getCount(),
                             totalDeleted,

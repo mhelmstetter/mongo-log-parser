@@ -106,31 +106,132 @@ public class PlanCacheAccumulator {
             }
         });
         
-        // Only show query hashes with multiple plan cache keys
-        byQueryHash.entrySet().stream()
-            .filter(entry -> entry.getValue().size() > 1)
+        // Show all query hashes, sorted by total execution count
+        var allQueryHashes = byQueryHash.entrySet().stream()
             .sorted((e1, e2) -> {
                 long count1 = e1.getValue().stream().mapToLong(PlanCacheAccumulatorEntry::getCount).sum();
                 long count2 = e2.getValue().stream().mapToLong(PlanCacheAccumulatorEntry::getCount).sum();
                 return Long.compare(count2, count1);
             })
-            .forEach(entry -> {
-                String queryHash = entry.getKey();
-                java.util.List<PlanCacheAccumulatorEntry> plans = entry.getValue();
+            .toList();
+            
+        if (allQueryHashes.isEmpty()) {
+            System.out.println("No query hashes found.");
+            return;
+        }
+        
+        // Calculate dynamic column widths by scanning all data first
+        ColumnWidths widths = calculateOptimalColumnWidths(allQueryHashes);
+        
+        // Print the report with consistent formatting
+        allQueryHashes.forEach(entry -> {
+            String queryHash = entry.getKey();
+            java.util.List<PlanCacheAccumulatorEntry> plans = entry.getValue();
+            
+            // Print query hash header
+            System.out.println(String.format("\nQuery Hash: %s (%d different plans)", 
+                queryHash, plans.size()));
+            
+            // Print column headers
+            String headerFormat = String.format("  %%-%ds %%-%ds %%-%ds %%8s %%8s %%8s %%8s %%8s %%10s", 
+                widths.planCacheKeyWidth, widths.planSummaryWidth, widths.namespaceWidth);
                 
-                System.out.println(String.format("\nQuery Hash: %s (%d different plans)", 
-                    queryHash, plans.size()));
+            System.out.println(String.format(headerFormat,
+                "PlanCacheKey", "PlanSummary", "Namespace", "Count", "MinMs", "MaxMs", "AvgMs", "P95Ms", "TotalSec"));
+            
+            String separatorFormat = String.format("  %%-%ds %%-%ds %%-%ds %%8s %%8s %%8s %%8s %%8s %%10s", 
+                widths.planCacheKeyWidth, widths.planSummaryWidth, widths.namespaceWidth);
                 
-                plans.stream()
-                    .sorted(Comparator.comparingLong(PlanCacheAccumulatorEntry::getCount).reversed())
-                    .forEach(plan -> {
-                        System.out.println(String.format("  %-20s %-30s %8d %8d %s", 
-                            plan.getKey().getPlanCacheKey().substring(0, Math.min(20, plan.getKey().getPlanCacheKey().length())),
-                            plan.getKey().getPlanSummary(),
-                            plan.getCount(),
-                            plan.getAvg(),
-                            plan.getKey().getNamespace()));
-                    });
-            });
+            System.out.println(String.format(separatorFormat,
+                "=".repeat(widths.planCacheKeyWidth), 
+                "=".repeat(widths.planSummaryWidth),
+                "=".repeat(widths.namespaceWidth),
+                "========", "========", "========", "========", "========", "=========="));
+            
+            // Print data rows with consistent formatting
+            String dataFormat = String.format("  %%-%ds %%-%ds %%-%ds %%8d %%8d %%8d %%8d %%8.0f %%10d", 
+                widths.planCacheKeyWidth, widths.planSummaryWidth, widths.namespaceWidth);
+                
+            plans.stream()
+                .sorted(Comparator.comparingLong(PlanCacheAccumulatorEntry::getCount).reversed())
+                .forEach(plan -> {
+                    String planCacheKey = truncateToWidth(plan.getKey().getPlanCacheKey(), widths.planCacheKeyWidth);
+                    String planSummary = truncateToWidth(plan.getKey().getPlanSummary(), widths.planSummaryWidth);
+                    String namespace = truncateToWidth(plan.getKey().getNamespace().toString(), widths.namespaceWidth);
+                    
+                    System.out.println(String.format(dataFormat,
+                        planCacheKey,
+                        planSummary,
+                        namespace,
+                        plan.getCount(),
+                        plan.getMin(),
+                        plan.getMax(),
+                        plan.getAvg(),
+                        plan.getPercentile95(),
+                        plan.getCount() * plan.getAvg() / 1000));
+                });
+        });
+    }
+    
+    /**
+     * Calculate optimal column widths by scanning all data
+     */
+    private ColumnWidths calculateOptimalColumnWidths(java.util.List<Map.Entry<String, java.util.List<PlanCacheAccumulatorEntry>>> queries) {
+        int maxPlanCacheKeyWidth = "PlanCacheKey".length();
+        int maxPlanSummaryWidth = "PlanSummary".length();
+        int maxNamespaceWidth = "Namespace".length();
+        
+        for (var queryEntry : queries) {
+            for (var plan : queryEntry.getValue()) {
+                // Track actual lengths, but set reasonable limits
+                if (plan.getKey().getPlanCacheKey() != null) {
+                    maxPlanCacheKeyWidth = Math.max(maxPlanCacheKeyWidth, 
+                        Math.min(plan.getKey().getPlanCacheKey().length(), 20));
+                }
+                
+                if (plan.getKey().getPlanSummary() != null) {
+                    maxPlanSummaryWidth = Math.max(maxPlanSummaryWidth, 
+                        Math.min(plan.getKey().getPlanSummary().length(), 40));
+                }
+                
+                if (plan.getKey().getNamespace() != null) {
+                    maxNamespaceWidth = Math.max(maxNamespaceWidth, 
+                        Math.min(plan.getKey().getNamespace().toString().length(), 50));
+                }
+            }
+        }
+        
+        return new ColumnWidths(maxPlanCacheKeyWidth, maxPlanSummaryWidth, maxNamespaceWidth);
+    }
+    
+    /**
+     * Truncate string to fit width, adding ellipsis if needed
+     */
+    private String truncateToWidth(String str, int width) {
+        if (str == null) {
+            return "null";
+        }
+        if (str.length() <= width) {
+            return str;
+        }
+        if (width <= 3) {
+            return str.substring(0, width);
+        }
+        return str.substring(0, width - 3) + "...";
+    }
+    
+    /**
+     * Helper class to store calculated column widths
+     */
+    private static class ColumnWidths {
+        final int planCacheKeyWidth;
+        final int planSummaryWidth;
+        final int namespaceWidth;
+        
+        ColumnWidths(int planCacheKeyWidth, int planSummaryWidth, int namespaceWidth) {
+            this.planCacheKeyWidth = planCacheKeyWidth;
+            this.planSummaryWidth = planSummaryWidth;
+            this.namespaceWidth = namespaceWidth;
+        }
     }
 }
