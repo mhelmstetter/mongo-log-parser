@@ -14,5 +14,5 @@ public class SlowQuery {
 	public String remote = null;
 	public String planCacheKey = null;
 	public String planSummary = null;
-
+	public Long planningTimeMicros = null;
 }

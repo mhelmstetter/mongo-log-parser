@@ -15,10 +15,11 @@ public class PlanCacheAccumulator {
     private Map<PlanCacheKey, PlanCacheAccumulatorEntry> planCacheEntries = new HashMap<>();
     
     private String[] headers = new String[] { 
-        "Namespace", "PlanCacheKey", "QueryHash", "PlanSummary", "Count", 
+        "Namespace", "PlanCacheKey", "QueryHash", "PlanSummary", "PlanType", "Count", 
         "MinMs", "MaxMs", "AvgMs", "P95Ms", "TotalSec", "AvgKeysEx", 
         "AvgDocsEx", "KeysP95", "DocsP95", "TotalKeysK", "TotalDocsK", 
-        "AvgReturn", "ExRetRatio", "CollScanCount", "CollScanPct"
+        "AvgReturn", "ExRetRatio", "CollScanCount", "CollScanPct", 
+        "MinPlanMs", "MaxPlanMs", "AvgPlanMs", "PlanP95Ms"
     };
 
     public void accumulate(SlowQuery slowQuery) {
@@ -44,11 +45,13 @@ public class PlanCacheAccumulator {
     
     public void report() {
         System.out.println("\n=== Plan Cache Key Analysis ===");
-        System.out.println(String.format("%-50s %-20s %-15s %-30s %8s %8s %8s %8s %8s %10s %10s %10s %8s %8s", 
-                "Namespace", "PlanCacheKey", "QueryHash", "PlanSummary", "Count", 
+        
+        // Updated header with PlanType instead of CSPct%
+        System.out.println(String.format("%-45s %-12s %-10s %-35s %8s %8s %8s %8s %8s %8s %10s %10s %10s %8s %8s %8s", 
+                "Namespace", "PlanCacheKey", "QueryHash", "PlanSummary", "PlanType", "Count", 
                 "MinMs", "MaxMs", "AvgMs", "P95Ms", "TotalSec", "AvgKeysEx", 
-                "AvgDocsEx", "AvgRet", "CSPct%"));
-        System.out.println("=".repeat(200));
+                "AvgDocsEx", "AvgRet", "MinPlanMs", "MaxPlanMs", "AvgPlanMs"));
+        System.out.println("=".repeat(175));
         
         planCacheEntries.values().stream()
             .sorted(Comparator.comparingLong(PlanCacheAccumulatorEntry::getCount).reversed())
@@ -132,24 +135,24 @@ public class PlanCacheAccumulator {
             System.out.println(String.format("\nQuery Hash: %s (%d different plans)", 
                 queryHash, plans.size()));
             
-            // Print column headers
-            String headerFormat = String.format("  %%-%ds %%-%ds %%-%ds %%8s %%8s %%8s %%8s %%8s %%10s", 
+            // Print column headers with planning time columns
+            String headerFormat = String.format("  %%-%ds %%-%ds %%-%ds %%8s %%8s %%8s %%8s %%8s %%10s %%8s %%8s %%8s", 
                 widths.planCacheKeyWidth, widths.planSummaryWidth, widths.namespaceWidth);
                 
             System.out.println(String.format(headerFormat,
-                "PlanCacheKey", "PlanSummary", "Namespace", "Count", "MinMs", "MaxMs", "AvgMs", "P95Ms", "TotalSec"));
+                "PlanCacheKey", "PlanSummary", "Namespace", "Count", "MinMs", "MaxMs", "AvgMs", "P95Ms", "TotalSec", "PlanType", "AvgPlanMs", "PlanP95"));
             
-            String separatorFormat = String.format("  %%-%ds %%-%ds %%-%ds %%8s %%8s %%8s %%8s %%8s %%10s", 
+            String separatorFormat = String.format("  %%-%ds %%-%ds %%-%ds %%8s %%8s %%8s %%8s %%8s %%10s %%8s %%8s %%8s", 
                 widths.planCacheKeyWidth, widths.planSummaryWidth, widths.namespaceWidth);
                 
             System.out.println(String.format(separatorFormat,
                 "=".repeat(widths.planCacheKeyWidth), 
                 "=".repeat(widths.planSummaryWidth),
                 "=".repeat(widths.namespaceWidth),
-                "========", "========", "========", "========", "========", "=========="));
+                "========", "========", "========", "========", "========", "==========", "========", "========", "========"));
             
-            // Print data rows with consistent formatting
-            String dataFormat = String.format("  %%-%ds %%-%ds %%-%ds %%8d %%8d %%8d %%8d %%8.0f %%10d", 
+            // Print data rows with consistent formatting including planning time
+            String dataFormat = String.format("  %%-%ds %%-%ds %%-%ds %%8d %%8d %%8d %%8d %%8.0f %%10d %%8s %%8d %%8.0f", 
                 widths.planCacheKeyWidth, widths.planSummaryWidth, widths.namespaceWidth);
                 
             plans.stream()
@@ -158,6 +161,22 @@ public class PlanCacheAccumulator {
                     String planCacheKey = truncateToWidth(plan.getKey().getPlanCacheKey(), widths.planCacheKeyWidth);
                     String planSummary = truncateToWidth(plan.getKey().getPlanSummary(), widths.planSummaryWidth);
                     String namespace = truncateToWidth(plan.getKey().getNamespace().toString(), widths.namespaceWidth);
+                    
+                    // Determine plan type
+                    String planType = "UNKNOWN";
+                    if (plan.getKey().getPlanSummary() != null) {
+                        if (plan.getKey().getPlanSummary().contains("COLLSCAN")) {
+                            planType = "COLLSCAN";
+                        } else if (plan.getKey().getPlanSummary().contains("IXSCAN")) {
+                            planType = "IXSCAN";
+                        } else if (plan.getKey().getPlanSummary().contains("COUNTSCAN")) {
+                            planType = "COUNTSCAN";
+                        } else if (plan.getKey().getPlanSummary().contains("DISTINCT_SCAN")) {
+                            planType = "DISTINCT";
+                        } else if (plan.getKey().getPlanSummary().contains("TEXT")) {
+                            planType = "TEXT";
+                        }
+                    }
                     
                     System.out.println(String.format(dataFormat,
                         planCacheKey,
@@ -168,7 +187,10 @@ public class PlanCacheAccumulator {
                         plan.getMax(),
                         plan.getAvg(),
                         plan.getPercentile95(),
-                        plan.getCount() * plan.getAvg() / 1000));
+                        plan.getCount() * plan.getAvg() / 1000,
+                        planType,
+                        plan.getAvgPlanningTimeMs(),
+                        plan.getPlanningTimePercentile95Ms()));
                 });
         });
     }
@@ -186,17 +208,17 @@ public class PlanCacheAccumulator {
                 // Track actual lengths, but set reasonable limits
                 if (plan.getKey().getPlanCacheKey() != null) {
                     maxPlanCacheKeyWidth = Math.max(maxPlanCacheKeyWidth, 
-                        Math.min(plan.getKey().getPlanCacheKey().length(), 20));
+                        Math.min(plan.getKey().getPlanCacheKey().length(), 15));
                 }
                 
                 if (plan.getKey().getPlanSummary() != null) {
                     maxPlanSummaryWidth = Math.max(maxPlanSummaryWidth, 
-                        Math.min(plan.getKey().getPlanSummary().length(), 40));
+                        Math.min(plan.getKey().getPlanSummary().length(), 35));
                 }
                 
                 if (plan.getKey().getNamespace() != null) {
                     maxNamespaceWidth = Math.max(maxNamespaceWidth, 
-                        Math.min(plan.getKey().getNamespace().toString().length(), 50));
+                        Math.min(plan.getKey().getNamespace().toString().length(), 45));
                 }
             }
         }

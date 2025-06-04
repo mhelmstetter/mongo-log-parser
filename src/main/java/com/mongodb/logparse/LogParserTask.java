@@ -204,6 +204,17 @@ class LogParserTask implements Callable<ProcessingStats> {
                 }
             }
         }
+        
+        // Extract planningTimeMicros
+        if (attr.has("planningTimeMicros")) {
+            try {
+                slowQuery.planningTimeMicros = getMetric(attr, "planningTimeMicros");
+            } catch (JSONException e) {
+                if (debug) {
+                    LogParser.logger.debug("Error extracting planningTimeMicros: {}", e.getMessage());
+                }
+            }
+        }
     }
     
     private boolean processIndexOperation(JSONObject jo, JSONObject attr, SlowQuery slowQuery) {
