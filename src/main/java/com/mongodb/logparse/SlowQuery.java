@@ -15,4 +15,7 @@ public class SlowQuery {
 	public String planCacheKey = null;
 	public String planSummary = null;
 	public Long planningTimeMicros = null;
+	public Boolean replanned = null;
+	public String replanReason = null;
+	public Boolean fromMultiPlanner = null;
 }

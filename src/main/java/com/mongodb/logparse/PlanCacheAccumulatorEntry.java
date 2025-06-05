@@ -21,11 +21,16 @@ public class PlanCacheAccumulatorEntry {
     private long bytesRead = 0;
     private long collectionScanCount = 0;
     
-    // New: Planning time tracking
+    // Planning time tracking
     private long totalPlanningTimeMicros = 0;
     private long planningTimeCount = 0;
     private long minPlanningTimeMicros = Long.MAX_VALUE;
     private long maxPlanningTimeMicros = Long.MIN_VALUE;
+    
+    // NEW: Replanning tracking
+    private long replannedCount = 0;
+    private long multiPlannerCount = 0;
+    private java.util.Map<String, Long> replanReasons = new java.util.HashMap<>();
     
     // Statistics for percentiles
     private DescriptiveStatistics executionStats = new DescriptiveStatistics();
@@ -81,7 +86,7 @@ public class PlanCacheAccumulatorEntry {
             bytesRead += slowQuery.bytesRead;
         }
         
-        // NEW: Track planning time
+        // Track planning time
         if (slowQuery.planningTimeMicros != null) {
             planningTimeCount++;
             totalPlanningTimeMicros += slowQuery.planningTimeMicros;
@@ -98,7 +103,22 @@ public class PlanCacheAccumulatorEntry {
             }
         }
         
-        // FIXED: Track collection scans based on current query's plan summary
+        // NEW: Track replanning events
+        if (slowQuery.replanned != null && slowQuery.replanned) {
+            replannedCount++;
+            
+            // Track replan reasons
+            if (slowQuery.replanReason != null) {
+                replanReasons.merge(slowQuery.replanReason, 1L, Long::sum);
+            }
+        }
+        
+        // NEW: Track multi-planner usage
+        if (slowQuery.fromMultiPlanner != null && slowQuery.fromMultiPlanner) {
+            multiPlannerCount++;
+        }
+        
+        // Track collection scans based on current query's plan summary
         if (slowQuery.planSummary != null && slowQuery.planSummary.contains("COLLSCAN")) {
             collectionScanCount++;
         }
@@ -165,7 +185,7 @@ public class PlanCacheAccumulatorEntry {
         return count > 0 ? (collectionScanCount * 100.0) / count : 0.0;
     }
     
-    // NEW: Planning time getters (converted to milliseconds)
+    // Planning time getters (converted to milliseconds)
     public long getMinPlanningTimeMs() {
         return planningTimeCount > 0 ? Math.round(minPlanningTimeMicros / 1000.0) : 0;
     }
@@ -180,6 +200,34 @@ public class PlanCacheAccumulatorEntry {
     
     public double getPlanningTimePercentile95Ms() {
         return planningTimeStats.getN() > 0 ? planningTimeStats.getPercentile(95) / 1000.0 : 0.0;
+    }
+    
+    // NEW: Replanning getters
+    public long getReplannedCount() {
+        return replannedCount;
+    }
+    
+    public double getReplannedPercentage() {
+        return count > 0 ? (replannedCount * 100.0) / count : 0.0;
+    }
+    
+    public long getMultiPlannerCount() {
+        return multiPlannerCount;
+    }
+    
+    public double getMultiPlannerPercentage() {
+        return count > 0 ? (multiPlannerCount * 100.0) / count : 0.0;
+    }
+    
+    public java.util.Map<String, Long> getReplanReasons() {
+        return new java.util.HashMap<>(replanReasons);
+    }
+    
+    public String getMostCommonReplanReason() {
+        return replanReasons.entrySet().stream()
+            .max(java.util.Map.Entry.comparingByValue())
+            .map(java.util.Map.Entry::getKey)
+            .orElse("none");
     }
     
     @Override
@@ -206,7 +254,7 @@ public class PlanCacheAccumulatorEntry {
             }
         }
         
-        return String.format("%-45s %-12s %-10s %-35s %8s %8d %8d %8d %8d %8.0f %10d %10d %10d %8d %8d %8d",
+        return String.format("%-45s %-12s %-10s %-35s %8s %8d %8d %8d %8d %8.0f %10d %10d %10d %8d %8d %8d %8.1f",
                 truncatedNamespace,
                 truncatedPlanCacheKey,
                 truncatedQueryHash,
@@ -223,7 +271,8 @@ public class PlanCacheAccumulatorEntry {
                 getAvgReturned(),
                 getMinPlanningTimeMs(),
                 getMaxPlanningTimeMs(),
-                getAvgPlanningTimeMs());
+                getAvgPlanningTimeMs(),
+                getReplannedPercentage());
     }
     
     public String toCsvString() {
@@ -243,7 +292,7 @@ public class PlanCacheAccumulatorEntry {
             }
         }
         
-        return String.format("%s,%s,%s,%s,%s,%d,%d,%d,%d,%.0f,%d,%d,%d,%.0f,%.0f,%.1f,%.1f,%d,%d,%d,%.1f,%d,%d,%d,%.0f",
+        return String.format("%s,%s,%s,%s,%s,%d,%d,%d,%d,%.0f,%d,%d,%d,%.0f,%.0f,%.1f,%.1f,%d,%d,%d,%.1f,%d,%d,%d,%.0f,%d,%.1f,%d,%.1f,%s",
                 key.getNamespace(),
                 escapeCsv(key.getPlanCacheKey()),
                 escapeCsv(key.getQueryHash()),
@@ -268,7 +317,12 @@ public class PlanCacheAccumulatorEntry {
                 getMinPlanningTimeMs(),
                 getMaxPlanningTimeMs(),
                 getAvgPlanningTimeMs(),
-                getPlanningTimePercentile95Ms());
+                getPlanningTimePercentile95Ms(),
+                replannedCount,
+                getReplannedPercentage(),
+                multiPlannerCount,
+                getMultiPlannerPercentage(),
+                escapeCsv(getMostCommonReplanReason()));
     }
     
     private String truncateString(String value, int maxLength) {
