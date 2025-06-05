@@ -107,6 +107,9 @@ class LogParserTask implements Callable<ProcessingStats> {
                 // Extract plan cache information
                 extractPlanCacheInfo(attr, slowQuery);
                 
+                // NEW: Extract replanning information
+                extractReplanningInfo(attr, slowQuery);
+                
                 JSONObject command = attr.getJSONObject("command");
                 
                 // Enhanced operation type detection
@@ -135,6 +138,7 @@ class LogParserTask implements Callable<ProcessingStats> {
                 // This is a WRITE operation log entry
                 if (processWriteOperation(attr, slowQuery)) {
                     extractPlanCacheInfo(attr, slowQuery);
+                    extractReplanningInfo(attr, slowQuery);
                     processExecutionStats(attr, slowQuery);
                     processStorageMetrics(attr, slowQuery);
                     
@@ -213,6 +217,31 @@ class LogParserTask implements Callable<ProcessingStats> {
                 if (debug) {
                     LogParser.logger.debug("Error extracting planningTimeMicros: {}", e.getMessage());
                 }
+            }
+        }
+    }
+    
+    // NEW: Extract replanning information from the log attributes
+    private void extractReplanningInfo(JSONObject attr, SlowQuery slowQuery) {
+        try {
+            // Extract replanned flag
+            if (attr.has("replanned")) {
+                slowQuery.replanned = attr.getBoolean("replanned");
+            }
+            
+            // Extract replan reason
+            if (attr.has("replanReason")) {
+                slowQuery.replanReason = attr.getString("replanReason");
+            }
+            
+            // Extract fromMultiPlanner flag
+            if (attr.has("fromMultiPlanner")) {
+                slowQuery.fromMultiPlanner = attr.getBoolean("fromMultiPlanner");
+            }
+            
+        } catch (JSONException e) {
+            if (debug) {
+                LogParser.logger.debug("Error extracting replanning info: {}", e.getMessage());
             }
         }
     }

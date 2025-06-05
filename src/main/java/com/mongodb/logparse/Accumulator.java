@@ -79,7 +79,7 @@ public class Accumulator {
         System.out.println(String.format("%-65s %-20s %10s %10s %10s %10s %10s %10s %10s %10s %10s %10s %10s", 
                 "Namespace", "operation", "count", "reslenMB", "readMB", "min_ms", "max_ms", "avg_ms",
                 "totalSec", "avgKeysEx", "avgDocsEx", "avgReturn", "exRetRatio"));
-        System.out.println("=".repeat(170));
+        System.out.println("=".repeat(208));
         accumulators.values().stream().sorted(Comparator.comparingLong(LogLineAccumulator::getCount).reversed())
                 .forEach(acc -> System.out.println(acc));
     }

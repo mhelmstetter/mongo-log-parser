@@ -46,7 +46,7 @@ public class LogParser implements Callable<Integer> {
 
     static final Logger logger = LoggerFactory.getLogger(LogParser.class);
 
-    @Option(names = { "-f", "--files" }, description = "MongoDB log file(s)", required = true)
+    @Option(names = { "-f", "--files" }, description = "MongoDB log file(s)", required = true, arity = "1..*")
     private String[] fileNames;
 
     @Option(names = { "-q", "--queries" }, description = "Parse queries")
@@ -102,7 +102,13 @@ public class LogParser implements Callable<Integer> {
 
     @Override
     public Integer call() throws Exception {
-        logger.info("Starting MongoDB log parsing with {} processors", Runtime.getRuntime().availableProcessors());
+    	logger.info("Starting MongoDB log parsing with {} files and {} processors", 
+                fileNames.length, Runtime.getRuntime().availableProcessors());
+        
+        // Debug: Print all files that will be processed
+        for (int i = 0; i < fileNames.length; i++) {
+            logger.info("File {}: {}", i + 1, fileNames[i]);
+        }
 
         loadConfiguration();
         ttlAccumulator = new Accumulator();
@@ -155,9 +161,29 @@ public class LogParser implements Callable<Integer> {
     }
 
     public void read() throws IOException, ExecutionException, InterruptedException {
+        logger.info("Processing {} files: {}", fileNames.length, String.join(", ", fileNames));
+        
         for (String fileName : fileNames) {
             File f = new File(fileName);
-            read(f);
+            
+            if (!f.exists()) {
+                logger.error("File does not exist: {}", fileName);
+                continue;
+            }
+            
+            if (!f.canRead()) {
+                logger.error("Cannot read file: {}", fileName);
+                continue;
+            }
+            
+            try {
+                logger.info("Starting to process file: {} (size: {} bytes)", fileName, f.length());
+                read(f);
+                logger.info("Completed processing file: {}", fileName);
+            } catch (Exception e) {
+                logger.error("Failed to process file: {}. Error: {}", fileName, e.getMessage(), e);
+                // Continue with next file
+            }
         }
     }
 
