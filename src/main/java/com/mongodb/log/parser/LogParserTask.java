@@ -333,70 +333,73 @@ class LogParserTask implements Callable<ProcessingStats> {
 
 	// Extract read preference and sanitize filter from the command
 	private void extractReadPreferenceAndFilter(JSONObject attr, SlowQuery slowQuery) {
-		try {
-			if (attr.has("command")) {
-				JSONObject command = attr.getJSONObject("command");
+	    try {
+	        if (attr.has("command")) {
+	            JSONObject command = attr.getJSONObject("command");
 
-				// Extract read preference - get the full object for detailed analysis
-				if (command.has("$readPreference")) {
-					Object readPrefObj = command.get("$readPreference");
-					if (readPrefObj instanceof JSONObject) {
-						JSONObject readPref = (JSONObject) readPrefObj;
-						slowQuery.readPreference = readPref;
-					}
-				}
+	            // Extract read preference - convert to string for storage
+	            if (command.has("$readPreference")) {
+	                Object readPrefObj = command.get("$readPreference");
+	                if (readPrefObj instanceof JSONObject) {
+	                    JSONObject readPref = (JSONObject) readPrefObj;
+	                    // Convert the JSONObject to a string representation for storage
+	                    slowQuery.readPreference = readPref.toString();
+	                } else if (readPrefObj instanceof String) {
+	                    slowQuery.readPreference = (String) readPrefObj;
+	                }
+	            }
 
-				// Extract and sanitize filter for find operations
-				if (command.has("filter")) {
-					Object filterObj = command.get("filter");
-					if (filterObj instanceof JSONObject) {
-						JSONObject filter = (JSONObject) filterObj;
-						slowQuery.sanitizedFilter = QuerySanitizer.sanitizeFilter(filter);
-					}
-				}
+	            // Extract and sanitize filter for find operations
+	            if (command.has("filter")) {
+	                Object filterObj = command.get("filter");
+	                if (filterObj instanceof JSONObject) {
+	                    JSONObject filter = (JSONObject) filterObj;
+	                    slowQuery.sanitizedFilter = QuerySanitizer.sanitizeFilter(filter);
+	                }
+	            }
 
-				// Extract and sanitize query for other operations that use "q" field
-				if (command.has("q")) {
-					Object queryObj = command.get("q");
-					if (queryObj instanceof JSONObject) {
-						JSONObject query = (JSONObject) queryObj;
-						slowQuery.sanitizedFilter = QuerySanitizer.sanitizeFilter(query);
-					}
-				}
+	            // Extract and sanitize query for other operations that use "q" field
+	            if (command.has("q")) {
+	                Object queryObj = command.get("q");
+	                if (queryObj instanceof JSONObject) {
+	                    JSONObject query = (JSONObject) queryObj;
+	                    slowQuery.sanitizedFilter = QuerySanitizer.sanitizeFilter(query);
+	                }
+	            }
 
-				// For aggregate operations, try to extract the first $match stage
-				if (command.has("pipeline") && slowQuery.sanitizedFilter == null) {
-					try {
-						Object pipelineObj = command.get("pipeline");
-						if (pipelineObj instanceof org.json.JSONArray) {
-							org.json.JSONArray pipeline = (org.json.JSONArray) pipelineObj;
-							for (int i = 0; i < pipeline.length(); i++) {
-								Object stageObj = pipeline.get(i);
-								if (stageObj instanceof JSONObject) {
-									JSONObject stage = (JSONObject) stageObj;
-									if (stage.has("$match")) {
-										Object matchObj = stage.get("$match");
-										if (matchObj instanceof JSONObject) {
-											JSONObject matchFilter = (JSONObject) matchObj;
-											slowQuery.sanitizedFilter = QuerySanitizer.sanitizeFilter(matchFilter);
-											break; // Use the first $match stage
-										}
-									}
-								}
-							}
-						}
-					} catch (Exception e) {
-						if (debug) {
-							LogParser.logger.debug("Error extracting $match from pipeline: {}", e.getMessage());
-						}
-					}
-				}
-			}
-		} catch (JSONException e) {
-			if (debug) {
-				LogParser.logger.debug("Error extracting read preference and filter: {}", e.getMessage());
-			}
-		}
+	            // For aggregate operations, try to extract the first $match stage
+	            if (command.has("pipeline") && slowQuery.sanitizedFilter == null) {
+	                try {
+	                    Object pipelineObj = command.get("pipeline");
+	                    if (pipelineObj instanceof org.json.JSONArray) {
+	                        org.json.JSONArray pipeline = (org.json.JSONArray) pipelineObj;
+	                        for (int i = 0; i < pipeline.length(); i++) {
+	                            Object stageObj = pipeline.get(i);
+	                            if (stageObj instanceof JSONObject) {
+	                                JSONObject stage = (JSONObject) stageObj;
+	                                if (stage.has("$match")) {
+	                                    Object matchObj = stage.get("$match");
+	                                    if (matchObj instanceof JSONObject) {
+	                                        JSONObject matchFilter = (JSONObject) matchObj;
+	                                        slowQuery.sanitizedFilter = QuerySanitizer.sanitizeFilter(matchFilter);
+	                                        break; // Use the first $match stage
+	                                    }
+	                                }
+	                            }
+	                        }
+	                    }
+	                } catch (Exception e) {
+	                    if (debug) {
+	                        LogParser.logger.debug("Error extracting $match from pipeline: {}", e.getMessage());
+	                    }
+	                }
+	            }
+	        }
+	    } catch (JSONException e) {
+	        if (debug) {
+	            LogParser.logger.debug("Error extracting read preference and filter: {}", e.getMessage());
+	        }
+	    }
 	}
 
 	// Extract replanning information from the log attributes
