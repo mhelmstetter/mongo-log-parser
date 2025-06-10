@@ -183,7 +183,8 @@ public class LogParser implements Callable<Integer> {
                     htmlOutputFile, 
                     accumulator, 
                     ttlAccumulator, 
-                    planCacheAccumulator, 
+                    planCacheAccumulator,
+                    queryHashAccumulator,
                     operationTypeStats
                 );
                 logger.info("HTML report generated successfully");
