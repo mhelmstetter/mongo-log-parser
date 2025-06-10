@@ -32,7 +32,7 @@
 							<transformers>
 								<transformer
 									implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-									<mainClass>com.mongodb.logparse.LogParser</mainClass>
+									<mainClass>com.mongodb.log.parser.LogParser</mainClass>
 								</transformer>
 							</transformers>
 							<createDependencyReducedPom>false</createDependencyReducedPom>
