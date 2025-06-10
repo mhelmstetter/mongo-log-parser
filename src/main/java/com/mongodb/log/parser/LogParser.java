@@ -102,6 +102,8 @@ public class LogParser implements Callable<Integer> {
     // Query shape tracking (if enabled)
     private Map<Namespace, Map<Set<String>, AtomicInteger>> shapesByNamespace = new HashMap<>();
     private Accumulator shapeAccumulator = new Accumulator();
+    
+    private QueryHashAccumulator queryHashAccumulator;
 
     // Ignored lines analysis
     private Map<String, AtomicLong> ignoredCategories = new HashMap<>();
@@ -131,6 +133,7 @@ public class LogParser implements Callable<Integer> {
 
         loadConfiguration();
         ttlAccumulator = new Accumulator();
+        queryHashAccumulator = new QueryHashAccumulator();
         
         if (enablePlanCacheAnalysis) {
             planCacheAccumulator = new PlanCacheAccumulator();
@@ -161,6 +164,15 @@ public class LogParser implements Callable<Integer> {
             if (planCacheCsvFile != null) {
                 logger.info("Writing plan cache CSV report to: {}", planCacheCsvFile);
                 planCacheAccumulator.reportCsv(planCacheCsvFile);
+            }
+        }
+        
+        if (queryHashAccumulator != null) {
+            queryHashAccumulator.report();
+            
+            if (queryHashCsvFile != null) {
+                logger.info("Writing query hash CSV report to: {}", queryHashCsvFile);
+                queryHashAccumulator.reportCsv(queryHashCsvFile);
             }
         }
         

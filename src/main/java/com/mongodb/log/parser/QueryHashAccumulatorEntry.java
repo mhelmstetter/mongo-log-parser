@@ -3,6 +3,7 @@ package com.mongodb.log.parser;
 import org.apache.commons.math3.stat.descriptive.DescriptiveStatistics;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Accumulator entry for tracking execution statistics by query hash
@@ -27,7 +28,7 @@ public class QueryHashAccumulatorEntry {
     private DescriptiveStatistics keysExaminedStats = new DescriptiveStatistics();
     private DescriptiveStatistics docsExaminedStats = new DescriptiveStatistics();
     
-    // Read preference tracking
+    // Read preference tracking - store detailed breakdown
     private Map<String, Long> readPreferenceCounts = new HashMap<>();
     
     // Store one example of the sanitized query
@@ -81,9 +82,12 @@ public class QueryHashAccumulatorEntry {
             bytesRead += slowQuery.bytesRead;
         }
         
-        // Track read preferences
-        if (slowQuery.readPreference != null) {
+        // Track read preferences with detailed breakdown
+        if (slowQuery.readPreference != null && !slowQuery.readPreference.isEmpty()) {
             readPreferenceCounts.merge(slowQuery.readPreference, 1L, Long::sum);
+        } else {
+            // Track when no read preference is specified
+            readPreferenceCounts.merge("none", 1L, Long::sum);
         }
         
         // Store sanitized query if we don't have one yet
@@ -152,28 +156,48 @@ public class QueryHashAccumulatorEntry {
         return docsExaminedStats.getN() > 0 ? docsExaminedStats.getPercentile(95) : 0.0;
     }
     
+    /**
+     * Get a detailed breakdown of read preferences with counts
+     * Format: "mode:primary(150),mode:secondary(50),tags:region(25)"
+     */
     public String getReadPreferenceSummary() {
         if (readPreferenceCounts.isEmpty()) {
             return "none";
         }
         
-        if (readPreferenceCounts.size() == 1) {
-            Map.Entry<String, Long> entry = readPreferenceCounts.entrySet().iterator().next();
-            return entry.getKey() + "(" + entry.getValue() + ")";
-        } else {
-            StringBuilder sb = new StringBuilder();
-            readPreferenceCounts.entrySet().stream()
+        return readPreferenceCounts.entrySet().stream()
                 .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
-                .forEach(entry -> {
-                    if (sb.length() > 0) sb.append(", ");
-                    sb.append(entry.getKey()).append("(").append(entry.getValue()).append(")");
-                });
-            return sb.toString();
+                .map(entry -> entry.getKey() + "(" + entry.getValue() + ")")
+                .collect(Collectors.joining(","));
+    }
+    
+    /**
+     * Get just the most common read preference for simpler display
+     */
+    public String getPrimaryReadPreference() {
+        if (readPreferenceCounts.isEmpty()) {
+            return "none";
         }
+        
+        return readPreferenceCounts.entrySet().stream()
+                .max(Map.Entry.comparingByValue())
+                .map(Map.Entry::getKey)
+                .orElse("none");
     }
     
     public String getSanitizedQuery() {
         return sanitizedQuery != null ? sanitizedQuery : "none";
+    }
+    
+    /**
+     * Get a truncated version of the sanitized query for display
+     */
+    public String getTruncatedSanitizedQuery(int maxLength) {
+        String query = getSanitizedQuery();
+        if (query.length() <= maxLength) {
+            return query;
+        }
+        return query.substring(0, maxLength - 3) + "...";
     }
     
     @Override
@@ -182,10 +206,10 @@ public class QueryHashAccumulatorEntry {
         String truncatedQueryHash = truncateString(key.getQueryHash(), 12);
         String truncatedNamespace = truncateString(key.getNamespace().toString(), 45);
         String truncatedOperation = truncateString(key.getOperation(), 15);
-        String truncatedReadPref = truncateString(getReadPreferenceSummary(), 30);
-        String truncatedQuery = truncateString(getSanitizedQuery(), 100);
+        String truncatedReadPref = truncateString(getReadPreferenceSummary(), 40);
+        String truncatedQuery = truncateString(getSanitizedQuery(), 80);
         
-        return String.format("%-12s %-45s %-15s %8d %8d %8d %8d %8.0f %10d %10d %10d %8.0f %8.0f %8.1f %8.1f %8d %8d %-30s %-100s",
+        return String.format("%-12s %-45s %-15s %8d %8d %8d %8d %8.0f %10d %10d %10d %8.0f %8.0f %8.1f %8.1f %8d %8d %-40s %-80s",
                 truncatedQueryHash,
                 truncatedNamespace,
                 truncatedOperation,

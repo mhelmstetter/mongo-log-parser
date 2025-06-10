@@ -5,6 +5,8 @@ import org.json.JSONException;
 import org.json.JSONObject;
 import java.util.Iterator;
 import java.util.regex.Pattern;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Utility class for sanitizing MongoDB queries to remove sensitive data while preserving structure
@@ -28,54 +30,6 @@ public class QuerySanitizer {
         } catch (Exception e) {
             // If sanitization fails, return a generic placeholder
             return "{\"sanitization_error\": \"xxx\"}";
-        }
-    }
-    
-    /**
-     * Sanitizes a read preference object, preserving structure but obfuscating tag values
-     */
-    public static String sanitizeReadPreference(JSONObject readPreference) {
-        if (readPreference == null) {
-            return "none";
-        }
-        
-        try {
-            JSONObject sanitized = new JSONObject();
-            
-            // Keep mode as-is
-            if (readPreference.has("mode")) {
-                sanitized.put("mode", readPreference.get("mode"));
-            }
-            
-            // Sanitize tags if present
-            if (readPreference.has("tags")) {
-                Object tags = readPreference.get("tags");
-                if (tags instanceof JSONArray) {
-                    JSONArray tagsArray = (JSONArray) tags;
-                    JSONArray sanitizedTags = new JSONArray();
-                    
-                    for (int i = 0; i < tagsArray.length(); i++) {
-                        Object tagObj = tagsArray.get(i);
-                        if (tagObj instanceof JSONObject) {
-                            JSONObject tag = (JSONObject) tagObj;
-                            JSONObject sanitizedTag = new JSONObject();
-                            
-                            Iterator<String> keys = tag.keys();
-                            while (keys.hasNext()) {
-                                String key = keys.next();
-                                // Keep key names, sanitize values
-                                sanitizedTag.put(key, "xxx");
-                            }
-                            sanitizedTags.put(sanitizedTag);
-                        }
-                    }
-                    sanitized.put("tags", sanitizedTags);
-                }
-            }
-            
-            return sanitized.toString();
-        } catch (Exception e) {
-            return readPreference.toString(); // Fallback to original if sanitization fails
         }
     }
     
