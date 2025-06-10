@@ -15,17 +15,17 @@ public class PlanCacheAccumulator {
     private Map<PlanCacheKey, PlanCacheAccumulatorEntry> planCacheEntries = new HashMap<>();
     
     private String[] headers = new String[] { 
-        "Namespace", "PlanCacheKey", "QueryHash", "PlanSummary", "Count", 
-        "MinMs", "MaxMs", "AvgMs", "P95Ms", "TotalSec", "AvgKeysEx", 
-        "AvgDocsEx", "KeysP95", "DocsP95", "TotalKeysK", "TotalDocsK", 
-        "AvgReturn", "ExRetRatio", "CollScanCount", "CollScanPct", 
-        "MinPlanMs", "MaxPlanMs", "AvgPlanMs", "PlanP95Ms", "ReplannedCount", 
-        "ReplannedPct", "MultiPlannerCount", "MultiPlannerPct", "TopReplanReason"
-    };
+    	    "Namespace", "PlanCacheKey", "QueryHash", "PlanSummary", "Count", 
+    	    "MinMs", "MaxMs", "AvgMs", "P95Ms", "TotalSec", "AvgKeysEx", 
+    	    "AvgDocsEx", "KeysP95", "DocsP95", "TotalKeysK", "TotalDocsK", 
+    	    "AvgReturn", "ExRetRatio", "CollScanCount", "CollScanPct", 
+    	    "MinPlanMs", "MaxPlanMs", "AvgPlanMs", "PlanP95Ms", "ReplannedCount", 
+    	    "ReplannedPct", "MultiPlannerCount", "MultiPlannerPct", "TopReplanReason"
+    	};
 
     public void accumulate(SlowQuery slowQuery) {
-        if (slowQuery.planCacheKey == null) {
-            return; // Skip entries without planCacheKey
+        if (slowQuery.planCacheKey == null || slowQuery.planSummary == null) {
+            return;
         }
         
         PlanCacheKey key = new PlanCacheKey(

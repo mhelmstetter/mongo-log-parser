@@ -72,7 +72,6 @@ public class HtmlReportGenerator {
         writer.println("        .summary-label { font-weight: bold; color: #2c3e50; }");
         writer.println("        .summary-value { font-size: 18px; color: #27ae60; }");
         writer.println("        .collscan { background-color: #ffebee !important; }");
-        writer.println("        .ixscan { background-color: #e8f5e8 !important; }");
         writer.println("        .truncated { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help; }");
         writer.println("    </style>");
         writer.println("</head>");
@@ -142,10 +141,32 @@ public class HtmlReportGenerator {
         accumulator.getAccumulators().values().stream()
             .sorted(Comparator.comparingLong(LogLineAccumulator::getCount).reversed())
             .forEach(acc -> {
+                // The LogLineAccumulator.toString() method uses this format:
+                // String.format("%-65s %-20s %10d %10.1f %10d %10d %10d %10d %10d %10d %10d %10d %10d", 
+                //               namespace, operation, count, ...)
+                
+                String accString = acc.toString();
+                
+                // Extract namespace (first 65 characters) and operation (next 20 characters)
+                String namespace = "";
+                String operation = "";
+                
+                if (accString.length() > 65) {
+                    namespace = accString.substring(0, 65).trim();
+                    if (accString.length() > 85) {
+                        operation = accString.substring(65, 85).trim();
+                    } else {
+                        operation = accString.substring(65).trim();
+                    }
+                } else {
+                    // Handle case where string is shorter than expected
+                    namespace = accString.trim();
+                }
+                
                 writer.println("                    <tr>");
-                writer.println("                        <td class=\"truncated\" title=\"" + escapeHtml(acc.toString().split(" ")[0]) + "\">" 
-                    + escapeHtml(truncate(acc.toString().split(" ")[0], 50)) + "</td>");
-                writer.println("                        <td>" + escapeHtml(acc.toString().split(" ")[1]) + "</td>");
+                writer.println("                        <td class=\"truncated\" title=\"" + escapeHtml(namespace) + "\">" 
+                    + escapeHtml(truncate(namespace, 50)) + "</td>");
+                writer.println("                        <td>" + escapeHtml(operation) + "</td>");
                 writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(acc.getCount()) + "</td>");
                 writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(acc.getMin()) + "</td>");
                 writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(acc.getMax()) + "</td>");
@@ -281,18 +302,29 @@ public class HtmlReportGenerator {
     private static void writePlanCacheTable(PrintWriter writer, PlanCacheAccumulator planCacheAccumulator) {
         writer.println("        <h2>Plan Cache Analysis</h2>");
         
-        // Calculate plan cache summary
-        long totalQueries = planCacheAccumulator.getPlanCacheEntries().values().stream()
+        // Filter out entries with UNKNOWN plan summaries
+        var filteredEntries = planCacheAccumulator.getPlanCacheEntries().values().stream()
+            .filter(entry -> entry.getKey().getPlanSummary() != null && 
+                            !"UNKNOWN".equals(entry.getKey().getPlanSummary()))
+            .collect(java.util.stream.Collectors.toList());
+        
+        if (filteredEntries.isEmpty()) {
+            writer.println("        <p>No plan cache entries with valid plan summaries found.</p>");
+            return;
+        }
+        
+        // Calculate plan cache summary (using filtered entries)
+        long totalQueries = filteredEntries.stream()
             .mapToLong(PlanCacheAccumulatorEntry::getCount)
             .sum();
-        long collScanQueries = planCacheAccumulator.getPlanCacheEntries().values().stream()
+        long collScanQueries = filteredEntries.stream()
             .filter(entry -> entry.isCollectionScan())
             .mapToLong(PlanCacheAccumulatorEntry::getCount)
             .sum();
-        long totalReplanned = planCacheAccumulator.getPlanCacheEntries().values().stream()
+        long totalReplanned = filteredEntries.stream()
             .mapToLong(PlanCacheAccumulatorEntry::getReplannedCount)
             .sum();
-        long uniquePlanKeys = planCacheAccumulator.getPlanCacheEntries().size();
+        long uniquePlanKeys = filteredEntries.size();
         
         writer.println("        <div class=\"summary\">");
         writer.println("            <h3>Plan Cache Summary</h3>");
@@ -330,43 +362,29 @@ public class HtmlReportGenerator {
         writer.println("                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 1, 'string')\">Plan Cache Key</th>");
         writer.println("                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 2, 'string')\">Query Hash</th>");
         writer.println("                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 3, 'string')\">Plan Summary</th>");
-        writer.println("                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 4, 'string')\">Plan Type</th>");
-        writer.println("                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 5, 'number')\">Count</th>");
-        writer.println("                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 6, 'number')\">Min (ms)</th>");
-        writer.println("                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 7, 'number')\">Max (ms)</th>");
-        writer.println("                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 8, 'number')\">Avg (ms)</th>");
-        writer.println("                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 9, 'number')\">P95 (ms)</th>");
-        writer.println("                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 10, 'number')\">Avg Keys Ex</th>");
-        writer.println("                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 11, 'number')\">Avg Docs Ex</th>");
-        writer.println("                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 12, 'number')\">Avg Return</th>");
-        writer.println("                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 13, 'number')\">Avg Plan (ms)</th>");
-        writer.println("                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 14, 'number')\">Replan %</th>");
+        writer.println("                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 4, 'number')\">Count</th>");
+        writer.println("                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 5, 'number')\">Min (ms)</th>");
+        writer.println("                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 6, 'number')\">Max (ms)</th>");
+        writer.println("                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 7, 'number')\">Avg (ms)</th>");
+        writer.println("                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 8, 'number')\">P95 (ms)</th>");
+        writer.println("                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 9, 'number')\">Avg Keys Ex</th>");
+        writer.println("                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 10, 'number')\">Avg Docs Ex</th>");
+        writer.println("                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 11, 'number')\">Avg Return</th>");
+        writer.println("                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 12, 'number')\">Avg Plan (ms)</th>");
+        writer.println("                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 13, 'number')\">Replan %</th>");
         writer.println("                    </tr>");
         writer.println("                </thead>");
         writer.println("                <tbody>");
         
-        planCacheAccumulator.getPlanCacheEntries().values().stream()
+        filteredEntries.stream()
             .sorted(Comparator.comparingLong(PlanCacheAccumulatorEntry::getCount).reversed())
             .forEach(entry -> {
                 PlanCacheKey key = entry.getKey();
                 
-                // Determine plan type and set row class
-                String planType = "UNKNOWN";
+                // Determine row class (only for COLLSCAN, remove IXSCAN styling)
                 String rowClass = "";
-                if (key.getPlanSummary() != null) {
-                    if (key.getPlanSummary().contains("COLLSCAN")) {
-                        planType = "COLLSCAN";
-                        rowClass = " class=\"collscan\"";
-                    } else if (key.getPlanSummary().contains("IXSCAN")) {
-                        planType = "IXSCAN";
-                        rowClass = " class=\"ixscan\"";
-                    } else if (key.getPlanSummary().contains("COUNTSCAN")) {
-                        planType = "COUNTSCAN";
-                    } else if (key.getPlanSummary().contains("DISTINCT_SCAN")) {
-                        planType = "DISTINCT";
-                    } else if (key.getPlanSummary().contains("TEXT")) {
-                        planType = "TEXT";
-                    }
+                if (key.getPlanSummary() != null && key.getPlanSummary().contains("COLLSCAN")) {
+                    rowClass = " class=\"collscan\"";
                 }
                 
                 writer.println("                    <tr" + rowClass + ">");
@@ -378,7 +396,7 @@ public class HtmlReportGenerator {
                     + escapeHtml(truncate(key.getQueryHash(), 10)) + "</td>");
                 writer.println("                        <td class=\"truncated\" title=\"" + escapeHtml(key.getPlanSummary()) + "\">" 
                     + escapeHtml(truncate(key.getPlanSummary(), 35)) + "</td>");
-                writer.println("                        <td>" + planType + "</td>");
+                // Removed Plan Type column
                 writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(entry.getCount()) + "</td>");
                 writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(entry.getMin()) + "</td>");
                 writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(entry.getMax()) + "</td>");
@@ -396,6 +414,7 @@ public class HtmlReportGenerator {
         writer.println("            </table>");
         writer.println("        </div>");
     }
+
     
     private static void writeHtmlFooter(PrintWriter writer) {
         writer.println("    </div>");
@@ -436,11 +455,25 @@ public class HtmlReportGenerator {
         writer.println("                let bVal = b.cells[column].textContent.trim();");
         writer.println("                ");
         writer.println("                if (type === 'number') {");
-        writer.println("                    // Remove commas and % signs for numeric comparison");
-        writer.println("                    aVal = parseFloat(aVal.replace(/[,%]/g, '')) || 0;");
-        writer.println("                    bVal = parseFloat(bVal.replace(/[,%]/g, '')) || 0;");
-        writer.println("                    return ascending ? aVal - bVal : bVal - aVal;");
+        writer.println("                    // Handle various number formats");
+        writer.println("                    // Remove commas, percentage signs, and other formatting");
+        writer.println("                    aVal = aVal.replace(/[,%$]/g, '');");
+        writer.println("                    bVal = bVal.replace(/[,%$]/g, '');");
+        writer.println("                    ");
+        writer.println("                    // Handle special cases like 'sec', 'ms', 'MB', 'KB', 'GB', etc.");
+        writer.println("                    aVal = aVal.replace(/\\s*(sec|ms|MB|KB|GB)$/i, '');");
+        writer.println("                    bVal = bVal.replace(/\\s*(sec|ms|MB|KB|GB)$/i, '');");
+        writer.println("                    ");
+        writer.println("                    // Convert to numbers, treating empty/invalid as 0");
+        writer.println("                    const aNum = parseFloat(aVal);");
+        writer.println("                    const bNum = parseFloat(bVal);");
+        writer.println("                    ");
+        writer.println("                    const aValue = isNaN(aNum) ? 0 : aNum;");
+        writer.println("                    const bValue = isNaN(bNum) ? 0 : bNum;");
+        writer.println("                    ");
+        writer.println("                    return ascending ? aValue - bValue : bValue - aValue;");
         writer.println("                } else {");
+        writer.println("                    // String comparison");
         writer.println("                    return ascending ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);");
         writer.println("                }");
         writer.println("            });");
