@@ -69,6 +69,9 @@ public class LogParser implements Callable<Integer> {
     @Option(names = {"--plan-cache-csv"}, description = "CSV output file for plan cache analysis")
     private String planCacheCsvFile;
 
+    @Option(names = {"--query-hash-csv"}, description = "CSV output file for query hash analysis")
+    private String queryHashCsvFile;
+
     @Option(names = {"--enable-plan-cache"}, description = "Enable plan cache key analysis")
     private boolean enablePlanCacheAnalysis = true;
 
