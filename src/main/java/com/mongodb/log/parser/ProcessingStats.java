@@ -1,4 +1,4 @@
-package com.mongodb.logparse;
+package com.mongodb.log.parser;
 
 // Add this new class for collecting statistics from tasks
 class ProcessingStats {

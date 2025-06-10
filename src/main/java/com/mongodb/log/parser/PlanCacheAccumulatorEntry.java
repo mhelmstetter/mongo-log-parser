@@ -1,4 +1,4 @@
-package com.mongodb.logparse;
+package com.mongodb.log.parser;
 
 import org.apache.commons.math3.stat.descriptive.DescriptiveStatistics;
 
@@ -27,7 +27,7 @@ public class PlanCacheAccumulatorEntry {
     private long minPlanningTimeMicros = Long.MAX_VALUE;
     private long maxPlanningTimeMicros = Long.MIN_VALUE;
     
-    // NEW: Replanning tracking
+    // Replanning tracking
     private long replannedCount = 0;
     private long multiPlannerCount = 0;
     private java.util.Map<String, Long> replanReasons = new java.util.HashMap<>();
@@ -103,7 +103,7 @@ public class PlanCacheAccumulatorEntry {
             }
         }
         
-        // NEW: Track replanning events
+        // Track replanning events
         if (slowQuery.replanned != null && slowQuery.replanned) {
             replannedCount++;
             
@@ -113,7 +113,7 @@ public class PlanCacheAccumulatorEntry {
             }
         }
         
-        // NEW: Track multi-planner usage
+        // Track multi-planner usage
         if (slowQuery.fromMultiPlanner != null && slowQuery.fromMultiPlanner) {
             multiPlannerCount++;
         }
@@ -202,7 +202,7 @@ public class PlanCacheAccumulatorEntry {
         return planningTimeStats.getN() > 0 ? planningTimeStats.getPercentile(95) / 1000.0 : 0.0;
     }
     
-    // NEW: Replanning getters
+    // Replanning getters
     public long getReplannedCount() {
         return replannedCount;
     }
@@ -236,30 +236,13 @@ public class PlanCacheAccumulatorEntry {
         String truncatedNamespace = truncateString(key.getNamespace().toString(), 45);
         String truncatedPlanCacheKey = truncateString(key.getPlanCacheKey(), 12);
         String truncatedQueryHash = truncateString(key.getQueryHash(), 10);
-        String truncatedPlanSummary = truncateString(key.getPlanSummary(), 35);
+        String truncatedPlanSummary = truncateString(key.getPlanSummary(), 80);
         
-        // Determine plan type for cleaner display
-        String planType = "UNKNOWN";
-        if (key.getPlanSummary() != null) {
-            if (key.getPlanSummary().contains("COLLSCAN")) {
-                planType = "COLLSCAN";
-            } else if (key.getPlanSummary().contains("IXSCAN")) {
-                planType = "IXSCAN";
-            } else if (key.getPlanSummary().contains("COUNTSCAN")) {
-                planType = "COUNTSCAN";
-            } else if (key.getPlanSummary().contains("DISTINCT_SCAN")) {
-                planType = "DISTINCT";
-            } else if (key.getPlanSummary().contains("TEXT")) {
-                planType = "TEXT";
-            }
-        }
-        
-        return String.format("%-45s %-12s %-10s %-35s %8s %8d %8d %8d %8d %8.0f %10d %10d %10d %8d %8d %8d %8.1f",
+        return String.format("%-45s %-12s %-10s %-80s %8d %8d %8d %8d %8.0f %10d %10d %10d %8d %8d %8d %8.1f",
                 truncatedNamespace,
                 truncatedPlanCacheKey,
                 truncatedQueryHash,
                 truncatedPlanSummary,
-                planType,
                 count,
                 getMin(),
                 max,
@@ -276,28 +259,11 @@ public class PlanCacheAccumulatorEntry {
     }
     
     public String toCsvString() {
-        // Determine plan type
-        String planType = "UNKNOWN";
-        if (key.getPlanSummary() != null) {
-            if (key.getPlanSummary().contains("COLLSCAN")) {
-                planType = "COLLSCAN";
-            } else if (key.getPlanSummary().contains("IXSCAN")) {
-                planType = "IXSCAN";
-            } else if (key.getPlanSummary().contains("COUNTSCAN")) {
-                planType = "COUNTSCAN";
-            } else if (key.getPlanSummary().contains("DISTINCT_SCAN")) {
-                planType = "DISTINCT";
-            } else if (key.getPlanSummary().contains("TEXT")) {
-                planType = "TEXT";
-            }
-        }
-        
-        return String.format("%s,%s,%s,%s,%s,%d,%d,%d,%d,%.0f,%d,%d,%d,%.0f,%.0f,%.1f,%.1f,%d,%d,%d,%.1f,%d,%d,%d,%.0f,%d,%.1f,%d,%.1f,%s",
+        return String.format("%s,%s,%s,%s,%d,%d,%d,%d,%.0f,%d,%d,%d,%.0f,%.0f,%.1f,%.1f,%d,%d,%d,%.1f,%d,%d,%d,%.0f,%d,%.1f,%d,%.1f,%s",
                 key.getNamespace(),
                 escapeCsv(key.getPlanCacheKey()),
                 escapeCsv(key.getQueryHash()),
                 escapeCsv(key.getPlanSummary()),
-                planType,
                 count,
                 getMin(),
                 max,
