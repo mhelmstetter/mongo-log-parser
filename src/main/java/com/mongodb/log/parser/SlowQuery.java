@@ -1,4 +1,4 @@
-package com.mongodb.logparse;
+package com.mongodb.log.parser;
 
 public class SlowQuery {
 	

@@ -1,9 +1,10 @@
-package com.mongodb.logparse;
+package com.mongodb.log.parser;
 
 import java.io.File;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -18,11 +19,14 @@ class LogParserTask implements Callable<ProcessingStats> {
     private final Map<String, AtomicLong> operationTypeStats;
     private final boolean enablePlanCacheAnalysis;
     private final boolean debug;
+    private final Set<String> namespaceFilters;
+    private final AtomicLong totalFilteredByNamespace;
 
     public LogParserTask(List<String> linesChunk, File file, Accumulator accumulator, 
                         PlanCacheAccumulator planCacheAccumulator,
                         Map<String, AtomicLong> operationTypeStats, 
-                        boolean enablePlanCacheAnalysis, boolean debug) {
+                        boolean enablePlanCacheAnalysis, boolean debug,
+                        Set<String> namespaceFilters, AtomicLong totalFilteredByNamespace) {
         this.linesChunk = linesChunk;
         this.file = file;
         this.accumulator = accumulator;
@@ -30,6 +34,8 @@ class LogParserTask implements Callable<ProcessingStats> {
         this.operationTypeStats = operationTypeStats;
         this.enablePlanCacheAnalysis = enablePlanCacheAnalysis;
         this.debug = debug;
+        this.namespaceFilters = namespaceFilters;
+        this.totalFilteredByNamespace = totalFilteredByNamespace;
     }
 
     @Override
@@ -39,6 +45,7 @@ class LogParserTask implements Callable<ProcessingStats> {
         long localNoCommand = 0;
         long localNoNs = 0;
         long localFoundOps = 0;
+        long localFilteredByNamespace = 0;
         int debugCount = 0;
 
         for (String currentLine : linesChunk) {
@@ -76,6 +83,12 @@ class LogParserTask implements Callable<ProcessingStats> {
             // Check for INDEX operations first (TTL operations, index maintenance)
             if (jo.has("c") && "INDEX".equals(jo.getString("c"))) {
                 if (processIndexOperation(jo, attr, slowQuery)) {
+                    // Apply namespace filtering
+                    if (!matchesNamespaceFilter(slowQuery.ns)) {
+                        localFilteredByNamespace++;
+                        continue;
+                    }
+                    
                     synchronized (accumulator) {
                         accumulator.accumulate(slowQuery);
                     }
@@ -101,13 +114,19 @@ class LogParserTask implements Callable<ProcessingStats> {
                     continue;
                 }
                 
+                // Apply namespace filtering
+                if (!matchesNamespaceFilter(ns)) {
+                    localFilteredByNamespace++;
+                    continue;
+                }
+                
                 // Set common attributes
                 setCommonAttributes(attr, slowQuery);
                 
                 // Extract plan cache information
                 extractPlanCacheInfo(attr, slowQuery);
                 
-                // NEW: Extract replanning information
+                // Extract replanning information
                 extractReplanningInfo(attr, slowQuery);
                 
                 JSONObject command = attr.getJSONObject("command");
@@ -137,6 +156,12 @@ class LogParserTask implements Callable<ProcessingStats> {
             } else if (attr.has("type")) {
                 // This is a WRITE operation log entry
                 if (processWriteOperation(attr, slowQuery)) {
+                    // Apply namespace filtering
+                    if (!matchesNamespaceFilter(slowQuery.ns)) {
+                        localFilteredByNamespace++;
+                        continue;
+                    }
+                    
                     extractPlanCacheInfo(attr, slowQuery);
                     extractReplanningInfo(attr, slowQuery);
                     processExecutionStats(attr, slowQuery);
@@ -178,12 +203,64 @@ class LogParserTask implements Callable<ProcessingStats> {
             }
         }
         
-        LogParser.logger.info("Thread {} processed {} lines: {} ops found, {} parse errors, {} no attr, {} no command, {} no ns", 
-                   Thread.currentThread().getName(), linesChunk.size(), localFoundOps, 
+        // Update the global filtered counter
+        if (totalFilteredByNamespace != null) {
+            totalFilteredByNamespace.addAndGet(localFilteredByNamespace);
+        }
+        
+        LogParser.logger.info("Thread {} processed {} lines: {} ops found, {} filtered by namespace, {} parse errors, {} no attr, {} no command, {} no ns", 
+                   Thread.currentThread().getName(), linesChunk.size(), localFoundOps, localFilteredByNamespace,
                    localParseErrors, localNoAttr, localNoCommand, localNoNs);
         
         this.linesChunk = null;
         return new ProcessingStats(localParseErrors, localNoAttr, localNoCommand, localNoNs, localFoundOps);
+    }
+    
+    /**
+     * Check if a namespace matches any of the configured filters
+     */
+    private boolean matchesNamespaceFilter(Namespace namespace) {
+        if (namespaceFilters.isEmpty()) {
+            return true; // No filters means accept all
+        }
+        
+        if (namespace == null) {
+            return false;
+        }
+        
+        String fullNamespace = namespace.toString();
+        String dbName = namespace.getDatabaseName();
+        
+        for (String filter : namespaceFilters) {
+            // Exact match
+            if (filter.equals(fullNamespace)) {
+                return true;
+            }
+            
+            // Database wildcard pattern (e.g., "mydb.*")
+            if (filter.endsWith(".*")) {
+                String filterDb = filter.substring(0, filter.length() - 2);
+                if (filterDb.equals(dbName)) {
+                    return true;
+                }
+            }
+            
+            // Database-only filter (e.g., "mydb")
+            if (!filter.contains(".") && filter.equals(dbName)) {
+                return true;
+            }
+            
+            // Simple wildcard matching for collection names
+            if (filter.contains("*")) {
+                String regex = filter.replace(".", "\\.")
+                                   .replace("*", ".*");
+                if (fullNamespace.matches(regex)) {
+                    return true;
+                }
+            }
+        }
+        
+        return false;
     }
     
     private void extractPlanCacheInfo(JSONObject attr, SlowQuery slowQuery) {
@@ -221,7 +298,7 @@ class LogParserTask implements Callable<ProcessingStats> {
         }
     }
     
-    // NEW: Extract replanning information from the log attributes
+    // Extract replanning information from the log attributes
     private void extractReplanningInfo(JSONObject attr, SlowQuery slowQuery) {
         try {
             // Extract replanned flag

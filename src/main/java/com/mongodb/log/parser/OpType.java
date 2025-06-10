@@ -1,4 +1,4 @@
-package com.mongodb.logparse;
+package com.mongodb.log.parser;
 
 public enum OpType {
     CMD(1, "command", true, false),

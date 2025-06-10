@@ -1,4 +1,4 @@
-package com.mongodb.logparse;
+package com.mongodb.log.parser;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -11,6 +11,7 @@ import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -31,6 +32,7 @@ import org.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.mongodb.log.filter.FilterConfig;
 import com.mongodb.util.MimeTypes;
 
 import picocli.CommandLine;
@@ -38,10 +40,10 @@ import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
 /**
- * Enhanced MongoDB Log Parser with unified filtering, TTL operation reporting, and plan cache analysis
+ * Enhanced MongoDB Log Parser with unified filtering, TTL operation reporting, plan cache analysis, and namespace filtering
  */
-@Command(name = "logParser", mixinStandardHelpOptions = true, version = "1.2", 
-         description = "Parse MongoDB log files with configurable filtering, comprehensive reporting, and plan cache analysis")
+@Command(name = "logParser", mixinStandardHelpOptions = true, version = "1.3", 
+         description = "Parse MongoDB log files with configurable filtering, comprehensive reporting, plan cache analysis, and namespace filtering")
 public class LogParser implements Callable<Integer> {
 
     static final Logger logger = LoggerFactory.getLogger(LogParser.class);
@@ -70,12 +72,19 @@ public class LogParser implements Callable<Integer> {
     @Option(names = {"--enable-plan-cache"}, description = "Enable plan cache key analysis")
     private boolean enablePlanCacheAnalysis = true;
 
+    @Option(names = {"--ns", "--namespace"}, description = "Filter to specific namespace(s). Can be specified multiple times. Supports patterns like 'mydb.*' or exact matches like 'mydb.mycoll'")
+    private Set<String> namespaceFilters = new HashSet<>();
+    
+    @Option(names = {"--html"}, description = "HTML output file for interactive report")
+    private String htmlOutputFile;
+
     // Statistics tracking
     private AtomicLong totalParseErrors = new AtomicLong(0);
     private AtomicLong totalNoAttr = new AtomicLong(0);
     private AtomicLong totalNoCommand = new AtomicLong(0);
     private AtomicLong totalNoNs = new AtomicLong(0);
     private AtomicLong totalFoundOps = new AtomicLong(0);
+    private AtomicLong totalFilteredByNamespace = new AtomicLong(0);
     private Map<String, AtomicLong> operationTypeStats = new HashMap<>();
 
     private String currentLine = null;
@@ -102,12 +111,19 @@ public class LogParser implements Callable<Integer> {
 
     @Override
     public Integer call() throws Exception {
-    	logger.info("Starting MongoDB log parsing with {} files and {} processors", 
+        logger.info("Starting MongoDB log parsing with {} files and {} processors", 
                 fileNames.length, Runtime.getRuntime().availableProcessors());
         
         // Debug: Print all files that will be processed
         for (int i = 0; i < fileNames.length; i++) {
             logger.info("File {}: {}", i + 1, fileNames[i]);
+        }
+
+        // Log namespace filtering configuration
+        if (!namespaceFilters.isEmpty()) {
+            logger.info("Namespace filtering enabled. Filters: {}", namespaceFilters);
+        } else {
+            logger.info("No namespace filtering - processing all namespaces");
         }
 
         loadConfiguration();
@@ -120,7 +136,8 @@ public class LogParser implements Callable<Integer> {
         
         read();
 
-        logger.info("Parsing complete. Total processed: {}, Ignored: {}", processedCount, ignoredCount);
+        logger.info("Parsing complete. Total processed: {}, Ignored: {}, Filtered by namespace: {}", 
+                   processedCount, ignoredCount, totalFilteredByNamespace.get());
         reportOperationStats();
         reportIgnoredAnalysis();
 
@@ -143,6 +160,22 @@ public class LogParser implements Callable<Integer> {
                 planCacheAccumulator.reportCsv(planCacheCsvFile);
             }
         }
+        
+        if (htmlOutputFile != null) {
+            try {
+                logger.info("Writing HTML report to: {}", htmlOutputFile);
+                HtmlReportGenerator.generateReport(
+                    htmlOutputFile, 
+                    accumulator, 
+                    ttlAccumulator, 
+                    planCacheAccumulator, 
+                    operationTypeStats
+                );
+                logger.info("HTML report generated successfully");
+            } catch (IOException e) {
+                logger.error("Failed to generate HTML report: {}", e.getMessage(), e);
+            }
+        }
 
         return 0;
     }
@@ -158,6 +191,53 @@ public class LogParser implements Callable<Integer> {
                 logger.warn("Could not load config file: {}. Using defaults.", configFile);
             }
         }
+    }
+
+    /**
+     * Check if a namespace matches any of the configured filters
+     */
+    private boolean matchesNamespaceFilter(Namespace namespace) {
+        if (namespaceFilters.isEmpty()) {
+            return true; // No filters means accept all
+        }
+        
+        if (namespace == null) {
+            return false;
+        }
+        
+        String fullNamespace = namespace.toString();
+        String dbName = namespace.getDatabaseName();
+        
+        for (String filter : namespaceFilters) {
+            // Exact match
+            if (filter.equals(fullNamespace)) {
+                return true;
+            }
+            
+            // Database wildcard pattern (e.g., "mydb.*")
+            if (filter.endsWith(".*")) {
+                String filterDb = filter.substring(0, filter.length() - 2);
+                if (filterDb.equals(dbName)) {
+                    return true;
+                }
+            }
+            
+            // Database-only filter (e.g., "mydb")
+            if (!filter.contains(".") && filter.equals(dbName)) {
+                return true;
+            }
+            
+            // Simple wildcard matching for collection names
+            if (filter.contains("*")) {
+                String regex = filter.replace(".", "\\.")
+                                   .replace("*", ".*");
+                if (fullNamespace.matches(regex)) {
+                    return true;
+                }
+            }
+        }
+        
+        return false;
     }
 
     public void read() throws IOException, ExecutionException, InterruptedException {
@@ -233,7 +313,7 @@ public class LogParser implements Callable<Integer> {
             if (lines.size() >= 25000) {
                 completionService.submit(
                     new LogParserTask(new ArrayList<>(lines), file, accumulator, planCacheAccumulator, 
-                                    operationTypeStats, enablePlanCacheAnalysis, debug));
+                                    operationTypeStats, enablePlanCacheAnalysis, debug, namespaceFilters, totalFilteredByNamespace));
                 submittedTasks++;
                 lines.clear();
             }
@@ -247,7 +327,7 @@ public class LogParser implements Callable<Integer> {
         if (!lines.isEmpty()) {
             completionService.submit(
                 new LogParserTask(new ArrayList<>(lines), file, accumulator, planCacheAccumulator,
-                                operationTypeStats, enablePlanCacheAnalysis, debug));
+                                operationTypeStats, enablePlanCacheAnalysis, debug, namespaceFilters, totalFilteredByNamespace));
             submittedTasks++;
         }
 
@@ -313,10 +393,16 @@ public class LogParser implements Callable<Integer> {
                 JSONObject attr = jo.getJSONObject("attr");
                 if (attr.has("namespace")) {
                     String namespace = attr.getString("namespace");
+                    Namespace ns = new Namespace(namespace);
+                    
+                    // Apply namespace filtering to TTL operations
+                    if (!matchesNamespaceFilter(ns)) {
+                        return;
+                    }
+                    
                     Long numDeleted = getMetric(attr, "numDeleted");
                     Long durationMs = getMetric(attr, "durationMillis");
                     
-                    Namespace ns = new Namespace(namespace);
                     synchronized (ttlAccumulator) {
                         ttlAccumulator.accumulate(null, "ttl_delete", ns, durationMs, 
                                                 null, null, numDeleted, null, null);
@@ -394,14 +480,19 @@ public class LogParser implements Callable<Integer> {
 
     private void logProcessingResults(File file, long duration, int totalLines) {
         logger.info("File processing complete - Duration: {}ms", duration);
-        logger.info("Lines read: {}, Ignored: {}, Processed: {}", totalLines, ignoredCount, processedCount);
+        logger.info("Lines read: {}, Ignored: {}, Processed: {}, Filtered by namespace: {}", 
+                   totalLines, ignoredCount, processedCount, totalFilteredByNamespace.get());
         logger.info("Parse errors: {}, No attr: {}, No command: {}, No namespace: {}", 
                    totalParseErrors.get(), totalNoAttr.get(), totalNoCommand.get(), totalNoNs.get());
         logger.info("Successfully parsed operations: {}", totalFoundOps.get());
 
         if (totalFoundOps.get() == 0) {
             logger.warn("WARNING: No operations were successfully parsed!");
-            logger.warn("This might indicate wrong log format or excessive filtering");
+            logger.warn("This might indicate wrong log format, excessive filtering, or namespace filter mismatch");
+            if (!namespaceFilters.isEmpty()) {
+                logger.warn("Namespace filters applied: {}", namespaceFilters);
+                logger.warn("Consider checking if your namespace filters match the actual namespaces in the logs");
+            }
         }
     }
 
@@ -410,6 +501,12 @@ public class LogParser implements Callable<Integer> {
         operationTypeStats.entrySet().stream()
                 .sorted((e1, e2) -> Long.compare(e2.getValue().get(), e1.getValue().get()))
                 .forEach(entry -> logger.info("  {}: {}", entry.getKey(), entry.getValue()));
+        
+        if (!namespaceFilters.isEmpty()) {
+            logger.info("=== Namespace Filtering Results ===");
+            logger.info("Namespace filters: {}", namespaceFilters);
+            logger.info("Operations filtered by namespace: {}", totalFilteredByNamespace.get());
+        }
     }
 
     private void reportIgnoredAnalysis() {
@@ -540,6 +637,18 @@ public class LogParser implements Callable<Integer> {
 
     public void setFilterConfig(FilterConfig filterConfig) {
         this.filterConfig = filterConfig;
+    }
+
+    public Set<String> getNamespaceFilters() {
+        return new HashSet<>(namespaceFilters);
+    }
+
+    public void setNamespaceFilters(Set<String> namespaceFilters) {
+        this.namespaceFilters = new HashSet<>(namespaceFilters);
+    }
+
+    public void addNamespaceFilter(String namespaceFilter) {
+        this.namespaceFilters.add(namespaceFilter);
     }
 
     public static void main(String[] args) {

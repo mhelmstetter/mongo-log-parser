@@ -1,4 +1,4 @@
-package com.mongodb.logparse;
+package com.mongodb.log.parser;
 
 /**
  * Key class for aggregating by planCacheKey, queryHash, and planSummary

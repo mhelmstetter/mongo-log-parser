@@ -1,4 +1,4 @@
-package com.mongodb.logparse;
+package com.mongodb.log.parser;
 
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;

@@ -1,4 +1,4 @@
-package com.mongodb.logparse;
+package com.mongodb.log.parser;
 
 import java.io.FileNotFoundException;
 import java.io.PrintWriter;
@@ -15,7 +15,7 @@ public class PlanCacheAccumulator {
     private Map<PlanCacheKey, PlanCacheAccumulatorEntry> planCacheEntries = new HashMap<>();
     
     private String[] headers = new String[] { 
-        "Namespace", "PlanCacheKey", "QueryHash", "PlanSummary", "PlanType", "Count", 
+        "Namespace", "PlanCacheKey", "QueryHash", "PlanSummary", "Count", 
         "MinMs", "MaxMs", "AvgMs", "P95Ms", "TotalSec", "AvgKeysEx", 
         "AvgDocsEx", "KeysP95", "DocsP95", "TotalKeysK", "TotalDocsK", 
         "AvgReturn", "ExRetRatio", "CollScanCount", "CollScanPct", 
@@ -51,18 +51,18 @@ public class PlanCacheAccumulator {
         ColumnWidths widths = calculateColumnWidths();
         
         // Create dynamic format strings
-        String headerFormat = String.format("%%-%ds %%-%ds %%-%ds %%-%ds %%8s %%8s %%8s %%8s %%8s %%8s %%10s %%10s %%10s %%8s %%8s %%8s %%8s %%8s", 
+        String headerFormat = String.format("%%-%ds %%-%ds %%-%ds %%-%ds %%8s %%8s %%8s %%8s %%8s %%10s %%10s %%10s %%8s %%8s %%8s %%8s %%8s", 
                 widths.namespaceWidth, widths.planCacheKeyWidth, widths.queryHashWidth, widths.planSummaryWidth);
         
         // Print header
         System.out.println(String.format(headerFormat,
-                "Namespace", "PlanCacheKey", "QueryHash", "PlanSummary", "PlanType", "Count", 
+                "Namespace", "PlanCacheKey", "QueryHash", "PlanSummary", "Count", 
                 "MinMs", "MaxMs", "AvgMs", "P95Ms", "TotalSec", "AvgKeysEx", 
                 "AvgDocsEx", "AvgRet", "MinPlanMs", "MaxPlanMs", "AvgPlanMs", "ReplanPct"));
         
         // Calculate separator length dynamically
         int separatorLength = widths.namespaceWidth + widths.planCacheKeyWidth + widths.queryHashWidth + 
-                             widths.planSummaryWidth + (8 * 14) + 17; // 8 chars * 14 columns + spaces
+                             widths.planSummaryWidth + (8 * 13) + 16; // 8 chars * 13 columns + spaces
         System.out.println("=".repeat(separatorLength));
         
         planCacheEntries.values().stream()
@@ -73,23 +73,7 @@ public class PlanCacheAccumulator {
                 String truncatedQueryHash = truncateToWidth(entry.getKey().getQueryHash(), widths.queryHashWidth);
                 String truncatedPlanSummary = truncateToWidth(entry.getKey().getPlanSummary(), widths.planSummaryWidth);
                 
-                // Determine plan type
-                String planType = "UNKNOWN";
-                if (entry.getKey().getPlanSummary() != null) {
-                    if (entry.getKey().getPlanSummary().contains("COLLSCAN")) {
-                        planType = "COLLSCAN";
-                    } else if (entry.getKey().getPlanSummary().contains("IXSCAN")) {
-                        planType = "IXSCAN";
-                    } else if (entry.getKey().getPlanSummary().contains("COUNTSCAN")) {
-                        planType = "COUNTSCAN";
-                    } else if (entry.getKey().getPlanSummary().contains("DISTINCT_SCAN")) {
-                        planType = "DISTINCT";
-                    } else if (entry.getKey().getPlanSummary().contains("TEXT")) {
-                        planType = "TEXT";
-                    }
-                }
-                
-                String dataFormat = String.format("%%-%ds %%-%ds %%-%ds %%-%ds %%8s %%8d %%8d %%8d %%8d %%8.0f %%10d %%10d %%10d %%8d %%8d %%8d %%8d %%8.1f", 
+                String dataFormat = String.format("%%-%ds %%-%ds %%-%ds %%-%ds %%8d %%8d %%8d %%8d %%8.0f %%10d %%10d %%10d %%8d %%8d %%8d %%8d %%8.1f", 
                         widths.namespaceWidth, widths.planCacheKeyWidth, widths.queryHashWidth, widths.planSummaryWidth);
                 
                 System.out.println(String.format(dataFormat,
@@ -97,7 +81,6 @@ public class PlanCacheAccumulator {
                         truncatedPlanCacheKey,
                         truncatedQueryHash,
                         truncatedPlanSummary,
-                        planType,
                         entry.getCount(),
                         entry.getMin(),
                         entry.getMax(),
@@ -193,7 +176,7 @@ public class PlanCacheAccumulator {
             
             if (key.getPlanSummary() != null) {
                 maxPlanSummaryWidth = Math.max(maxPlanSummaryWidth, 
-                    Math.min(key.getPlanSummary().length(), 35));
+                    Math.min(key.getPlanSummary().length(), 80));
             }
         }
         
@@ -254,24 +237,24 @@ public class PlanCacheAccumulator {
             System.out.println(String.format("\nQuery Hash: %s (%d different plans)", 
                 queryHash, plans.size()));
             
-            // Print column headers with replanning columns
-            String headerFormat = String.format("  %%-%ds %%-%ds %%-%ds %%8s %%8s %%8s %%8s %%8s %%10s %%8s %%8s %%8s %%8s", 
+            // Print column headers
+            String headerFormat = String.format("  %%-%ds %%-%ds %%-%ds %%8s %%8s %%8s %%8s %%8s %%10s %%8s %%8s %%8s", 
                 widths.planCacheKeyWidth, widths.planSummaryWidth, widths.namespaceWidth);
                 
             System.out.println(String.format(headerFormat,
-                "PlanCacheKey", "PlanSummary", "Namespace", "Count", "MinMs", "MaxMs", "AvgMs", "P95Ms", "TotalSec", "PlanType", "AvgPlanMs", "PlanP95", "ReplanPct"));
+                "PlanCacheKey", "PlanSummary", "Namespace", "Count", "MinMs", "MaxMs", "AvgMs", "P95Ms", "TotalSec", "AvgPlanMs", "PlanP95", "ReplanPct"));
             
-            String separatorFormat = String.format("  %%-%ds %%-%ds %%-%ds %%8s %%8s %%8s %%8s %%8s %%10s %%8s %%8s %%8s %%8s", 
+            String separatorFormat = String.format("  %%-%ds %%-%ds %%-%ds %%8s %%8s %%8s %%8s %%8s %%10s %%8s %%8s %%8s", 
                 widths.planCacheKeyWidth, widths.planSummaryWidth, widths.namespaceWidth);
                 
             System.out.println(String.format(separatorFormat,
                 "=".repeat(widths.planCacheKeyWidth), 
                 "=".repeat(widths.planSummaryWidth),
                 "=".repeat(widths.namespaceWidth),
-                "========", "========", "========", "========", "========", "==========", "========", "========", "========", "========"));
+                "========", "========", "========", "========", "========", "==========", "========", "========", "========"));
             
-            // Print data rows with consistent formatting including replanning
-            String dataFormat = String.format("  %%-%ds %%-%ds %%-%ds %%8d %%8d %%8d %%8d %%8.0f %%10d %%8s %%8d %%8.0f %%8.1f", 
+            // Print data rows with consistent formatting
+            String dataFormat = String.format("  %%-%ds %%-%ds %%-%ds %%8d %%8d %%8d %%8d %%8.0f %%10d %%8d %%8.0f %%8.1f", 
                 widths.planCacheKeyWidth, widths.planSummaryWidth, widths.namespaceWidth);
                 
             plans.stream()
@@ -280,22 +263,6 @@ public class PlanCacheAccumulator {
                     String planCacheKey = truncateToWidth(plan.getKey().getPlanCacheKey(), widths.planCacheKeyWidth);
                     String planSummary = truncateToWidth(plan.getKey().getPlanSummary(), widths.planSummaryWidth);
                     String namespace = truncateToWidth(plan.getKey().getNamespace().toString(), widths.namespaceWidth);
-                    
-                    // Determine plan type
-                    String planType = "UNKNOWN";
-                    if (plan.getKey().getPlanSummary() != null) {
-                        if (plan.getKey().getPlanSummary().contains("COLLSCAN")) {
-                            planType = "COLLSCAN";
-                        } else if (plan.getKey().getPlanSummary().contains("IXSCAN")) {
-                            planType = "IXSCAN";
-                        } else if (plan.getKey().getPlanSummary().contains("COUNTSCAN")) {
-                            planType = "COUNTSCAN";
-                        } else if (plan.getKey().getPlanSummary().contains("DISTINCT_SCAN")) {
-                            planType = "DISTINCT";
-                        } else if (plan.getKey().getPlanSummary().contains("TEXT")) {
-                            planType = "TEXT";
-                        }
-                    }
                     
                     System.out.println(String.format(dataFormat,
                         planCacheKey,
@@ -307,7 +274,6 @@ public class PlanCacheAccumulator {
                         plan.getAvg(),
                         plan.getPercentile95(),
                         plan.getCount() * plan.getAvg() / 1000,
-                        planType,
                         plan.getAvgPlanningTimeMs(),
                         plan.getPlanningTimePercentile95Ms(),
                         plan.getReplannedPercentage()));
@@ -333,7 +299,7 @@ public class PlanCacheAccumulator {
                 
                 if (plan.getKey().getPlanSummary() != null) {
                     maxPlanSummaryWidth = Math.max(maxPlanSummaryWidth, 
-                        Math.min(plan.getKey().getPlanSummary().length(), 35));
+                        Math.min(plan.getKey().getPlanSummary().length(), 80));
                 }
                 
                 if (plan.getKey().getNamespace() != null) {

@@ -1,4 +1,4 @@
-package com.mongodb.logparse;
+package com.mongodb.log.filter;
 
 import java.io.BufferedOutputStream;
 import java.io.BufferedReader;
@@ -22,7 +22,6 @@ import java.util.zip.ZipInputStream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -53,9 +52,7 @@ public class LogFilter implements Callable<Integer> {
     private boolean reportTtl = false;
 
     private String currentLine;
-    private JsonFactory jsonFactory;
     private FilterConfig filterConfig;
-    private Accumulator ttlAccumulator; // Track TTL operations separately
 
     // Simplified ignore keys for JSON filtering
     private static List<String> ignoreJsonKeys = List.of(
@@ -74,20 +71,9 @@ public class LogFilter implements Callable<Integer> {
 
     @Override
     public Integer call() throws Exception {
-        jsonFactory = JsonFactory.builder().build();
         filterConfig = new FilterConfig();
-        
-        if (reportTtl) {
-            ttlAccumulator = new Accumulator();
-        }
-        
         loadConfiguration();
         read();
-        
-        if (reportTtl && ttlAccumulator != null) {
-            reportTtlOperations();
-        }
-        
         return 0;
     }
 
@@ -136,12 +122,6 @@ public class LogFilter implements Callable<Integer> {
 
         while ((currentLine = in.readLine()) != null) {
             lineNum++;
-
-            // Check for TTL operations first (before filtering)
-            if (reportTtl && currentLine.contains("TTL") && currentLine.contains("deleted")) {
-                processTtlOperation(currentLine);
-                ttlCount++;
-            }
 
             if (shouldIgnoreLine(currentLine) || !currentLine.startsWith("{\"t\":{\"$date\"")) {
                 filteredCount++;
@@ -253,54 +233,6 @@ public class LogFilter implements Callable<Integer> {
                 filterJson(childNode);
             }
         }
-    }
-
-    private void processTtlOperation(String line) {
-        try {
-            ObjectMapper mapper = new ObjectMapper();
-            JsonNode rootNode = mapper.readTree(line);
-            
-            if (rootNode.has("attr")) {
-                JsonNode attr = rootNode.get("attr");
-                if (attr.has("namespace") && attr.has("numDeleted")) {
-                    String namespace = attr.get("namespace").asText();
-                    int numDeleted = attr.get("numDeleted").asInt();
-                    int durationMs = attr.has("durationMillis") ? attr.get("durationMillis").asInt() : 0;
-                    
-                    // Add to TTL accumulator
-                    Namespace ns = new Namespace(namespace);
-                    ttlAccumulator.accumulate(null, "ttl_delete", ns, (long) durationMs, 
-                                            null, null, (long) numDeleted, null, null);
-                }
-            }
-        } catch (Exception e) {
-            logger.debug("Failed to parse TTL operation: {}", e.getMessage());
-        }
-    }
-
-    private void reportTtlOperations() {
-        logger.info("=== TTL Operations by Namespace ===");
-        if (ttlAccumulator.getAccumulators().isEmpty()) {
-            logger.info("No TTL operations found");
-            return;
-        }
-        
-        // Print header
-        System.out.println(String.format("%-40s %-10s %-10s %-10s %-10s", 
-                "Namespace", "Count", "Deleted", "Min(ms)", "Max(ms)"));
-        System.out.println("=".repeat(80));
-        
-        // Print TTL stats
-        ttlAccumulator.getAccumulators().values().stream()
-                .sorted((a, b) -> Long.compare(b.getCount(), a.getCount()))
-                .forEach(acc -> {
-                    System.out.println(String.format("%-40s %-10d %-10d %-10d %-10d",
-                            acc.toString().split(" ")[0], // namespace
-                            acc.getCount(),
-                            acc.getAvgReturned() * acc.getCount(), // total deleted
-                            acc.getMax(), // This might need adjustment based on actual min tracking
-                            acc.getMax()));
-                });
     }
 
     public static void main(String[] args) {

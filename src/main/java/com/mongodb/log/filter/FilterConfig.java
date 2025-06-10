@@ -1,4 +1,4 @@
-package com.mongodb.logparse;
+package com.mongodb.log.filter;
 
 import java.util.Arrays;
 import java.util.HashSet;
