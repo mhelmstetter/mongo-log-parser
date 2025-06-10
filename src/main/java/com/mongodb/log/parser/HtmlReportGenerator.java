@@ -381,7 +381,6 @@ public class HtmlReportGenerator {
             .forEach(entry -> {
                 PlanCacheKey key = entry.getKey();
                 
-                // Determine row class (only for COLLSCAN, remove IXSCAN styling)
                 String rowClass = "";
                 if (key.getPlanSummary() != null && key.getPlanSummary().contains("COLLSCAN")) {
                     rowClass = " class=\"collscan\"";
