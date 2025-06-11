@@ -1,288 +1,221 @@
-# Enhanced MongoDB LogParser with Configurable Filtering
+# MongoDB Log Parser
 
-## Overview
+A comprehensive MongoDB log analysis tool that parses log files and generates detailed reports on database operations, performance metrics, and transaction analysis.
 
-The enhanced LogParser now separates filtering into two categories:
+## Quick Start
 
-1. **NOISE**: High-frequency, low-value entries (connection spam, health checks) that are completely filtered
-2. **SYSTEM**: Potentially useful but typically filtered operations (storage, control plane operations)
-
-Database operations like TTL deletions, index operations, and actual queries are **NEVER** filtered.
-
-## Key Improvements
-
-### 1. Three-Tier Filtering System
-
-- **NOISE** (`--noise-output`): Connection spam, health checks, authentication noise
-- **SYSTEM** (`--system-output`): Storage operations, control plane, administrative commands  
-- **DATABASE OPERATIONS**: Always processed (find, aggregate, update, insert, delete, TTL operations, index operations)
-
-### 2. Configurable via Properties File
+The simplest way to get started is to generate an interactive HTML report:
 
 ```bash
-# Use default configuration
-java -jar logparser.jar -f mongodb.log --csv report.csv
-
-# Use custom configuration
-java -jar logparser.jar -f mongodb.log --config custom-filter.properties --csv report.csv
-
-# Enable filtering analysis with separate outputs
-java -jar logparser.jar -f mongodb.log \
-  --config filter.properties \
-  --categorize-filtered \
-  --noise-output noise_sample.txt \
-  --system-output system_sample.txt \
-  --sample-rate 20 \
-  --csv report.csv
+java -jar bin/MongoLogParser.jar -f *.log --html logParseReport.html
 ```
 
-### 3. TTL and Index Operations Support
+This will analyze all `.log` files in the current directory and create an interactive HTML report with sortable tables, filtering capabilities, and comprehensive analytics.
 
-The parser now correctly identifies and processes:
-- TTL deletions as remove operations
-- Index build/drop operations  
-- Index maintenance operations
+## Features
 
-Example log entry that is now properly parsed:
-```json
-{"t":{"$date":"2024-06-24T16:30:24.290+00:00"},"s":"I","c":"INDEX","id":5479200,"ctx":"TTLMonitor","msg":"Deleted expired documents using index","attr":{"namespace":"persona-web_production.webhook_events","index":"created_at_1","numDeleted":325,"durationMillis":952}}
+- **Interactive HTML Reports** - Sortable and filterable tables with navigation
+- **Operation Analysis** - Detailed metrics for find, aggregate, update, insert, delete operations
+- **Transaction Analysis** - Transaction performance and termination cause tracking
+- **Plan Cache Analysis** - Query plan effectiveness and collection scan detection
+- **Query Hash Analysis** - Query pattern identification and performance profiling
+- **Error Code Analysis** - Error frequency and categorization
+- **TTL Operations** - Time-to-live operation monitoring
+- **Namespace Filtering** - Focus analysis on specific databases or collections
+- **Multiple Output Formats** - HTML, CSV, and console output
+
+## Installation
+
+### Prerequisites
+- Java 17 or higher
+- Maven 3.6+ (for building from source)
+
+### Download
+Download the latest release from the [releases page](../../releases) or build from source.
+
+### Build from Source
+```bash
+git clone https://github.com/mhelmstetter/mongo-log-parser.git
+cd mongo-log-parser
+mvn package
 ```
 
-## Configuration Examples
+The executable JAR will be created at `bin/MongoLogParser.jar`.
 
-### Basic Configuration (`filter.properties`)
+## Usage
 
-```properties
-# Noise - completely filtered
-filter.noise.categories="c":"NETWORK","c":"ACCESS","c":"CONNPOOL","hello":1,"ping":1
+### Basic Usage
 
-# System - filtered but potentially useful
-filter.system.categories="c":"CONTROL","c":"STORAGE","serverStatus":1,"dbstats":1
+Generate an HTML report (recommended):
+```bash
+java -jar bin/MongoLogParser.jar -f server.log --html report.html
 ```
 
-### Environment-Specific Configurations
-
-#### Development Environment (see more system operations)
-```properties
-filter.system.categories="c":"CONTROL","c":"SHARDING"
-filter.noise.categories="c":"NETWORK","c":"ACCESS","hello":1,"ping":1
+Generate a CSV report:
+```bash
+java -jar bin/MongoLogParser.jar -f server.log --csv output.csv
 ```
 
-#### Production Analysis (aggressive noise filtering)
-```properties
-filter.noise.categories="c":"NETWORK","c":"ACCESS","c":"CONNPOOL","hello":1,"ping":1,"buildInfo","getParameter":
-filter.noise.additional="saslContinue":1,"endSessions":
+Console output only:
+```bash
+java -jar bin/MongoLogParser.jar -f server.log
 ```
 
-#### Replication Debugging (don't filter replication operations)
-```properties
-filter.noise.remove="replSetHeartbeat":"
-filter.system.remove="replSetGetStatus":1
+### Advanced Usage
+
+**Multiple log files:**
+```bash
+java -jar bin/MongoLogParser.jar -f server1.log server2.log server3.log --html report.html
+```
+
+**Namespace filtering:**
+```bash
+# Analyze only myapp database
+java -jar bin/MongoLogParser.jar -f *.log --ns myapp --html report.html
+
+# Analyze specific collection
+java -jar bin/MongoLogParser.jar -f *.log --ns myapp.users --html report.html
+
+# Multiple namespaces with wildcards
+java -jar bin/MongoLogParser.jar -f *.log --ns "myapp.*" --ns "analytics.events" --html report.html
+```
+
+**Comprehensive analysis with all outputs:**
+```bash
+java -jar bin/MongoLogParser.jar -f *.log \
+  --html full-report.html \
+  --csv operations.csv \
+  --plan-cache-csv plan-cache.csv \
+  --query-hash-csv query-hash.csv \
+  --error-codes-csv errors.csv \
+  --transaction-csv transactions.csv
+```
+
+**Custom filtering configuration:**
+```bash
+java -jar bin/MongoLogParser.jar -f *.log --config filter-config.properties --html report.html
 ```
 
 ## Command Line Options
 
-### New Options
-- `--config <file>`: Configuration properties file
-- `--noise-output <file>`: Output file for noise/spam lines  
-- `--system-output <file>`: Output file for system operation lines
-- `--categorize-filtered`: Categorize and count filtered line types
-- `--sample-rate <1-100>`: Sample rate for filtered lines (default: 10)
+| Option | Description |
+|--------|-------------|
+| `-f, --files <files>` | MongoDB log file(s) to analyze (required) |
+| `--html <file>` | Generate interactive HTML report |
+| `-c, --csv <file>` | Generate CSV output for main operations |
+| `--plan-cache-csv <file>` | Generate CSV for plan cache analysis |
+| `--query-hash-csv <file>` | Generate CSV for query hash analysis |
+| `--error-codes-csv <file>` | Generate CSV for error code analysis |
+| `--transaction-csv <file>` | Generate CSV for transaction analysis |
+| `--ns, --namespace <namespace>` | Filter to specific namespace(s), supports wildcards |
+| `--config <file>` | Load filter configuration from properties file |
+| `--ignored-analysis <file>` | Output file for ignored lines analysis |
+| `--debug` | Enable debug logging |
+| `-h, --help` | Show help message |
+| `-V, --version` | Show version information |
 
-### Existing Options
-- `-f, --files`: MongoDB log file(s) (required)
-- `-c, --csv`: CSV output file
-- `--debug`: Enable debug logging
-- `-q, --queries`: Parse queries
-- `--replay`: Replay operations
-- `--uri`: MongoDB connection string URI
+## Supported Log Formats
 
-## Output Analysis
+The parser supports MongoDB log files in JSON format (MongoDB 4.4+). Supported file formats:
+- Plain text `.log` files
+- Gzip compressed `.gz` files  
+- Zip compressed `.zip` files
 
-### Operation Type Statistics
+## Report Sections
+
+### HTML Report Features
+- **Sticky Navigation** - Quick access to all report sections
+- **Sortable Tables** - Click column headers to sort by any metric
+- **Live Filtering** - Real-time search within each table
+- **Performance Highlights** - Collection scans and slow operations are highlighted
+- **Summary Statistics** - Key metrics for each analysis type
+
+### Analysis Types
+
+1. **Main Operations** - Core database operations with timing and examination metrics
+2. **TTL Operations** - Time-to-live deletion operations and document counts
+3. **Operation Statistics** - Breakdown by operation type (find, update, etc.)
+4. **Error Codes** - Error frequency analysis with sample messages
+5. **Query Hash Analysis** - Query pattern performance with sanitized queries
+6. **Plan Cache Analysis** - Query plan effectiveness and replan frequency
+7. **Transaction Analysis** - Transaction duration, commit types, and termination causes
+
+## Configuration
+
+### Filter Configuration File
+Create a `filter-config.properties` file to customize which log lines are processed:
+
+```properties
+# Ignore specific operations
+ignore.operation.hello=true
+ignore.operation.isMaster=true
+
+# Ignore by component
+ignore.component.NETWORK=true
+ignore.component.ACCESS=true
+
+# Ignore admin database operations
+ignore.database.admin=true
+ignore.database.local=true
 ```
-Operation type breakdown:
-  find: 15420
-  aggregate: 8932
-  ttl_delete: 1205
-  update: 892
-  insert: 445
-  index_operation: 23
-```
 
-### Filtering Analysis (with `--categorize-filtered`)
-```
-=== FILTERING ANALYSIS ===
-NOISE CATEGORIES (total: 45230):
-  NETWORK_CONNECTION_ACCEPTED: 15420 (34.1%)
-  NETWORK_CONNECTION_ENDED: 15398 (34.0%)
-  ADMIN_PING: 8932 (19.7%)
-  ACCESS_AUTH_SUCCESS: 5480 (12.1%)
+### Namespace Filtering Examples
 
-SYSTEM CATEGORIES (total: 2340):
-  STORAGE_OPERATIONS: 1205 (51.5%)
-  CONTROL_OPERATIONS: 892 (38.1%)
-  ADMIN_SERVER_STATUS: 243 (10.4%)
-```
-
-## What's Never Filtered
-
-The following operations are **always** processed, regardless of configuration:
-
-- Database operations: `find`, `aggregate`, `update`, `insert`, `delete`, `findAndModify`, `getMore`, `count`, `distinct`
-- Index operations: `"c":"INDEX"` (including TTL deletions)
-- Write operations: `"type":"update"`, `"type":"remove"`, `"type":"insert"`
-- TTL operations: `"msg":"Deleted expired documents"`
-
-## Migration from Old Version
-
-### Old Usage
 ```bash
-java -jar logparser.jar -f mongodb.log --ignored-output ignored.txt --categorize-ignored
+# Single database
+--ns myapp
+
+# Database with wildcard for all collections
+--ns "myapp.*"
+
+# Specific collection
+--ns myapp.users
+
+# Multiple namespaces
+--ns myapp --ns analytics.events
+
+# Pattern matching
+--ns "logs_*"
 ```
 
-### New Usage  
-```bash
-java -jar logparser.jar -f mongodb.log \
-  --noise-output noise.txt \
-  --system-output system.txt \
-  --categorize-filtered \
-  --config filter.properties
-```
+## Performance Tips
 
-### Benefits
-- **Cleaner output files**: `noise.txt` contains only connection spam, `system.txt` contains useful debugging info
-- **Configurable**: Adjust filtering per environment without code changes
-- **Better categorization**: Separate noise from potentially useful system operations
-- **TTL support**: TTL deletions now appear in performance reports
-- **Index operations**: Index maintenance operations are now tracked
+- Use namespace filtering (`--ns`) to focus on specific databases/collections
+- For large log files, consider filtering by time range first
+- The HTML report loads faster than processing multiple CSV outputs
+- Use compressed log files when possible to reduce I/O
 
-## Sample Filter Configurations
+## Example Output
 
-### Minimal Filtering (Development)
-```properties
-filter.noise.categories="c":"NETWORK","hello":1,"ping":1
-filter.system.categories=
-```
-
-### Standard Filtering (Production)
-```properties
-filter.noise.categories="c":"NETWORK","c":"ACCESS","c":"CONNPOOL","hello":1,"ping":1,"endSessions":
-filter.system.categories="c":"CONTROL","c":"STORAGE","serverStatus":1,"dbstats":1
-```
-
-### Aggressive Filtering (High-Traffic Production)
-```properties
-filter.noise.categories="c":"NETWORK","c":"ACCESS","c":"CONNPOOL","hello":1,"ping":1,"endSessions":,"saslContinue":1,"replSetHeartbeat":"
-filter.system.categories="c":"CONTROL","c":"STORAGE","c":"SHARDING","serverStatus":1,"replSetGetStatus":1,"dbstats":1,"collStats":","listIndexes":"
-```
+The HTML report provides an interactive dashboard with:
+- Summary cards showing total operations, time spent, and unique namespaces
+- Sortable tables with performance metrics
+- Visual highlighting of collection scans and slow operations
+- Filtering capabilities for detailed analysis
 
 ## Troubleshooting
 
-### No Operations Found
-If you see "WARNING: No operations were successfully parsed!":
+**No operations found:**
+- Check that log files are in JSON format (MongoDB 4.4+)
+- Verify namespace filters match actual database/collection names
+- Use `--debug` flag for detailed parsing information
 
-1. **Check your filter configuration** - you might be filtering too aggressively
-2. **Use debug mode**: `--debug` to see what's being filtered
-3. **Check sample outputs**: Review `--noise-output` and `--system-output` files
-4. **Verify log format**: Ensure you're using MongoDB JSON logs
+**Out of memory errors:**
+- Increase JVM heap size: `java -Xmx4g -jar bin/MongoLogParser.jar ...`
+- Process smaller log files or use time-based filtering
 
-### Example Debug Session
-```bash
-# Step 1: Run with minimal filtering and debug
-java -jar logparser.jar -f mongodb.log --debug --config minimal-filter.properties
+**Performance issues:**
+- Use namespace filtering to reduce data volume
+- Consider processing log files individually for very large datasets
 
-# Step 2: Check what's being categorized
-java -jar logparser.jar -f mongodb.log \
-  --categorize-filtered \
-  --noise-output noise.txt \
-  --system-output system.txt \
-  --sample-rate 5
+## Contributing
 
-# Step 3: Review sample files
-head -50 noise.txt
-head -50 system.txt
-```
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
-### Common Issues
+## License
 
-#### TTL Operations Not Appearing
-- **Problem**: TTL deletions filtered as INDEX operations
-- **Solution**: TTL operations are now properly detected and processed as database operations
-
-#### Missing Aggregate Operations  
-- **Problem**: Some aggregate operations have `"aggregate": 1` (database-level)
-- **Solution**: Enhanced parser handles both collection-level and database-level aggregations
-
-#### Write Operations Missing
-- **Problem**: WRITE-level operations not recognized
-- **Solution**: Enhanced parser processes both COMMAND and WRITE log formats
-
-## Performance Impact
-
-### Filtering Performance
-- **3-tier filtering**: ~15% faster than previous single-tier filtering
-- **Configurable patterns**: Allows optimization per environment
-- **Reduced I/O**: Separate noise/system outputs reduce main processing overhead
-
-### Memory Usage
-- **Streaming processing**: No change in memory footprint
-- **Category tracking**: Minimal overhead when `--categorize-filtered` enabled
-- **Sample outputs**: Configurable sample rate controls disk usage
-
-## Best Practices
-
-### 1. Environment-Specific Configs
-```bash
-# Development
---config configs/dev-filter.properties
-
-# Staging  
---config configs/staging-filter.properties
-
-# Production
---config configs/prod-filter.properties
-```
-
-### 2. Incremental Filtering Tuning
-```bash
-# Start with minimal filtering
-filter.noise.categories="c":"NETWORK","hello":1
-
-# Add patterns based on analysis
-filter.noise.additional="ping":1,"endSessions":
-
-# Remove patterns if needed for debugging
-filter.noise.remove="hello":1
-```
-
-### 3. Regular Analysis
-```bash
-# Weekly analysis to tune filtering
-java -jar logparser.jar -f last_week.log \
-  --categorize-filtered \
-  --noise-output weekly_noise.txt \
-  --system-output weekly_system.txt
-
-# Review and adjust configuration
-grep -c "CATEGORY:" weekly_noise.txt    # Count noise categories
-grep -c "CATEGORY:" weekly_system.txt   # Count system categories
-```
-
-### 4. Monitoring Important Operations
-Always ensure these are NOT filtered:
-- Application queries (`find`, `aggregate`)
-- Data modifications (`update`, `insert`, `delete`)  
-- TTL operations (data lifecycle management)
-- Index operations (performance impact)
-- Transactions (`startTransaction`, `commitTransaction`, `abortTransaction`)
-
-## Migration Checklist
-
-- [ ] Create environment-specific filter configurations
-- [ ] Test with `--debug` and small log samples
-- [ ] Verify TTL operations appear in reports  
-- [ ] Confirm index operations are tracked
-- [ ] Update monitoring/alerting scripts for new output format
-- [ ] Update documentation for new command-line options
-- [ ] Train team on new filtering categories
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
