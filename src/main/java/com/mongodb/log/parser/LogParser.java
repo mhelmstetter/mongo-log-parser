@@ -71,6 +71,9 @@ public class LogParser implements Callable<Integer> {
 
     @Option(names = {"--query-hash-csv"}, description = "CSV output file for query hash analysis")
     private String queryHashCsvFile;
+    
+    @Option(names = {"--error-codes-csv"}, description = "CSV output file for error code analysis")
+    private String errorCodesCsvFile;
 
     @Option(names = {"--enable-plan-cache"}, description = "Enable plan cache key analysis")
     private boolean enablePlanCacheAnalysis = true;
@@ -94,6 +97,8 @@ public class LogParser implements Callable<Integer> {
     private Accumulator accumulator;
     private Accumulator ttlAccumulator; // Separate accumulator for TTL operations
     private PlanCacheAccumulator planCacheAccumulator; // New accumulator for plan cache analysis
+    private ErrorCodeAccumulator errorCodeAccumulator;
+    
     private FilterConfig filterConfig;
     private int unmatchedCount = 0;
     private int ignoredCount = 0;
@@ -111,6 +116,9 @@ public class LogParser implements Callable<Integer> {
 
     public LogParser() {
         accumulator = new Accumulator();
+        ttlAccumulator = new Accumulator();
+        queryHashAccumulator = new QueryHashAccumulator();
+        errorCodeAccumulator = new ErrorCodeAccumulator();
         filterConfig = new FilterConfig();
     }
 
@@ -132,8 +140,6 @@ public class LogParser implements Callable<Integer> {
         }
 
         loadConfiguration();
-        ttlAccumulator = new Accumulator();
-        queryHashAccumulator = new QueryHashAccumulator();
         
         if (enablePlanCacheAnalysis) {
             planCacheAccumulator = new PlanCacheAccumulator();
@@ -176,6 +182,15 @@ public class LogParser implements Callable<Integer> {
             }
         }
         
+        if (errorCodeAccumulator.hasErrors()) {
+            errorCodeAccumulator.report();
+            
+            if (errorCodesCsvFile != null) {
+                logger.info("Writing error codes CSV report to: {}", errorCodesCsvFile);
+                errorCodeAccumulator.reportCsv(errorCodesCsvFile);
+            }
+        }
+        
         if (htmlOutputFile != null) {
             try {
                 logger.info("Writing HTML report to: {}", htmlOutputFile);
@@ -185,6 +200,7 @@ public class LogParser implements Callable<Integer> {
                     ttlAccumulator, 
                     planCacheAccumulator,
                     queryHashAccumulator,
+                    errorCodeAccumulator,
                     operationTypeStats
                 );
                 logger.info("HTML report generated successfully");
@@ -275,7 +291,6 @@ public class LogParser implements Callable<Integer> {
             try {
                 logger.info("Starting to process file: {} (size: {} bytes)", fileName, f.length());
                 read(f);
-                logger.info("Completed processing file: {}", fileName);
             } catch (Exception e) {
                 logger.error("Failed to process file: {}. Error: {}", fileName, e.getMessage(), e);
                 // Continue with next file
@@ -285,7 +300,6 @@ public class LogParser implements Callable<Integer> {
 
     public void read(File file) throws IOException, ExecutionException, InterruptedException {
         String guess = MimeTypes.guessContentTypeFromName(file.getName());
-        logger.info("Processing file: {} (MIME type: {})", file.getName(), guess);
 
         BufferedReader in = createReader(file, guess);
         
@@ -328,35 +342,26 @@ public class LogParser implements Callable<Integer> {
 
             if (lines.size() >= 25000) {
                 completionService.submit(
-                    new LogParserTask(new ArrayList<>(lines), file, accumulator, planCacheAccumulator, queryHashAccumulator,
-                                    operationTypeStats, enablePlanCacheAnalysis, debug, namespaceFilters, totalFilteredByNamespace));
+                    new LogParserTask(new ArrayList<>(lines), accumulator, planCacheAccumulator, queryHashAccumulator,
+                    		errorCodeAccumulator, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace));
                 submittedTasks++;
                 lines.clear();
-            }
-
-            if (lineNum % 50000 == 0) {
-                logger.info("Read {} lines (ignored: {}, queued: {})", lineNum, ignoredCount, processedCount);
             }
         }
 
         // Submit remaining lines
         if (!lines.isEmpty()) {
             completionService.submit(
-                new LogParserTask(new ArrayList<>(lines), file, accumulator, planCacheAccumulator, queryHashAccumulator,
-                                operationTypeStats, enablePlanCacheAnalysis, debug, namespaceFilters, totalFilteredByNamespace));
+                new LogParserTask(new ArrayList<>(lines), accumulator, planCacheAccumulator, queryHashAccumulator,
+                		errorCodeAccumulator, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace));
             submittedTasks++;
         }
 
         // Wait for all tasks to complete
-        logger.info("Waiting for {} tasks to complete...", submittedTasks);
         for (int i = 0; i < submittedTasks; i++) {
             try {
                 ProcessingStats stats = completionService.take().get();
                 updateStats(stats);
-                
-                if (i % 10 == 0 || i == submittedTasks - 1) {
-                    logger.info("Completed {}/{} tasks", i + 1, submittedTasks);
-                }
             } catch (ExecutionException e) {
                 logger.error("Task execution failed", e);
             }
@@ -495,12 +500,9 @@ public class LogParser implements Callable<Integer> {
     }
 
     private void logProcessingResults(File file, long duration, int totalLines) {
-        logger.info("File processing complete - Duration: {}ms", duration);
-        logger.info("Lines read: {}, Ignored: {}, Processed: {}, Filtered by namespace: {}", 
-                   totalLines, ignoredCount, processedCount, totalFilteredByNamespace.get());
-        logger.info("Parse errors: {}, No attr: {}, No command: {}, No namespace: {}", 
-                   totalParseErrors.get(), totalNoAttr.get(), totalNoCommand.get(), totalNoNs.get());
-        logger.info("Successfully parsed operations: {}", totalFoundOps.get());
+    	logger.info("File processing complete - Duration: {}ms | Lines: {} read, {} ignored, {} processed, {} filtered by namespace | Errors: {} parse, {} no attr, {} no command, {} no namespace | Operations parsed: {}", 
+    		    duration, totalLines, ignoredCount, processedCount, totalFilteredByNamespace.get(),
+    		    totalParseErrors.get(), totalNoAttr.get(), totalNoCommand.get(), totalNoNs.get(), totalFoundOps.get());
 
         if (totalFoundOps.get() == 0) {
             logger.warn("WARNING: No operations were successfully parsed!");

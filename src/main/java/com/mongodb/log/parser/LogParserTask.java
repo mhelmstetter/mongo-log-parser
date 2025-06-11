@@ -1,6 +1,5 @@
 package com.mongodb.log.parser;
 
-import java.io.File;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -16,24 +15,23 @@ class LogParserTask implements Callable<ProcessingStats> {
 	private final Accumulator accumulator;
 	private final PlanCacheAccumulator planCacheAccumulator;
 	private final QueryHashAccumulator queryHashAccumulator;
-	private final File file;
+	private final ErrorCodeAccumulator errorCodeAccumulator;
 	private final Map<String, AtomicLong> operationTypeStats;
-	private final boolean enablePlanCacheAnalysis;
 	private final boolean debug;
 	private final Set<String> namespaceFilters;
 	private final AtomicLong totalFilteredByNamespace;
 
-	public LogParserTask(List<String> linesChunk, File file, Accumulator accumulator,
+	public LogParserTask(List<String> linesChunk, Accumulator accumulator,
 			PlanCacheAccumulator planCacheAccumulator, QueryHashAccumulator queryHashAccumulator,
-			Map<String, AtomicLong> operationTypeStats, boolean enablePlanCacheAnalysis, boolean debug,
+			ErrorCodeAccumulator errorCodeAccumulator,
+			Map<String, AtomicLong> operationTypeStats, boolean debug,
 			Set<String> namespaceFilters, AtomicLong totalFilteredByNamespace) {
 		this.linesChunk = linesChunk;
-		this.file = file;
 		this.accumulator = accumulator;
 		this.planCacheAccumulator = planCacheAccumulator;
 		this.queryHashAccumulator = queryHashAccumulator;
+		this.errorCodeAccumulator = errorCodeAccumulator;
 		this.operationTypeStats = operationTypeStats;
-		this.enablePlanCacheAnalysis = enablePlanCacheAnalysis;
 		this.debug = debug;
 		this.namespaceFilters = namespaceFilters;
 		this.totalFilteredByNamespace = totalFilteredByNamespace;
@@ -47,9 +45,6 @@ class LogParserTask implements Callable<ProcessingStats> {
 		long localNoNs = 0;
 		long localFoundOps = 0;
 		long localFilteredByNamespace = 0;
-		int debugCount = 0;
-	    long queryHashEntriesFound = 0;
-	    long queryHashEntriesAccumulated = 0;
 
 		for (String currentLine : linesChunk) {
 			
@@ -59,9 +54,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 				
 				if (jo.has("attr")) {
 	                JSONObject attr = jo.getJSONObject("attr");
-	                if (attr.has("queryHash")) {
-	                    queryHashEntriesFound++;
-	                }
+	                processErrorCode(jo, attr);
 	            }
 				
 			} catch (JSONException jse) {
@@ -107,7 +100,6 @@ class LogParserTask implements Callable<ProcessingStats> {
 					if (queryHashAccumulator != null) {
 			            synchronized (queryHashAccumulator) {
 			                queryHashAccumulator.accumulate(slowQuery);
-			                queryHashEntriesAccumulated++;
 			            }
 			        }
 
@@ -172,7 +164,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 					}
 
 					// Add to plan cache accumulator if enabled and has plan cache key
-					if (enablePlanCacheAnalysis && planCacheAccumulator != null && slowQuery.planCacheKey != null) {
+					if (planCacheAccumulator != null && slowQuery.planCacheKey != null) {
 						synchronized (planCacheAccumulator) {
 							planCacheAccumulator.accumulate(slowQuery);
 						}
@@ -210,7 +202,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 					}
 
 					// Add to plan cache accumulator if enabled and has plan cache key
-					if (enablePlanCacheAnalysis && planCacheAccumulator != null && slowQuery.planCacheKey != null) {
+					if (planCacheAccumulator != null && slowQuery.planCacheKey != null) {
 						synchronized (planCacheAccumulator) {
 							planCacheAccumulator.accumulate(slowQuery);
 						}
@@ -231,11 +223,6 @@ class LogParserTask implements Callable<ProcessingStats> {
 				}
 
 				localNoCommand++;
-				if (debug && localNoCommand <= 3) {
-					LogParser.logger.info("No 'command' field in attr (thread {}): {}",
-							Thread.currentThread().getName(),
-							attr.toString().substring(0, Math.min(200, attr.toString().length())));
-				}
 			}
 		}
 
@@ -244,15 +231,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 			totalFilteredByNamespace.addAndGet(localFilteredByNamespace);
 		}
 
-		LogParser.logger.info(
-				"Thread {} processed {} lines: {} ops found, {} filtered by namespace, {} parse errors, {} no attr, {} no command, {} no ns",
-				Thread.currentThread().getName(), linesChunk.size(), localFoundOps, localFilteredByNamespace,
-				localParseErrors, localNoAttr, localNoCommand, localNoNs);
-
 		this.linesChunk = null;
-		
-		LogParser.logger.info("DEBUG: Thread {} - Found {} queryHash entries, accumulated {} entries", 
-		        Thread.currentThread().getName(), queryHashEntriesFound, queryHashEntriesAccumulated);
 		
 		return new ProcessingStats(localParseErrors, localNoAttr, localNoCommand, localNoNs, localFoundOps);
 	}
@@ -706,6 +685,38 @@ class LogParserTask implements Callable<ProcessingStats> {
 				}
 			}
 		}
+	}
+	
+	private void processErrorCode(JSONObject jo, JSONObject attr) {
+	    try {
+	        if (attr.has("error")) {
+	            JSONObject error = attr.getJSONObject("error");
+	            
+	            String codeName = null;
+	            Integer errorCode = null;
+	            String errorMessage = null;
+	            
+	            if (error.has("codeName")) {
+	                codeName = error.getString("codeName");
+	            }
+	            
+	            if (error.has("code")) {
+	                errorCode = error.getInt("code");
+	            }
+	            
+	            if (error.has("errmsg")) {
+	                errorMessage = error.getString("errmsg");
+	            }
+	            
+	            if (codeName != null) {
+	                errorCodeAccumulator.accumulate(codeName, errorCode, errorMessage);
+	            }
+	        }
+	    } catch (Exception e) {
+	        if (debug) {
+	            LogParser.logger.debug("Error processing error code: {}", e.getMessage());
+	        }
+	    }
 	}
 
 	private boolean isIncompleteLogEntry(JSONObject attr) {

@@ -18,40 +18,18 @@ public class HtmlReportGenerator {
 	public static void generateReport(String fileName, Accumulator accumulator, Accumulator ttlAccumulator,
 	        PlanCacheAccumulator planCacheAccumulator,
 	        QueryHashAccumulator queryHashAccumulator,
+	        ErrorCodeAccumulator errorCodeAccumulator,  // Add this parameter
 	        Map<String, java.util.concurrent.atomic.AtomicLong> operationTypeStats) throws IOException {
-
-	    // DEBUG: Add logging at the start
-	    System.out.println("=== HTML GENERATION DEBUG ===");
-	    System.out.println("Accumulator entries: " + (accumulator != null ? accumulator.getAccumulators().size() : "null"));
-	    System.out.println("TTL accumulator entries: " + (ttlAccumulator != null ? ttlAccumulator.getAccumulators().size() : "null"));
-	    System.out.println("Plan cache accumulator: " + (planCacheAccumulator != null ? "not null" : "null"));
-	    System.out.println("Query hash accumulator: " + (queryHashAccumulator != null ? "not null" : "null"));
-	    if (queryHashAccumulator != null) {
-	        System.out.println("Query hash entries: " + queryHashAccumulator.getQueryHashEntries().size());
-	    }
-	    System.out.println("Operation stats: " + (operationTypeStats != null ? operationTypeStats.size() : "null"));
-	    System.out.println("===============================");
 
 	    try (PrintWriter writer = new PrintWriter(new FileWriter(fileName))) {
 	        writeHtmlHeader(writer);
 	        writeMainOperationsTable(writer, accumulator);
 	        writeTtlOperationsTable(writer, ttlAccumulator);
 	        writeOperationStatsTable(writer, operationTypeStats);
+	        writeErrorCodesTable(writer, errorCodeAccumulator);
 
-	        // DEBUG: Add logging before query hash condition
-	        System.out.println("DEBUG: About to check query hash condition...");
-	        System.out.println("DEBUG: queryHashAccumulator == null: " + (queryHashAccumulator == null));
 	        if (queryHashAccumulator != null) {
-	            System.out.println("DEBUG: queryHashAccumulator.getQueryHashEntries().isEmpty(): " + queryHashAccumulator.getQueryHashEntries().isEmpty());
-	            System.out.println("DEBUG: queryHashAccumulator.getQueryHashEntries().size(): " + queryHashAccumulator.getQueryHashEntries().size());
-	        }
-
-	        // MODIFIED: Force query hash table to appear for debugging
-	        if (queryHashAccumulator != null) {
-	            System.out.println("DEBUG: Writing query hash table (forced for debug)");
 	            writeQueryHashTable(writer, queryHashAccumulator);
-	        } else {
-	            System.out.println("DEBUG: queryHashAccumulator is null, skipping query hash table");
 	        }
 
 	        if (planCacheAccumulator != null && !planCacheAccumulator.getPlanCacheEntries().isEmpty()) {
@@ -659,6 +637,79 @@ public class HtmlReportGenerator {
 		writer.println("                </tbody>");
 		writer.println("            </table>");
 		writer.println("        </div>");
+	}
+	
+	private static void writeErrorCodesTable(PrintWriter writer, ErrorCodeAccumulator errorCodeAccumulator) {
+	    if (errorCodeAccumulator == null || !errorCodeAccumulator.hasErrors()) {
+	        return;
+	    }
+
+	    writer.println("        <h2>Error Codes Analysis</h2>");
+
+	    var entries = errorCodeAccumulator.getErrorCodeEntries().values();
+	    long totalErrors = errorCodeAccumulator.getTotalErrorCount();
+
+	    writer.println("        <div class=\"summary\">");
+	    writer.println("            <h3>Error Summary</h3>");
+	    writer.println("            <div class=\"summary-grid\">");
+	    writer.println("                <div class=\"summary-item\">");
+	    writer.println("                    <div class=\"summary-label\">Total Error Occurrences</div>");
+	    writer.println(
+	            "                    <div class=\"summary-value\">" + NUMBER_FORMAT.format(totalErrors) + "</div>");
+	    writer.println("                </div>");
+	    writer.println("                <div class=\"summary-item\">");
+	    writer.println("                    <div class=\"summary-label\">Unique Error Codes</div>");
+	    writer.println("                    <div class=\"summary-value\">" + NUMBER_FORMAT.format(entries.size())
+	            + "</div>");
+	    writer.println("                </div>");
+	    writer.println("            </div>");
+	    writer.println("        </div>");
+
+	    writer.println("        <div class=\"table-container\">");
+	    writer.println("            <div class=\"controls\">");
+	    writer.println(
+	            "                <input type=\"text\" id=\"errorCodesFilter\" class=\"filter-input\" placeholder=\"Filter by error code name...\">");
+	    writer.println(
+	            "                <button class=\"clear-btn\" onclick=\"clearFilter('errorCodesFilter', 'errorCodesTable')\">Clear Filter</button>");
+	    writer.println("            </div>");
+	    writer.println("            <table id=\"errorCodesTable\">");
+	    writer.println("                <thead>");
+	    writer.println("                    <tr>");
+	    writer.println(
+	            "                        <th class=\"sortable\" onclick=\"sortTable('errorCodesTable', 0, 'string')\">Code Name</th>");
+	    writer.println(
+	            "                        <th class=\"sortable\" onclick=\"sortTable('errorCodesTable', 1, 'number')\">Error Code</th>");
+	    writer.println(
+	            "                        <th class=\"sortable\" onclick=\"sortTable('errorCodesTable', 2, 'number')\">Count</th>");
+	    writer.println(
+	            "                        <th class=\"sortable\" onclick=\"sortTable('errorCodesTable', 3, 'number')\">Percentage</th>");
+	    writer.println(
+	            "                        <th class=\"sortable\" onclick=\"sortTable('errorCodesTable', 4, 'string')\">Sample Error Message</th>");
+	    writer.println("                    </tr>");
+	    writer.println("                </thead>");
+	    writer.println("                <tbody>");
+
+	    entries.stream().sorted(Comparator.comparingLong(ErrorCodeAccumulator.ErrorCodeEntry::getCount).reversed())
+	            .forEach(entry -> {
+	                double percentage = (entry.getCount() * 100.0) / Math.max(totalErrors, 1);
+
+	                writer.println("                    <tr>");
+	                writer.println("                        <td>" + escapeHtml(entry.getCodeName()) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + (entry.getErrorCode() != null ? entry.getErrorCode().toString() : "unknown") + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(entry.getCount()) + "</td>");
+	                writer.println("                        <td class=\"number\">" + String.format("%.1f%%", percentage)
+	                        + "</td>");
+	                writer.println("                        <td class=\"truncated\" title=\""
+	                        + escapeHtml(entry.getSampleErrorMessage()) + "\">"
+	                        + escapeHtml(truncate(entry.getSampleErrorMessage(), 100)) + "</td>");
+	                writer.println("                    </tr>");
+	            });
+
+	    writer.println("                </tbody>");
+	    writer.println("            </table>");
+	    writer.println("        </div>");
 	}
 
 	private static void writeHtmlFooter(PrintWriter writer) {
