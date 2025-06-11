@@ -83,8 +83,11 @@ public class LogParser implements Callable<Integer> {
     @Option(names = {"--ns", "--namespace"}, description = "Filter to specific namespace(s). Can be specified multiple times. Supports patterns like 'mydb.*' or exact matches like 'mydb.mycoll'")
     private Set<String> namespaceFilters = new HashSet<>();
     
-    @Option(names = {"--html"}, description = "HTML output file for interactive report")
-    private String htmlOutputFile;
+    @Option(names = {"--html"}, description = "HTML output file for interactive report (default: report.html)")
+    private String htmlOutputFile = "report.html";
+    
+    @Option(names = {"--text"}, description = "Enable text output to console")
+    private boolean textOutput = false;
 
     // Statistics tracking
     private AtomicLong totalParseErrors = new AtomicLong(0);
@@ -129,93 +132,90 @@ public class LogParser implements Callable<Integer> {
 
     @Override
     public Integer call() throws Exception {
-        logger.info("Starting MongoDB log parsing with {} files and {} processors", 
-                fileNames.length, Runtime.getRuntime().availableProcessors());
+        // Improved console output
+        System.out.println("🚀 MongoDB Log Analyzer");
+        System.out.println("📁 Processing " + fileNames.length + " file(s)...");
         
-        // Debug: Print all files that will be processed
-        for (int i = 0; i < fileNames.length; i++) {
-            logger.info("File {}: {}", i + 1, fileNames[i]);
-        }
-
-        // Log namespace filtering configuration
         if (!namespaceFilters.isEmpty()) {
-            logger.info("Namespace filtering enabled. Filters: {}", namespaceFilters);
-        } else {
-            logger.info("No namespace filtering - processing all namespaces");
+            System.out.println("🔍 Namespace filters: " + String.join(", ", namespaceFilters));
         }
 
         loadConfiguration();
         read();
 
-        logger.info("Parsing complete. Total processed: {}, Ignored: {}, Filtered by namespace: {}", 
-                   processedCount, ignoredCount, totalFilteredByNamespace.get());
-        reportOperationStats();
-        reportIgnoredAnalysis();
+        System.out.println("✅ Analysis complete!");
+        
+        if (textOutput) {
+            reportOperationStats();
+            reportIgnoredAnalysis();
+        }
 
         if (csvOutputFile != null) {
-            logger.info("Writing CSV report to: {}", csvOutputFile);
+            System.out.println("📊 Generating CSV report: " + csvOutputFile);
             reportCsv();
-        } else {
+        } else if (textOutput) {
             report();
         }
 
-        reportTtlOperations();
+        if (textOutput) {
+            reportTtlOperations();
+        }
         
         // Generate plan cache reports if enabled
-        if (planCacheAccumulator != null) {
+        if (planCacheAccumulator != null && textOutput) {
             planCacheAccumulator.report();
             planCacheAccumulator.reportByQueryHash();
-            
-            if (planCacheCsvFile != null) {
-                logger.info("Writing plan cache CSV report to: {}", planCacheCsvFile);
-                planCacheAccumulator.reportCsv(planCacheCsvFile);
-            }
         }
         
-        if (queryHashAccumulator != null) {
+        if (queryHashAccumulator != null && textOutput) {
             queryHashAccumulator.report();
-            
-            if (queryHashCsvFile != null) {
-                logger.info("Writing query hash CSV report to: {}", queryHashCsvFile);
-                queryHashAccumulator.reportCsv(queryHashCsvFile);
-            }
         }
         
-        if (errorCodeAccumulator.hasErrors()) {
+        if (errorCodeAccumulator.hasErrors() && textOutput) {
             errorCodeAccumulator.report();
-            
-            if (errorCodesCsvFile != null) {
-                logger.info("Writing error codes CSV report to: {}", errorCodesCsvFile);
-                errorCodeAccumulator.reportCsv(errorCodesCsvFile);
-            }
         }
         
-        if (transactionAccumulator.hasTransactions()) {
+        if (transactionAccumulator.hasTransactions() && textOutput) {
             transactionAccumulator.report();
-            
-            if (transactionCsvFile != null) {
-                logger.info("Writing transaction CSV report to: {}", transactionCsvFile);
-                transactionAccumulator.reportCsv(transactionCsvFile);
-            }
         }
         
-        if (htmlOutputFile != null) {
-            try {
-                logger.info("Writing HTML report to: {}", htmlOutputFile);
-                HtmlReportGenerator.generateReport(
-                    htmlOutputFile, 
-                    accumulator, 
-                    ttlAccumulator, 
-                    planCacheAccumulator,
-                    queryHashAccumulator,
-                    errorCodeAccumulator,
-                    transactionAccumulator,
-                    operationTypeStats
-                );
-                logger.info("HTML report generated successfully");
-            } catch (IOException e) {
-                logger.error("Failed to generate HTML report: {}", e.getMessage(), e);
-            }
+        // Generate CSV reports if requested
+        if (planCacheCsvFile != null) {
+            System.out.println("📊 Generating plan cache CSV: " + planCacheCsvFile);
+            planCacheAccumulator.reportCsv(planCacheCsvFile);
+        }
+        
+        if (queryHashCsvFile != null) {
+            System.out.println("📊 Generating query hash CSV: " + queryHashCsvFile);
+            queryHashAccumulator.reportCsv(queryHashCsvFile);
+        }
+        
+        if (errorCodesCsvFile != null) {
+            System.out.println("📊 Generating error codes CSV: " + errorCodesCsvFile);
+            errorCodeAccumulator.reportCsv(errorCodesCsvFile);
+        }
+        
+        if (transactionCsvFile != null) {
+            System.out.println("📊 Generating transaction CSV: " + transactionCsvFile);
+            transactionAccumulator.reportCsv(transactionCsvFile);
+        }
+        
+        // Always generate HTML report (now default)
+        try {
+            System.out.println("📝 Generating HTML report: " + htmlOutputFile);
+            HtmlReportGenerator.generateReport(
+                htmlOutputFile, 
+                accumulator, 
+                ttlAccumulator, 
+                planCacheAccumulator,
+                queryHashAccumulator,
+                errorCodeAccumulator,
+                transactionAccumulator,
+                operationTypeStats
+            );
+            System.out.println("🎉 HTML report completed: " + htmlOutputFile);
+        } catch (IOException e) {
+            System.err.println("❌ Failed to generate HTML report: " + e.getMessage());
         }
 
         return 0;
@@ -282,29 +282,42 @@ public class LogParser implements Callable<Integer> {
     }
 
     public void read() throws IOException, ExecutionException, InterruptedException {
-        logger.info("Processing {} files: {}", fileNames.length, String.join(", ", fileNames));
+        int fileCount = 0;
         
         for (String fileName : fileNames) {
             File f = new File(fileName);
+            fileCount++;
             
             if (!f.exists()) {
-                logger.error("File does not exist: {}", fileName);
+                System.err.println("❌ File not found: " + fileName);
                 continue;
             }
             
             if (!f.canRead()) {
-                logger.error("Cannot read file: {}", fileName);
+                System.err.println("❌ Cannot read file: " + fileName);
                 continue;
             }
             
             try {
-                logger.info("Starting to process file: {} (size: {} bytes)", fileName, f.length());
+                String fileSize = formatFileSize(f.length());
+                String shortName = f.getName();
+                if (shortName.length() > 50) {
+                    shortName = "..." + shortName.substring(shortName.length() - 47);
+                }
+                System.out.printf("📄 [%d/%d] %s (%s)\n", fileCount, fileNames.length, shortName, fileSize);
                 read(f);
             } catch (Exception e) {
-                logger.error("Failed to process file: {}. Error: {}", fileName, e.getMessage(), e);
+                System.err.println("❌ Failed to process " + fileName + ": " + e.getMessage());
                 // Continue with next file
             }
         }
+    }
+    
+    private String formatFileSize(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        int unit = (int) (Math.log(bytes) / Math.log(1024));
+        String pre = "KMGTPE".charAt(unit - 1) + "";
+        return String.format("%.1f %sB", bytes / Math.pow(1024, unit), pre);
     }
 
     public void read(File file) throws IOException, ExecutionException, InterruptedException {
@@ -509,16 +522,18 @@ public class LogParser implements Callable<Integer> {
     }
 
     private void logProcessingResults(File file, long duration, int totalLines) {
-    	logger.info("File processing complete - Duration: {}ms | Lines: {} read, {} ignored, {} processed, {} filtered by namespace | Errors: {} parse, {} no attr, {} no command, {} no namespace | Operations parsed: {}", 
-    		    duration, totalLines, ignoredCount, processedCount, totalFilteredByNamespace.get(),
-    		    totalParseErrors.get(), totalNoAttr.get(), totalNoCommand.get(), totalNoNs.get(), totalFoundOps.get());
+        if (debug || textOutput) {
+            logger.info("File processing complete - Duration: {}ms | Lines: {} read, {} ignored, {} processed, {} filtered by namespace | Errors: {} parse, {} no attr, {} no command, {} no namespace | Operations parsed: {}", 
+                duration, totalLines, ignoredCount, processedCount, totalFilteredByNamespace.get(),
+                totalParseErrors.get(), totalNoAttr.get(), totalNoCommand.get(), totalNoNs.get(), totalFoundOps.get());
+        }
 
         if (totalFoundOps.get() == 0) {
-            logger.warn("WARNING: No operations were successfully parsed!");
-            logger.warn("This might indicate wrong log format, excessive filtering, or namespace filter mismatch");
+            System.err.println("⚠️  WARNING: No operations were successfully parsed!");
+            System.err.println("   This might indicate wrong log format, excessive filtering, or namespace filter mismatch");
             if (!namespaceFilters.isEmpty()) {
-                logger.warn("Namespace filters applied: {}", namespaceFilters);
-                logger.warn("Consider checking if your namespace filters match the actual namespaces in the logs");
+                System.err.println("   Namespace filters applied: " + namespaceFilters);
+                System.err.println("   Consider checking if your namespace filters match the actual namespaces in the logs");
             }
         }
     }
