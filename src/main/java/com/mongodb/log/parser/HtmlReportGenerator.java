@@ -16,6 +16,7 @@ import com.mongodb.log.parser.accumulator.PlanCacheKey;
 import com.mongodb.log.parser.accumulator.QueryHashAccumulator;
 import com.mongodb.log.parser.accumulator.QueryHashAccumulatorEntry;
 import com.mongodb.log.parser.accumulator.QueryHashKey;
+import com.mongodb.log.parser.accumulator.TransactionAccumulator;
 
 /**
  * Generates interactive HTML reports with sortable and filterable tables
@@ -27,11 +28,15 @@ public class HtmlReportGenerator {
 	public static void generateReport(String fileName, Accumulator accumulator, Accumulator ttlAccumulator,
 	        PlanCacheAccumulator planCacheAccumulator,
 	        QueryHashAccumulator queryHashAccumulator,
-	        ErrorCodeAccumulator errorCodeAccumulator,  // Add this parameter
+	        ErrorCodeAccumulator errorCodeAccumulator,
+	        TransactionAccumulator transactionAccumulator,  // Add transaction accumulator
 	        Map<String, java.util.concurrent.atomic.AtomicLong> operationTypeStats) throws IOException {
 
 	    try (PrintWriter writer = new PrintWriter(new FileWriter(fileName))) {
 	        writeHtmlHeader(writer);
+	        writeNavigationHeader(writer, accumulator, ttlAccumulator, planCacheAccumulator, 
+	                             queryHashAccumulator, errorCodeAccumulator, transactionAccumulator, 
+	                             operationTypeStats);
 	        writeMainOperationsTable(writer, accumulator);
 	        writeTtlOperationsTable(writer, ttlAccumulator);
 	        writeOperationStatsTable(writer, operationTypeStats);
@@ -43,6 +48,10 @@ public class HtmlReportGenerator {
 
 	        if (planCacheAccumulator != null && !planCacheAccumulator.getPlanCacheEntries().isEmpty()) {
 	            writePlanCacheTable(writer, planCacheAccumulator);
+	        }
+	        
+	        if (transactionAccumulator != null && transactionAccumulator.hasTransactions()) {
+	            writeTransactionTable(writer, transactionAccumulator);
 	        }
 
 	        writeHtmlFooter(writer);
@@ -58,11 +67,11 @@ public class HtmlReportGenerator {
 		writer.println("    <title>MongoDB Log Analysis Report</title>");
 		writer.println("    <style>");
 		writer.println(
-				"        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 20px; background-color: #f5f5f5; }");
+				"        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; background-color: #f5f5f5; }");
 		writer.println("        .container { max-width: 95%; margin: 0 auto; background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }");
-		writer.println("        h1 { color: #2c3e50; text-align: center; margin-bottom: 30px; }");
+		writer.println("        h1 { color: #2c3e50; text-align: center; margin-bottom: 10px; }");
 		writer.println(
-				"        h2 { color: #34495e; margin-top: 40px; margin-bottom: 20px; border-bottom: 2px solid #3498db; padding-bottom: 5px; }");
+				"        h2 { color: #34495e; margin-top: 40px; margin-bottom: 20px; border-bottom: 2px solid #3498db; padding-bottom: 5px; scroll-margin-top: 70px; }");
 		writer.println("        .table-container { margin-bottom: 40px; overflow-x: auto; }");
 		writer.println("        .controls { margin-bottom: 15px; }");
 		writer.println(
@@ -94,13 +103,73 @@ public class HtmlReportGenerator {
 		writer.println("        .collscan { background-color: #ffebee !important; }");
 		writer.println(
 				"        .truncated { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help; }");
+		
+		// Navigation styles
+		writer.println("        .nav-header { background-color: #2c3e50; color: white; padding: 15px 0; margin: -20px -20px 20px -20px; position: sticky; top: 0; z-index: 1000; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }");
+		writer.println("        .nav-content { max-width: 95%; margin: 0 auto; padding: 0 20px; }");
+		writer.println("        .nav-title { margin: 0 0 10px 0; font-size: 1.2em; font-weight: bold; }");
+		writer.println("        .nav-links { display: flex; flex-wrap: wrap; gap: 10px; }");
+		writer.println("        .nav-link { color: #ecf0f1; text-decoration: none; padding: 8px 12px; border-radius: 4px; background-color: #34495e; transition: background-color 0.2s; font-size: 0.9em; }");
+		writer.println("        .nav-link:hover { background-color: #3498db; color: white; }");
+		writer.println("        .nav-link.active { background-color: #3498db; }");
+		writer.println("        .report-info { color: #bdc3c7; font-size: 0.85em; margin-top: 5px; }");
+		
 		writer.println("    </style>");
 		writer.println("</head>");
 		writer.println("<body>");
 		writer.println("    <div class=\"container\">");
-		writer.println("        <h1>MongoDB Log Analysis Report</h1>");
-		writer.println("        <p style=\"text-align: center; color: #7f8c8d;\">Generated on " + new java.util.Date()
-				+ "</p>");
+	}
+
+	private static void writeNavigationHeader(PrintWriter writer, Accumulator accumulator, 
+	        Accumulator ttlAccumulator, PlanCacheAccumulator planCacheAccumulator,
+	        QueryHashAccumulator queryHashAccumulator, ErrorCodeAccumulator errorCodeAccumulator,
+	        TransactionAccumulator transactionAccumulator,
+	        Map<String, java.util.concurrent.atomic.AtomicLong> operationTypeStats) {
+	    
+	    writer.println("        <div class=\"nav-header\">");
+	    writer.println("            <div class=\"nav-content\">");
+	    writer.println("                <div class=\"nav-title\">MongoDB Log Analysis Report</div>");
+	    writer.println("                <div class=\"nav-links\">");
+	    
+	    // Main Operations (always present)
+	    if (!accumulator.getAccumulators().isEmpty()) {
+	        writer.println("                    <a href=\"#main-operations\" class=\"nav-link\">Main Operations</a>");
+	    }
+	    
+	    // TTL Operations
+	    if (ttlAccumulator != null && !ttlAccumulator.getAccumulators().isEmpty()) {
+	        writer.println("                    <a href=\"#ttl-operations\" class=\"nav-link\">TTL Operations</a>");
+	    }
+	    
+	    // Operation Statistics
+	    if (operationTypeStats != null && !operationTypeStats.isEmpty()) {
+	        writer.println("                    <a href=\"#operation-stats\" class=\"nav-link\">Operation Stats</a>");
+	    }
+	    
+	    // Error Codes
+	    if (errorCodeAccumulator != null && errorCodeAccumulator.hasErrors()) {
+	        writer.println("                    <a href=\"#error-codes\" class=\"nav-link\">Error Codes</a>");
+	    }
+	    
+	    // Query Hash Analysis
+	    if (queryHashAccumulator != null && !queryHashAccumulator.getQueryHashEntries().isEmpty()) {
+	        writer.println("                    <a href=\"#query-hash\" class=\"nav-link\">Query Hash Analysis</a>");
+	    }
+	    
+	    // Plan Cache Analysis
+	    if (planCacheAccumulator != null && !planCacheAccumulator.getPlanCacheEntries().isEmpty()) {
+	        writer.println("                    <a href=\"#plan-cache\" class=\"nav-link\">Plan Cache Analysis</a>");
+	    }
+	    
+	    // Transaction Analysis
+	    if (transactionAccumulator != null && transactionAccumulator.hasTransactions()) {
+	        writer.println("                    <a href=\"#transactions\" class=\"nav-link\">Transaction Analysis</a>");
+	    }
+	    
+	    writer.println("                </div>");
+	    writer.println("                <div class=\"report-info\">Generated on " + new java.util.Date() + "</div>");
+	    writer.println("            </div>");
+	    writer.println("        </div>");
 	}
 
 	private static void writeMainOperationsTable(PrintWriter writer, Accumulator accumulator) {
@@ -108,7 +177,7 @@ public class HtmlReportGenerator {
 			return;
 		}
 
-		writer.println("        <h2>Main Operations Analysis</h2>");
+		writer.println("        <h2 id=\"main-operations\">Main Operations Analysis</h2>");
 
 		// Calculate summary statistics
 		long totalOperations = accumulator.getAccumulators().values().stream().mapToLong(LogLineAccumulator::getCount)
@@ -238,7 +307,7 @@ public class HtmlReportGenerator {
 			return;
 		}
 
-		writer.println("        <h2>TTL Operations Analysis</h2>");
+		writer.println("        <h2 id=\"ttl-operations\">TTL Operations Analysis</h2>");
 
 		// Calculate TTL summary
 		long totalTtlOps = ttlAccumulator.getAccumulators().values().stream().mapToLong(LogLineAccumulator::getCount)
@@ -315,7 +384,7 @@ public class HtmlReportGenerator {
 	}
 
 	private static void writeQueryHashTable(PrintWriter writer, QueryHashAccumulator queryHashAccumulator) {
-		writer.println("        <h2>Query Hash Analysis</h2>");
+		writer.println("        <h2 id=\"query-hash\">Query Hash Analysis</h2>");
 
 		var entries = queryHashAccumulator.getQueryHashEntries().values();
 
@@ -463,7 +532,7 @@ public class HtmlReportGenerator {
 			return;
 		}
 
-		writer.println("        <h2>Operation Type Statistics</h2>");
+		writer.println("        <h2 id=\"operation-stats\">Operation Type Statistics</h2>");
 
 		long totalOps = operationTypeStats.values().stream().mapToLong(java.util.concurrent.atomic.AtomicLong::get)
 				.sum();
@@ -510,7 +579,7 @@ public class HtmlReportGenerator {
 	}
 
 	private static void writePlanCacheTable(PrintWriter writer, PlanCacheAccumulator planCacheAccumulator) {
-		writer.println("        <h2>Plan Cache Analysis</h2>");
+		writer.println("        <h2 id=\"plan-cache\">Plan Cache Analysis</h2>");
 
 		// Filter out entries with UNKNOWN plan summaries
 		var filteredEntries = planCacheAccumulator.getPlanCacheEntries().values().stream().filter(
@@ -653,7 +722,7 @@ public class HtmlReportGenerator {
 	        return;
 	    }
 
-	    writer.println("        <h2>Error Codes Analysis</h2>");
+	    writer.println("        <h2 id=\"error-codes\">Error Codes Analysis</h2>");
 
 	    var entries = errorCodeAccumulator.getErrorCodeEntries().values();
 	    long totalErrors = errorCodeAccumulator.getTotalErrorCount();
@@ -713,6 +782,107 @@ public class HtmlReportGenerator {
 	                writer.println("                        <td class=\"truncated\" title=\""
 	                        + escapeHtml(entry.getSampleErrorMessage()) + "\">"
 	                        + escapeHtml(truncate(entry.getSampleErrorMessage(), 100)) + "</td>");
+	                writer.println("                    </tr>");
+	            });
+
+	    writer.println("                </tbody>");
+	    writer.println("            </table>");
+	    writer.println("        </div>");
+	}
+
+	private static void writeTransactionTable(PrintWriter writer, TransactionAccumulator transactionAccumulator) {
+	    writer.println("        <h2 id=\"transactions\">Transaction Analysis</h2>");
+
+	    var entries = transactionAccumulator.getTransactionEntries().values();
+	    long totalTransactions = transactionAccumulator.getTotalTransactionCount();
+
+	    writer.println("        <div class=\"summary\">");
+	    writer.println("            <h3>Transaction Summary</h3>");
+	    writer.println("            <div class=\"summary-grid\">");
+	    writer.println("                <div class=\"summary-item\">");
+	    writer.println("                    <div class=\"summary-label\">Total Transactions</div>");
+	    writer.println(
+	            "                    <div class=\"summary-value\">" + NUMBER_FORMAT.format(totalTransactions) + "</div>");
+	    writer.println("                </div>");
+	    writer.println("                <div class=\"summary-item\">");
+	    writer.println("                    <div class=\"summary-label\">Unique Combinations</div>");
+	    writer.println("                    <div class=\"summary-value\">" + NUMBER_FORMAT.format(entries.size())
+	            + "</div>");
+	    writer.println("                </div>");
+	    writer.println("            </div>");
+	    writer.println("        </div>");
+
+	    writer.println("        <div class=\"table-container\">");
+	    writer.println("            <div class=\"controls\">");
+	    writer.println(
+	            "                <input type=\"text\" id=\"transactionFilter\" class=\"filter-input\" placeholder=\"Filter by termination cause, commit type...\">");
+	    writer.println(
+	            "                <button class=\"clear-btn\" onclick=\"clearFilter('transactionFilter', 'transactionTable')\">Clear Filter</button>");
+	    writer.println("            </div>");
+	    writer.println("            <table id=\"transactionTable\">");
+	    writer.println("                <thead>");
+	    writer.println("                    <tr>");
+	    writer.println(
+	            "                        <th class=\"sortable\" onclick=\"sortTable('transactionTable', 0, 'string')\">Retry Counter</th>");
+	    writer.println(
+	            "                        <th class=\"sortable\" onclick=\"sortTable('transactionTable', 1, 'string')\">Termination Cause</th>");
+	    writer.println(
+	            "                        <th class=\"sortable\" onclick=\"sortTable('transactionTable', 2, 'string')\">Commit Type</th>");
+	    writer.println(
+	            "                        <th class=\"sortable\" onclick=\"sortTable('transactionTable', 3, 'number')\">Count</th>");
+	    writer.println(
+	            "                        <th class=\"sortable\" onclick=\"sortTable('transactionTable', 4, 'number')\">Min Duration (ms)</th>");
+	    writer.println(
+	            "                        <th class=\"sortable\" onclick=\"sortTable('transactionTable', 5, 'number')\">Max Duration (ms)</th>");
+	    writer.println(
+	            "                        <th class=\"sortable\" onclick=\"sortTable('transactionTable', 6, 'number')\">Avg Duration (ms)</th>");
+	    writer.println(
+	            "                        <th class=\"sortable\" onclick=\"sortTable('transactionTable', 7, 'number')\">Max Commit (ms)</th>");
+	    writer.println(
+	            "                        <th class=\"sortable\" onclick=\"sortTable('transactionTable', 8, 'number')\">Avg Commit (ms)</th>");
+	    writer.println(
+	            "                        <th class=\"sortable\" onclick=\"sortTable('transactionTable', 9, 'number')\">Max Time Active (ms)</th>");
+	    writer.println(
+	            "                        <th class=\"sortable\" onclick=\"sortTable('transactionTable', 10, 'number')\">Avg Time Active (ms)</th>");
+	    writer.println(
+	            "                        <th class=\"sortable\" onclick=\"sortTable('transactionTable', 11, 'number')\">Max Time Inactive (ms)</th>");
+	    writer.println(
+	            "                        <th class=\"sortable\" onclick=\"sortTable('transactionTable', 12, 'number')\">Avg Time Inactive (ms)</th>");
+	    writer.println("                    </tr>");
+	    writer.println("                </thead>");
+	    writer.println("                <tbody>");
+
+	    entries.stream().sorted(Comparator.comparingLong(com.mongodb.log.parser.accumulator.TransactionEntry::getCount).reversed())
+	            .forEach(entry -> {
+	                var key = entry.getKey();
+
+	                writer.println("                    <tr>");
+	                writer.println("                        <td>" + 
+	                    (key.getTxnRetryCounter() != null ? key.getTxnRetryCounter().toString() : "null") + "</td>");
+	                writer.println("                        <td>" + 
+	                    escapeHtml(key.getTerminationCause() != null ? key.getTerminationCause() : "null") + "</td>");
+	                writer.println("                        <td>" + 
+	                    escapeHtml(key.getCommitType() != null ? key.getCommitType() : "null") + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(entry.getCount()) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(entry.getMinDurationMs()) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(entry.getMaxDurationMs()) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(entry.getAvgDurationMs()) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(entry.getMaxCommitMs()) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(entry.getAvgCommitMs()) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(entry.getMaxTimeActiveMs()) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(entry.getAvgTimeActiveMs()) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(entry.getMaxTimeInactiveMs()) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(entry.getAvgTimeInactiveMs()) + "</td>");
 	                writer.println("                    </tr>");
 	            });
 
@@ -825,9 +995,52 @@ public class HtmlReportGenerator {
 	    writer.println("                } else if (tableId === 'planCacheTable') {");
 	    writer.println("                    input.addEventListener('input', () => filterTable('planCacheFilter', 'planCacheTable'));");
 	    writer.println("                } else if (tableId === 'queryHashTable') {");
-	    writer.println("                    // FIXED: Added missing query hash table filter");
 	    writer.println("                    input.addEventListener('input', () => filterTable('queryHashFilter', 'queryHashTable'));");
+	    writer.println("                } else if (tableId === 'errorCodesTable') {");
+	    writer.println("                    input.addEventListener('input', () => filterTable('errorCodesFilter', 'errorCodesTable'));");
+	    writer.println("                } else if (tableId === 'transactionTable') {");
+	    writer.println("                    input.addEventListener('input', () => filterTable('transactionFilter', 'transactionTable'));");
 	    writer.println("                }");
+	    writer.println("            });");
+	    writer.println("            ");
+	    writer.println("            // Add smooth scrolling for navigation links");
+	    writer.println("            document.querySelectorAll('.nav-link').forEach(link => {");
+	    writer.println("                link.addEventListener('click', function(e) {");
+	    writer.println("                    e.preventDefault();");
+	    writer.println("                    const targetId = this.getAttribute('href').substring(1);");
+	    writer.println("                    const targetElement = document.getElementById(targetId);");
+	    writer.println("                    if (targetElement) {");
+	    writer.println("                        targetElement.scrollIntoView({");
+	    writer.println("                            behavior: 'smooth',");
+	    writer.println("                            block: 'start'");
+	    writer.println("                        });");
+	    writer.println("                        ");
+	    writer.println("                        // Update active nav link");
+	    writer.println("                        document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));");
+	    writer.println("                        this.classList.add('active');");
+	    writer.println("                    }");
+	    writer.println("                });");
+	    writer.println("            });");
+	    writer.println("            ");
+	    writer.println("            // Highlight active navigation link based on scroll position");
+	    writer.println("            window.addEventListener('scroll', function() {");
+	    writer.println("                const sections = document.querySelectorAll('h2[id]');");
+	    writer.println("                const navLinks = document.querySelectorAll('.nav-link');");
+	    writer.println("                ");
+	    writer.println("                let current = '';");
+	    writer.println("                sections.forEach(section => {");
+	    writer.println("                    const sectionTop = section.offsetTop - 100;");
+	    writer.println("                    if (pageYOffset >= sectionTop) {");
+	    writer.println("                        current = section.getAttribute('id');");
+	    writer.println("                    }");
+	    writer.println("                });");
+	    writer.println("                ");
+	    writer.println("                navLinks.forEach(link => {");
+	    writer.println("                    link.classList.remove('active');");
+	    writer.println("                    if (link.getAttribute('href') === '#' + current) {");
+	    writer.println("                        link.classList.add('active');");
+	    writer.println("                    }");
+	    writer.println("                });");
 	    writer.println("            });");
 	    writer.println("        });");
 	    writer.println("    </script>");
