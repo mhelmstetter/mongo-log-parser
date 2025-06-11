@@ -301,8 +301,8 @@ public class LogParser implements Callable<Integer> {
             try {
                 String fileSize = formatFileSize(f.length());
                 String shortName = f.getName();
-                if (shortName.length() > 50) {
-                    shortName = "..." + shortName.substring(shortName.length() - 47);
+                if (shortName.length() > 80) {
+                    shortName = "..." + shortName.substring(shortName.length() - 77);
                 }
                 System.out.printf("📄 [%d/%d] %s (%s)\n", fileCount, fileNames.length, shortName, fileSize);
                 read(f);
