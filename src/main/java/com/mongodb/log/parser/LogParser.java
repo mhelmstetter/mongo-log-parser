@@ -65,19 +65,19 @@ public class LogParser implements Callable<Integer> {
     @Option(names = { "--debug" }, description = "Enable debug logging")
     private boolean debug = false;
 
-    @Option(names = {"--ignored-analysis"}, description = "Output file for ignored lines analysis")
+    @Option(names = {"--ignoredAnalysis"}, description = "Output file for ignored lines analysis")
     private String ignoredAnalysisFile;
 
-    @Option(names = {"--plan-cache-csv"}, description = "CSV output file for plan cache analysis")
+    @Option(names = {"--planCacheCsv"}, description = "CSV output file for plan cache analysis")
     private String planCacheCsvFile;
 
-    @Option(names = {"--query-hash-csv"}, description = "CSV output file for query hash analysis")
+    @Option(names = {"--queryHashCsv"}, description = "CSV output file for query hash analysis")
     private String queryHashCsvFile;
     
-    @Option(names = {"--error-codes-csv"}, description = "CSV output file for error code analysis")
+    @Option(names = {"--errorCodesCsv"}, description = "CSV output file for error code analysis")
     private String errorCodesCsvFile;
     
-    @Option(names = {"--transaction-csv"}, description = "CSV output file for transaction analysis")
+    @Option(names = {"--transactionCsv"}, description = "CSV output file for transaction analysis")
     private String transactionCsvFile;
 
     @Option(names = {"--ns", "--namespace"}, description = "Filter to specific namespace(s). Can be specified multiple times. Supports patterns like 'mydb.*' or exact matches like 'mydb.mycoll'")
