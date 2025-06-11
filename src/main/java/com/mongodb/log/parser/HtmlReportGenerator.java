@@ -16,26 +16,50 @@ public class HtmlReportGenerator {
 	private static final NumberFormat NUMBER_FORMAT = NumberFormat.getNumberInstance(Locale.US);
 
 	public static void generateReport(String fileName, Accumulator accumulator, Accumulator ttlAccumulator,
-			PlanCacheAccumulator planCacheAccumulator,
-			QueryHashAccumulator queryHashAccumulator,
-			Map<String, java.util.concurrent.atomic.AtomicLong> operationTypeStats) throws IOException {
+	        PlanCacheAccumulator planCacheAccumulator,
+	        QueryHashAccumulator queryHashAccumulator,
+	        Map<String, java.util.concurrent.atomic.AtomicLong> operationTypeStats) throws IOException {
 
-		try (PrintWriter writer = new PrintWriter(new FileWriter(fileName))) {
-			writeHtmlHeader(writer);
-			writeMainOperationsTable(writer, accumulator);
-			writeTtlOperationsTable(writer, ttlAccumulator);
-			writeOperationStatsTable(writer, operationTypeStats);
+	    // DEBUG: Add logging at the start
+	    System.out.println("=== HTML GENERATION DEBUG ===");
+	    System.out.println("Accumulator entries: " + (accumulator != null ? accumulator.getAccumulators().size() : "null"));
+	    System.out.println("TTL accumulator entries: " + (ttlAccumulator != null ? ttlAccumulator.getAccumulators().size() : "null"));
+	    System.out.println("Plan cache accumulator: " + (planCacheAccumulator != null ? "not null" : "null"));
+	    System.out.println("Query hash accumulator: " + (queryHashAccumulator != null ? "not null" : "null"));
+	    if (queryHashAccumulator != null) {
+	        System.out.println("Query hash entries: " + queryHashAccumulator.getQueryHashEntries().size());
+	    }
+	    System.out.println("Operation stats: " + (operationTypeStats != null ? operationTypeStats.size() : "null"));
+	    System.out.println("===============================");
 
-			if (queryHashAccumulator != null && !queryHashAccumulator.getQueryHashEntries().isEmpty()) {
-				writeQueryHashTable(writer, queryHashAccumulator);
-			}
+	    try (PrintWriter writer = new PrintWriter(new FileWriter(fileName))) {
+	        writeHtmlHeader(writer);
+	        writeMainOperationsTable(writer, accumulator);
+	        writeTtlOperationsTable(writer, ttlAccumulator);
+	        writeOperationStatsTable(writer, operationTypeStats);
 
-			if (planCacheAccumulator != null && !planCacheAccumulator.getPlanCacheEntries().isEmpty()) {
-				writePlanCacheTable(writer, planCacheAccumulator);
-			}
+	        // DEBUG: Add logging before query hash condition
+	        System.out.println("DEBUG: About to check query hash condition...");
+	        System.out.println("DEBUG: queryHashAccumulator == null: " + (queryHashAccumulator == null));
+	        if (queryHashAccumulator != null) {
+	            System.out.println("DEBUG: queryHashAccumulator.getQueryHashEntries().isEmpty(): " + queryHashAccumulator.getQueryHashEntries().isEmpty());
+	            System.out.println("DEBUG: queryHashAccumulator.getQueryHashEntries().size(): " + queryHashAccumulator.getQueryHashEntries().size());
+	        }
 
-			writeHtmlFooter(writer);
-		}
+	        // MODIFIED: Force query hash table to appear for debugging
+	        if (queryHashAccumulator != null) {
+	            System.out.println("DEBUG: Writing query hash table (forced for debug)");
+	            writeQueryHashTable(writer, queryHashAccumulator);
+	        } else {
+	            System.out.println("DEBUG: queryHashAccumulator is null, skipping query hash table");
+	        }
+
+	        if (planCacheAccumulator != null && !planCacheAccumulator.getPlanCacheEntries().isEmpty()) {
+	            writePlanCacheTable(writer, planCacheAccumulator);
+	        }
+
+	        writeHtmlFooter(writer);
+	    }
 	}
 
 	private static void writeHtmlHeader(PrintWriter writer) {
@@ -48,8 +72,7 @@ public class HtmlReportGenerator {
 		writer.println("    <style>");
 		writer.println(
 				"        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 20px; background-color: #f5f5f5; }");
-		writer.println(
-				"        .container { max-width: 1400px; margin: 0 auto; background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }");
+		writer.println("        .container { max-width: 95%; margin: 0 auto; background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }");
 		writer.println("        h1 { color: #2c3e50; text-align: center; margin-bottom: 30px; }");
 		writer.println(
 				"        h2 { color: #34495e; margin-top: 40px; margin-bottom: 20px; border-bottom: 2px solid #3498db; padding-bottom: 5px; }");
@@ -434,8 +457,8 @@ public class HtmlReportGenerator {
 					writer.println("                        <td class=\"number\">"
 							+ NUMBER_FORMAT.format(entry.getScannedReturnRatio()) + "</td>");
 					writer.println("                        <td class=\"truncated\" title=\""
-							+ escapeHtml(entry.getReadPreferenceSummary()) + "\">"
-							+ escapeHtml(truncate(entry.getReadPreferenceSummary(), 30)) + "</td>");
+					        + escapeHtml(entry.getReadPreferenceSummary().replace("<br>", ", ")) + "\">"
+					        + entry.getReadPreferenceSummaryTruncated(30) + "</td>");
 					writer.println("                        <td class=\"truncated\" title=\""
 							+ escapeHtml(entry.getSanitizedQuery()) + "\">"
 							+ escapeHtml(truncate(entry.getSanitizedQuery(), 80)) + "</td>");
@@ -639,118 +662,117 @@ public class HtmlReportGenerator {
 	}
 
 	private static void writeHtmlFooter(PrintWriter writer) {
-		writer.println("    </div>");
-		writer.println("    <script>");
-		writer.println("        let sortStates = {};");
-		writer.println("");
-		writer.println("        function sortTable(tableId, column, type) {");
-		writer.println("            const table = document.getElementById(tableId);");
-		writer.println("            const tbody = table.querySelector('tbody');");
-		writer.println("            const rows = Array.from(tbody.querySelectorAll('tr'));");
-		writer.println("            const headers = table.querySelectorAll('th');");
-		writer.println("            ");
-		writer.println("            // Initialize sort state for this table/column");
-		writer.println("            const stateKey = tableId + '_' + column;");
-		writer.println("            if (!sortStates[stateKey]) {");
-		writer.println("                sortStates[stateKey] = 'none';");
-		writer.println("            }");
-		writer.println("            ");
-		writer.println("            // Clear all header classes");
-		writer.println("            headers.forEach(h => {");
-		writer.println("                h.classList.remove('sort-asc', 'sort-desc');");
-		writer.println("            });");
-		writer.println("            ");
-		writer.println("            // Determine sort direction");
-		writer.println("            let ascending = true;");
-		writer.println("            if (sortStates[stateKey] === 'asc') {");
-		writer.println("                ascending = false;");
-		writer.println("                sortStates[stateKey] = 'desc';");
-		writer.println("                headers[column].classList.add('sort-desc');");
-		writer.println("            } else {");
-		writer.println("                sortStates[stateKey] = 'asc';");
-		writer.println("                headers[column].classList.add('sort-asc');");
-		writer.println("            }");
-		writer.println("            ");
-		writer.println("            // Sort rows");
-		writer.println("            rows.sort((a, b) => {");
-		writer.println("                let aVal = a.cells[column].textContent.trim();");
-		writer.println("                let bVal = b.cells[column].textContent.trim();");
-		writer.println("                ");
-		writer.println("                if (type === 'number') {");
-		writer.println("                    // Handle various number formats");
-		writer.println("                    // Remove commas, percentage signs, and other formatting");
-		writer.println("                    aVal = aVal.replace(/[,%$]/g, '');");
-		writer.println("                    bVal = bVal.replace(/[,%$]/g, '');");
-		writer.println("                    ");
-		writer.println("                    // Handle special cases like 'sec', 'ms', 'MB', 'KB', 'GB', etc.");
-		writer.println("                    aVal = aVal.replace(/\\s*(sec|ms|MB|KB|GB)$/i, '');");
-		writer.println("                    bVal = bVal.replace(/\\s*(sec|ms|MB|KB|GB)$/i, '');");
-		writer.println("                    ");
-		writer.println("                    // Convert to numbers, treating empty/invalid as 0");
-		writer.println("                    const aNum = parseFloat(aVal);");
-		writer.println("                    const bNum = parseFloat(bVal);");
-		writer.println("                    ");
-		writer.println("                    const aValue = isNaN(aNum) ? 0 : aNum;");
-		writer.println("                    const bValue = isNaN(bNum) ? 0 : bNum;");
-		writer.println("                    ");
-		writer.println("                    return ascending ? aValue - bValue : bValue - aValue;");
-		writer.println("                } else {");
-		writer.println("                    // String comparison");
-		writer.println("                    return ascending ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);");
-		writer.println("                }");
-		writer.println("            });");
-		writer.println("            ");
-		writer.println("            // Re-append sorted rows");
-		writer.println("            rows.forEach(row => tbody.appendChild(row));");
-		writer.println("        }");
-		writer.println("");
-		writer.println("        function filterTable(inputId, tableId) {");
-		writer.println("            const filter = document.getElementById(inputId).value.toLowerCase();");
-		writer.println("            const table = document.getElementById(tableId);");
-		writer.println("            const rows = table.querySelectorAll('tbody tr');");
-		writer.println("            ");
-		writer.println("            rows.forEach(row => {");
-		writer.println("                const text = row.textContent.toLowerCase();");
-		writer.println("                if (text.includes(filter)) {");
-		writer.println("                    row.style.display = '';");
-		writer.println("                    row.classList.remove('highlight');");
-		writer.println("                    if (filter && filter.length > 0) {");
-		writer.println("                        row.classList.add('highlight');");
-		writer.println("                    }");
-		writer.println("                } else {");
-		writer.println("                    row.style.display = 'none';");
-		writer.println("                }");
-		writer.println("            });");
-		writer.println("        }");
-		writer.println("");
-		writer.println("        function clearFilter(inputId, tableId) {");
-		writer.println("            document.getElementById(inputId).value = '';");
-		writer.println("            filterTable(inputId, tableId);");
-		writer.println("        }");
-		writer.println("");
-		writer.println("        // Add event listeners for live filtering");
-		writer.println("        document.addEventListener('DOMContentLoaded', function() {");
-		writer.println("            const filterInputs = document.querySelectorAll('.filter-input');");
-		writer.println("            filterInputs.forEach(input => {");
-		writer.println("                const tableId = input.id.replace('Filter', 'Table');");
-		writer.println("                if (tableId === 'mainOpsTable') {");
-		writer.println(
-				"                    input.addEventListener('input', () => filterTable('mainOpsFilter', 'mainOpsTable'));");
-		writer.println("                } else if (tableId === 'ttlTable') {");
-		writer.println(
-				"                    input.addEventListener('input', () => filterTable('ttlFilter', 'ttlTable'));");
-		writer.println("                } else if (tableId === 'opStatsTable') {");
-		writer.println(
-				"                    input.addEventListener('input', () => filterTable('opStatsFilter', 'opStatsTable'));");
-		writer.println("                } else if (tableId === 'planCacheTable') {");
-		writer.println(
-				"                    input.addEventListener('input', () => filterTable('planCacheFilter', 'planCacheTable'));");
-		writer.println("                }");
-		writer.println("            });");
-		writer.println("        });");
-		writer.println("    </script>");
-		writer.println("</body>");
-		writer.println("</html>");
+	    writer.println("    </div>");
+	    writer.println("    <script>");
+	    writer.println("        let sortStates = {};");
+	    writer.println("");
+	    writer.println("        function sortTable(tableId, column, type) {");
+	    writer.println("            const table = document.getElementById(tableId);");
+	    writer.println("            const tbody = table.querySelector('tbody');");
+	    writer.println("            const rows = Array.from(tbody.querySelectorAll('tr'));");
+	    writer.println("            const headers = table.querySelectorAll('th');");
+	    writer.println("            ");
+	    writer.println("            // Initialize sort state for this table/column");
+	    writer.println("            const stateKey = tableId + '_' + column;");
+	    writer.println("            if (!sortStates[stateKey]) {");
+	    writer.println("                sortStates[stateKey] = 'none';");
+	    writer.println("            }");
+	    writer.println("            ");
+	    writer.println("            // Clear all header classes");
+	    writer.println("            headers.forEach(h => {");
+	    writer.println("                h.classList.remove('sort-asc', 'sort-desc');");
+	    writer.println("            });");
+	    writer.println("            ");
+	    writer.println("            // Determine sort direction");
+	    writer.println("            let ascending = true;");
+	    writer.println("            if (sortStates[stateKey] === 'asc') {");
+	    writer.println("                ascending = false;");
+	    writer.println("                sortStates[stateKey] = 'desc';");
+	    writer.println("                headers[column].classList.add('sort-desc');");
+	    writer.println("            } else {");
+	    writer.println("                sortStates[stateKey] = 'asc';");
+	    writer.println("                headers[column].classList.add('sort-asc');");
+	    writer.println("            }");
+	    writer.println("            ");
+	    writer.println("            // Sort rows");
+	    writer.println("            rows.sort((a, b) => {");
+	    writer.println("                let aVal = a.cells[column].textContent.trim();");
+	    writer.println("                let bVal = b.cells[column].textContent.trim();");
+	    writer.println("                ");
+	    writer.println("                if (type === 'number') {");
+	    writer.println("                    // Handle various number formats");
+	    writer.println("                    // Remove commas, percentage signs, and other formatting");
+	    writer.println("                    aVal = aVal.replace(/[,%$]/g, '');");
+	    writer.println("                    bVal = bVal.replace(/[,%$]/g, '');");
+	    writer.println("                    ");
+	    writer.println("                    // Handle special cases like 'sec', 'ms', 'MB', 'KB', 'GB', etc.");
+	    writer.println("                    aVal = aVal.replace(/\\s*(sec|ms|MB|KB|GB)$/i, '');");
+	    writer.println("                    bVal = bVal.replace(/\\s*(sec|ms|MB|KB|GB)$/i, '');");
+	    writer.println("                    ");
+	    writer.println("                    // Convert to numbers, treating empty/invalid as 0");
+	    writer.println("                    const aNum = parseFloat(aVal);");
+	    writer.println("                    const bNum = parseFloat(bVal);");
+	    writer.println("                    ");
+	    writer.println("                    const aValue = isNaN(aNum) ? 0 : aNum;");
+	    writer.println("                    const bValue = isNaN(bNum) ? 0 : bNum;");
+	    writer.println("                    ");
+	    writer.println("                    return ascending ? aValue - bValue : bValue - aValue;");
+	    writer.println("                } else {");
+	    writer.println("                    // String comparison");
+	    writer.println("                    return ascending ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);");
+	    writer.println("                }");
+	    writer.println("            });");
+	    writer.println("            ");
+	    writer.println("            // Re-append sorted rows");
+	    writer.println("            rows.forEach(row => tbody.appendChild(row));");
+	    writer.println("        }");
+	    writer.println("");
+	    writer.println("        function filterTable(inputId, tableId) {");
+	    writer.println("            const filter = document.getElementById(inputId).value.toLowerCase();");
+	    writer.println("            const table = document.getElementById(tableId);");
+	    writer.println("            const rows = table.querySelectorAll('tbody tr');");
+	    writer.println("            ");
+	    writer.println("            rows.forEach(row => {");
+	    writer.println("                const text = row.textContent.toLowerCase();");
+	    writer.println("                if (text.includes(filter)) {");
+	    writer.println("                    row.style.display = '';");
+	    writer.println("                    row.classList.remove('highlight');");
+	    writer.println("                    if (filter && filter.length > 0) {");
+	    writer.println("                        row.classList.add('highlight');");
+	    writer.println("                    }");
+	    writer.println("                } else {");
+	    writer.println("                    row.style.display = 'none';");
+	    writer.println("                }");
+	    writer.println("            });");
+	    writer.println("        }");
+	    writer.println("");
+	    writer.println("        function clearFilter(inputId, tableId) {");
+	    writer.println("            document.getElementById(inputId).value = '';");
+	    writer.println("            filterTable(inputId, tableId);");
+	    writer.println("        }");
+	    writer.println("");
+	    writer.println("        // Add event listeners for live filtering");
+	    writer.println("        document.addEventListener('DOMContentLoaded', function() {");
+	    writer.println("            const filterInputs = document.querySelectorAll('.filter-input');");
+	    writer.println("            filterInputs.forEach(input => {");
+	    writer.println("                const tableId = input.id.replace('Filter', 'Table');");
+	    writer.println("                if (tableId === 'mainOpsTable') {");
+	    writer.println("                    input.addEventListener('input', () => filterTable('mainOpsFilter', 'mainOpsTable'));");
+	    writer.println("                } else if (tableId === 'ttlTable') {");
+	    writer.println("                    input.addEventListener('input', () => filterTable('ttlFilter', 'ttlTable'));");
+	    writer.println("                } else if (tableId === 'opStatsTable') {");
+	    writer.println("                    input.addEventListener('input', () => filterTable('opStatsFilter', 'opStatsTable'));");
+	    writer.println("                } else if (tableId === 'planCacheTable') {");
+	    writer.println("                    input.addEventListener('input', () => filterTable('planCacheFilter', 'planCacheTable'));");
+	    writer.println("                } else if (tableId === 'queryHashTable') {");
+	    writer.println("                    // FIXED: Added missing query hash table filter");
+	    writer.println("                    input.addEventListener('input', () => filterTable('queryHashFilter', 'queryHashTable'));");
+	    writer.println("                }");
+	    writer.println("            });");
+	    writer.println("        });");
+	    writer.println("    </script>");
+	    writer.println("</body>");
+	    writer.println("</html>");
 	}
 
 	private static String escapeHtml(String text) {
