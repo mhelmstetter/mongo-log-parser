@@ -33,6 +33,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.mongodb.log.filter.FilterConfig;
+import com.mongodb.log.parser.accumulator.Accumulator;
+import com.mongodb.log.parser.accumulator.ErrorCodeAccumulator;
+import com.mongodb.log.parser.accumulator.PlanCacheAccumulator;
+import com.mongodb.log.parser.accumulator.QueryHashAccumulator;
+import com.mongodb.log.parser.accumulator.TransactionAccumulator;
 import com.mongodb.util.MimeTypes;
 
 import picocli.CommandLine;
@@ -74,9 +79,9 @@ public class LogParser implements Callable<Integer> {
     
     @Option(names = {"--error-codes-csv"}, description = "CSV output file for error code analysis")
     private String errorCodesCsvFile;
-
-    @Option(names = {"--enable-plan-cache"}, description = "Enable plan cache key analysis")
-    private boolean enablePlanCacheAnalysis = true;
+    
+    @Option(names = {"--transaction-csv"}, description = "CSV output file for transaction analysis")
+    private String transactionCsvFile;
 
     @Option(names = {"--ns", "--namespace"}, description = "Filter to specific namespace(s). Can be specified multiple times. Supports patterns like 'mydb.*' or exact matches like 'mydb.mycoll'")
     private Set<String> namespaceFilters = new HashSet<>();
@@ -94,10 +99,11 @@ public class LogParser implements Callable<Integer> {
     private Map<String, AtomicLong> operationTypeStats = new HashMap<>();
 
     private String currentLine = null;
-    private Accumulator accumulator;
-    private Accumulator ttlAccumulator; // Separate accumulator for TTL operations
-    private PlanCacheAccumulator planCacheAccumulator; // New accumulator for plan cache analysis
-    private ErrorCodeAccumulator errorCodeAccumulator;
+    private final Accumulator accumulator;
+    private final Accumulator ttlAccumulator;
+    private final PlanCacheAccumulator planCacheAccumulator;
+    private final ErrorCodeAccumulator errorCodeAccumulator;
+    private final TransactionAccumulator transactionAccumulator;
     
     private FilterConfig filterConfig;
     private int unmatchedCount = 0;
@@ -118,7 +124,9 @@ public class LogParser implements Callable<Integer> {
         accumulator = new Accumulator();
         ttlAccumulator = new Accumulator();
         queryHashAccumulator = new QueryHashAccumulator();
+        planCacheAccumulator = new PlanCacheAccumulator();
         errorCodeAccumulator = new ErrorCodeAccumulator();
+        transactionAccumulator = new TransactionAccumulator();
         filterConfig = new FilterConfig();
     }
 
@@ -140,12 +148,6 @@ public class LogParser implements Callable<Integer> {
         }
 
         loadConfiguration();
-        
-        if (enablePlanCacheAnalysis) {
-            planCacheAccumulator = new PlanCacheAccumulator();
-            logger.info("Plan cache analysis enabled");
-        }
-        
         read();
 
         logger.info("Parsing complete. Total processed: {}, Ignored: {}, Filtered by namespace: {}", 
@@ -163,7 +165,7 @@ public class LogParser implements Callable<Integer> {
         reportTtlOperations();
         
         // Generate plan cache reports if enabled
-        if (enablePlanCacheAnalysis && planCacheAccumulator != null) {
+        if (planCacheAccumulator != null) {
             planCacheAccumulator.report();
             planCacheAccumulator.reportByQueryHash();
             
@@ -188,6 +190,15 @@ public class LogParser implements Callable<Integer> {
             if (errorCodesCsvFile != null) {
                 logger.info("Writing error codes CSV report to: {}", errorCodesCsvFile);
                 errorCodeAccumulator.reportCsv(errorCodesCsvFile);
+            }
+        }
+        
+        if (transactionAccumulator.hasTransactions()) {
+            transactionAccumulator.report();
+            
+            if (transactionCsvFile != null) {
+                logger.info("Writing transaction CSV report to: {}", transactionCsvFile);
+                transactionAccumulator.reportCsv(transactionCsvFile);
             }
         }
         
@@ -343,7 +354,7 @@ public class LogParser implements Callable<Integer> {
             if (lines.size() >= 25000) {
                 completionService.submit(
                     new LogParserTask(new ArrayList<>(lines), accumulator, planCacheAccumulator, queryHashAccumulator,
-                    		errorCodeAccumulator, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace));
+                    		errorCodeAccumulator, transactionAccumulator, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace));
                 submittedTasks++;
                 lines.clear();
             }
@@ -353,7 +364,7 @@ public class LogParser implements Callable<Integer> {
         if (!lines.isEmpty()) {
             completionService.submit(
                 new LogParserTask(new ArrayList<>(lines), accumulator, planCacheAccumulator, queryHashAccumulator,
-                		errorCodeAccumulator, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace));
+                		errorCodeAccumulator, transactionAccumulator, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace));
             submittedTasks++;
         }
 
@@ -603,20 +614,6 @@ public class LogParser implements Callable<Integer> {
             return Long.valueOf(attr.getInt(key));
         }
         return null;
-    }
-
-    private void reportParsedQueries() {
-        for (Namespace namespace : shapesByNamespace.keySet()) {
-            Map<Set<String>, AtomicInteger> shapeCounter = shapesByNamespace.get(namespace);
-            for (Map.Entry<Set<String>, AtomicInteger> entry : shapeCounter.entrySet()) {
-                Set<String> key = entry.getKey();
-                AtomicInteger value = entry.getValue();
-                System.out.println(namespace + "|" + key + "|" + value);
-            }
-        }
-        System.out.println("------------------");
-        shapeAccumulator.report();
-        System.out.println("------------------");
     }
 
     // Getter methods

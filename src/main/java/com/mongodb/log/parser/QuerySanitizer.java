@@ -1,12 +1,11 @@
 package com.mongodb.log.parser;
 
+import java.util.Iterator;
+import java.util.regex.Pattern;
+
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
-import java.util.Iterator;
-import java.util.regex.Pattern;
-import java.util.HashMap;
-import java.util.Map;
 
 /**
  * Utility class for sanitizing MongoDB queries to remove sensitive data while preserving structure

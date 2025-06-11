@@ -1,4 +1,6 @@
-package com.mongodb.log.parser;
+package com.mongodb.log.parser.accumulator;
+
+import com.mongodb.log.parser.Namespace;
 
 /**
  * Key class for aggregating by queryHash, namespace, and operation

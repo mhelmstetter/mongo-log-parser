@@ -10,12 +10,19 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import com.mongodb.log.parser.accumulator.Accumulator;
+import com.mongodb.log.parser.accumulator.ErrorCodeAccumulator;
+import com.mongodb.log.parser.accumulator.PlanCacheAccumulator;
+import com.mongodb.log.parser.accumulator.QueryHashAccumulator;
+import com.mongodb.log.parser.accumulator.TransactionAccumulator;
+
 class LogParserTask implements Callable<ProcessingStats> {
 	private List<String> linesChunk;
 	private final Accumulator accumulator;
 	private final PlanCacheAccumulator planCacheAccumulator;
 	private final QueryHashAccumulator queryHashAccumulator;
 	private final ErrorCodeAccumulator errorCodeAccumulator;
+	private final TransactionAccumulator transactionAccumulator;
 	private final Map<String, AtomicLong> operationTypeStats;
 	private final boolean debug;
 	private final Set<String> namespaceFilters;
@@ -24,6 +31,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 	public LogParserTask(List<String> linesChunk, Accumulator accumulator,
 			PlanCacheAccumulator planCacheAccumulator, QueryHashAccumulator queryHashAccumulator,
 			ErrorCodeAccumulator errorCodeAccumulator,
+			TransactionAccumulator transactionAccumulator,
 			Map<String, AtomicLong> operationTypeStats, boolean debug,
 			Set<String> namespaceFilters, AtomicLong totalFilteredByNamespace) {
 		this.linesChunk = linesChunk;
@@ -31,6 +39,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 		this.planCacheAccumulator = planCacheAccumulator;
 		this.queryHashAccumulator = queryHashAccumulator;
 		this.errorCodeAccumulator = errorCodeAccumulator;
+		this.transactionAccumulator = transactionAccumulator;
 		this.operationTypeStats = operationTypeStats;
 		this.debug = debug;
 		this.namespaceFilters = namespaceFilters;
@@ -211,18 +220,6 @@ class LogParserTask implements Callable<ProcessingStats> {
 					localFoundOps++;
 				}
 
-			} else {
-				// Check if this is an incomplete/internal entry that should be filtered
-				if (isIncompleteLogEntry(attr)) {
-					if (debug && localFoundOps <= 3) {
-						LogParser.logger.debug("Filtered incomplete entry (thread {}): {}",
-								Thread.currentThread().getName(),
-								attr.toString().substring(0, Math.min(200, attr.toString().length())));
-					}
-					continue;
-				}
-
-				localNoCommand++;
 			}
 		}
 
@@ -689,6 +686,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 	
 	private void processErrorCode(JSONObject jo, JSONObject attr) {
 	    try {
+	        // Handle explicit error objects in attr
 	        if (attr.has("error")) {
 	            JSONObject error = attr.getJSONObject("error");
 	            
@@ -712,32 +710,94 @@ class LogParserTask implements Callable<ProcessingStats> {
 	                errorCodeAccumulator.accumulate(codeName, errorCode, errorMessage);
 	            }
 	        }
+	        
+	        // Handle client disconnect interruption messages
+	        if (jo.has("msg")) {
+	            String msg = jo.getString("msg");
+	            if ("Interrupted operation as its client disconnected".equals(msg)) {
+	                // Extract operation ID if available for context
+	                String contextInfo = null;
+	                if (attr.has("opId")) {
+	                    contextInfo = "opId: " + attr.get("opId").toString();
+	                }
+	                
+	                errorCodeAccumulator.accumulate("InterruptedByClientDisconnect", null, 
+	                    "Interrupted operation as its client disconnected" + 
+	                    (contextInfo != null ? " (" + contextInfo + ")" : ""));
+	            }
+	        }
 	    } catch (Exception e) {
 	        if (debug) {
 	            LogParser.logger.debug("Error processing error code: {}", e.getMessage());
 	        }
 	    }
 	}
-
-	private boolean isIncompleteLogEntry(JSONObject attr) {
-		// Filter out entries that are clearly incomplete or internal
-		if (attr.has("message")) {
-			return true;
-		}
-
-		if (attr.has("elapsedMicros") && !attr.has("command") && !attr.has("q")) {
-			return true;
-		}
-
-		if (attr.has("opId") && attr.length() == 1) {
-			return true;
-		}
-
-		if (attr.has("session") && !attr.has("command") && !attr.has("q")) {
-			return true;
-		}
-
-		return false;
+	
+	/**
+	 * Process transaction log entries
+	 */
+	private void processTransaction(JSONObject jo, JSONObject attr) {
+	    try {
+	        if (jo.has("c") && "TXN".equals(jo.getString("c")) && 
+	            jo.has("msg") && "transaction".equals(jo.getString("msg"))) {
+	            
+	            Integer txnRetryCounter = null;
+	            String terminationCause = null;
+	            String commitType = null;
+	            Long durationMillis = null;
+	            Long commitDurationMicros = null;
+	            Long timeActiveMicros = null;
+	            Long timeInactiveMicros = null;
+	            
+	            // Extract txnRetryCounter from parameters if available
+	            if (attr.has("parameters")) {
+	                JSONObject parameters = attr.getJSONObject("parameters");
+	                if (parameters.has("txnRetryCounter")) {
+	                    txnRetryCounter = parameters.getInt("txnRetryCounter");
+	                }
+	            }
+	            
+	            // Extract direct fields from attr
+	            if (attr.has("terminationCause")) {
+	                terminationCause = attr.getString("terminationCause");
+	            }
+	            
+	            if (attr.has("commitType")) {
+	                commitType = attr.getString("commitType");
+	            }
+	            
+	            if (attr.has("durationMillis")) {
+	                durationMillis = attr.getLong("durationMillis");
+	            }
+	            
+	            if (attr.has("commitDurationMicros")) {
+	                commitDurationMicros = attr.getLong("commitDurationMicros");
+	            }
+	            
+	            if (attr.has("timeActiveMicros")) {
+	                timeActiveMicros = attr.getLong("timeActiveMicros");
+	            }
+	            
+	            if (attr.has("timeInactiveMicros")) {
+	                timeInactiveMicros = attr.getLong("timeInactiveMicros");
+	            }
+	            
+	            // Only accumulate if we have at least one meaningful field
+	            if (txnRetryCounter != null || terminationCause != null || 
+	                commitType != null || durationMillis != null) {
+	                
+	                synchronized (transactionAccumulator) {
+	                    transactionAccumulator.accumulate(txnRetryCounter, terminationCause, 
+	                        commitType, durationMillis, commitDurationMicros, 
+	                        timeActiveMicros, timeInactiveMicros);
+	                }
+	            }
+	        }
+	    } catch (Exception e) {
+	        if (debug) {
+	            LogParser.logger.debug("Error processing transaction: {}", e.getMessage());
+	        }
+	    }
 	}
 
 	private void incrementOperationStat(String operationType) {

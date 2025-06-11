@@ -1,6 +1,7 @@
 package com.mongodb.log.parser;
 
 import java.io.File;
+
 import org.apache.commons.math3.stat.descriptive.DescriptiveStatistics;
 
 public class LogLineAccumulator {

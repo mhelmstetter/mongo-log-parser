@@ -1,6 +1,8 @@
-package com.mongodb.log.parser;
+package com.mongodb.log.parser.accumulator;
 
 import java.io.File;
+
+import com.mongodb.log.parser.Namespace;
 
 public class AccumulatorKey {
     

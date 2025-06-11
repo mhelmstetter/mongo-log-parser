@@ -1,4 +1,4 @@
-package com.mongodb.log.parser;
+package com.mongodb.log.parser.accumulator;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -6,6 +6,10 @@ import java.io.PrintWriter;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Map;
+
+import com.mongodb.log.parser.LogLineAccumulator;
+import com.mongodb.log.parser.Namespace;
+import com.mongodb.log.parser.SlowQuery;
 
 public class Accumulator {
 
@@ -34,12 +38,12 @@ public class Accumulator {
     }
 
     int count = 0;
-    protected synchronized void accumulate(SlowQuery slowQuery) {
+    public synchronized void accumulate(SlowQuery slowQuery) {
         accumulate(null, slowQuery.opType.getType(), slowQuery.ns, slowQuery.durationMillis, slowQuery.keysExamined,
                 slowQuery.docsExamined, slowQuery.nreturned, slowQuery.reslen, slowQuery.bytesRead);
     }
 
-    protected void accumulate(File file, String command, Namespace namespace, Long execTime, Long keysExamined,
+    public void accumulate(File file, String command, Namespace namespace, Long execTime, Long keysExamined,
             Long docsExamined, Long nReturned, Long reslen, Long bytesRead) {
         // TODO add an option to accumulate per file, for now glob all files
         // together
