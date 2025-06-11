@@ -1,6 +1,8 @@
-package com.mongodb.log.parser;
+package com.mongodb.log.parser.accumulator;
 
 import org.apache.commons.math3.stat.descriptive.DescriptiveStatistics;
+
+import com.mongodb.log.parser.SlowQuery;
 
 /**
  * Accumulator entry for tracking execution statistics by plan cache key

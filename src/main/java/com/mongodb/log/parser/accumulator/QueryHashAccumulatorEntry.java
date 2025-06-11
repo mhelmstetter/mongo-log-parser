@@ -1,9 +1,12 @@
-package com.mongodb.log.parser;
+package com.mongodb.log.parser.accumulator;
 
-import org.apache.commons.math3.stat.descriptive.DescriptiveStatistics;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.stream.Collectors;
+
+import org.apache.commons.math3.stat.descriptive.DescriptiveStatistics;
+
+import com.mongodb.log.parser.SlowQuery;
 
 /**
  * Accumulator entry for tracking execution statistics by query hash

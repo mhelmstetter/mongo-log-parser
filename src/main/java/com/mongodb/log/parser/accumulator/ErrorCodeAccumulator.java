@@ -1,4 +1,4 @@
-package com.mongodb.log.parser;
+package com.mongodb.log.parser.accumulator;
 
 import java.io.FileNotFoundException;
 import java.io.PrintWriter;

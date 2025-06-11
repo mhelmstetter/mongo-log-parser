@@ -1,10 +1,12 @@
-package com.mongodb.log.parser;
+package com.mongodb.log.parser.accumulator;
 
 import java.io.FileNotFoundException;
 import java.io.PrintWriter;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Map;
+
+import com.mongodb.log.parser.SlowQuery;
 
 /**
  * Accumulator for tracking MongoDB queries by queryHash with sanitized query examples

@@ -8,6 +8,15 @@ import java.util.Comparator;
 import java.util.Locale;
 import java.util.Map;
 
+import com.mongodb.log.parser.accumulator.Accumulator;
+import com.mongodb.log.parser.accumulator.ErrorCodeAccumulator;
+import com.mongodb.log.parser.accumulator.PlanCacheAccumulator;
+import com.mongodb.log.parser.accumulator.PlanCacheAccumulatorEntry;
+import com.mongodb.log.parser.accumulator.PlanCacheKey;
+import com.mongodb.log.parser.accumulator.QueryHashAccumulator;
+import com.mongodb.log.parser.accumulator.QueryHashAccumulatorEntry;
+import com.mongodb.log.parser.accumulator.QueryHashKey;
+
 /**
  * Generates interactive HTML reports with sortable and filterable tables
  */
