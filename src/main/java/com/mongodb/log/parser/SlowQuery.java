@@ -20,4 +20,5 @@ public class SlowQuery {
 	public Boolean fromMultiPlanner = null;
 	public String readPreference = null;
 	public String sanitizedFilter = null;
+	public Long nShards = null;
 }

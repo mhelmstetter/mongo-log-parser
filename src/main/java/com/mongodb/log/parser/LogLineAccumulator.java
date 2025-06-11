@@ -22,6 +22,7 @@ public class LogLineAccumulator {
     private long totalReturned = 0;
     private long reslen = 0;
     private long bytesRead = 0;
+    private long totalShards = 0;
     
     // Statistics for percentiles (optional, can be disabled for performance)
     private DescriptiveStatistics executionStats = new DescriptiveStatistics();
@@ -84,6 +85,12 @@ public class LogLineAccumulator {
             this.bytesRead += bytesRead;
         }
     }
+    
+    public void addShards(Long nShards) {
+        if (nShards != null) {
+            this.totalShards += nShards;
+        }
+    }
 
     // Getter methods
     public long getCount() {
@@ -131,6 +138,10 @@ public class LogLineAccumulator {
     
     public double getDocsExaminedPercentile95() {
         return docsExaminedStats.getN() > 0 ? docsExaminedStats.getPercentile(95) : 0.0;
+    }
+    
+    public long getAvgShards() {
+        return count > 0 ? totalShards / count : 0;
     }
     
     public String toString() {
