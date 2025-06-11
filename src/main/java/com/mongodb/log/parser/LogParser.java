@@ -328,7 +328,7 @@ public class LogParser implements Callable<Integer> {
 
             if (lines.size() >= 25000) {
                 completionService.submit(
-                    new LogParserTask(new ArrayList<>(lines), file, accumulator, planCacheAccumulator, 
+                    new LogParserTask(new ArrayList<>(lines), file, accumulator, planCacheAccumulator, queryHashAccumulator,
                                     operationTypeStats, enablePlanCacheAnalysis, debug, namespaceFilters, totalFilteredByNamespace));
                 submittedTasks++;
                 lines.clear();
@@ -342,7 +342,7 @@ public class LogParser implements Callable<Integer> {
         // Submit remaining lines
         if (!lines.isEmpty()) {
             completionService.submit(
-                new LogParserTask(new ArrayList<>(lines), file, accumulator, planCacheAccumulator,
+                new LogParserTask(new ArrayList<>(lines), file, accumulator, planCacheAccumulator, queryHashAccumulator,
                                 operationTypeStats, enablePlanCacheAnalysis, debug, namespaceFilters, totalFilteredByNamespace));
             submittedTasks++;
         }

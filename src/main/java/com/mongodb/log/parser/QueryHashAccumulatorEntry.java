@@ -162,13 +162,59 @@ public class QueryHashAccumulatorEntry {
      */
     public String getReadPreferenceSummary() {
         if (readPreferenceCounts.isEmpty()) {
-            return "none";
+            return "default: " + count;
         }
         
         return readPreferenceCounts.entrySet().stream()
                 .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
-                .map(entry -> entry.getKey() + "(" + entry.getValue() + ")")
-                .collect(Collectors.joining(","));
+                .map(entry -> {
+                    String key = entry.getKey();
+                    Long value = entry.getValue();
+                    
+                    // Handle special cases
+                    if ("none".equals(key)) {
+                        return "default: " + value;
+                    }
+                    
+                    // Extract mode from JSON-like strings
+                    if (key.contains("\"mode\":")) {
+                        // Parse {"mode":"secondaryPreferred"} format
+                        String mode = key.replaceAll(".*\"mode\":\\s*\"([^\"]+)\".*", "$1");
+                        return mode + ": " + value;
+                    }
+                    
+                    // Handle other formats - remove JSON brackets and quotes
+                    String cleanKey = key.replaceAll("[{}\"\\s]", "")
+                                        .replaceAll("mode:", "");
+                    
+                    return cleanKey + ": " + value;
+                })
+                .collect(Collectors.joining("<br>"));
+    }
+
+    /**
+     * Get read preference summary with per-line truncation for HTML display
+     */
+    public String getReadPreferenceSummaryTruncated(int maxLineLength) {
+        String fullSummary = getReadPreferenceSummary();
+        
+        if (!fullSummary.contains("<br>")) {
+            // Single line - use normal truncation
+            return truncateString(fullSummary, maxLineLength);
+        }
+        
+        // Multi-line - truncate each line individually
+        String[] lines = fullSummary.split("<br>");
+        StringBuilder result = new StringBuilder();
+        
+        for (int i = 0; i < lines.length; i++) {
+            if (i > 0) {
+                result.append("<br>");
+            }
+            result.append(truncateString(lines[i], maxLineLength));
+        }
+        
+        return result.toString();
     }
     
     /**

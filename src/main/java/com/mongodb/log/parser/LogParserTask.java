@@ -39,14 +39,6 @@ class LogParserTask implements Callable<ProcessingStats> {
 		this.totalFilteredByNamespace = totalFilteredByNamespace;
 	}
 
-	public LogParserTask(List<String> linesChunk, File file, Accumulator accumulator,
-			PlanCacheAccumulator planCacheAccumulator, Map<String, AtomicLong> operationTypeStats,
-			boolean enablePlanCacheAnalysis, boolean debug, Set<String> namespaceFilters,
-			AtomicLong totalFilteredByNamespace) {
-		this(linesChunk, file, accumulator, planCacheAccumulator, null, operationTypeStats, enablePlanCacheAnalysis,
-				debug, namespaceFilters, totalFilteredByNamespace);
-	}
-
 	@Override
 	public ProcessingStats call() throws Exception {
 		long localParseErrors = 0;
@@ -56,11 +48,22 @@ class LogParserTask implements Callable<ProcessingStats> {
 		long localFoundOps = 0;
 		long localFilteredByNamespace = 0;
 		int debugCount = 0;
+	    long queryHashEntriesFound = 0;
+	    long queryHashEntriesAccumulated = 0;
 
 		for (String currentLine : linesChunk) {
+			
 			JSONObject jo = null;
 			try {
 				jo = new JSONObject(currentLine);
+				
+				if (jo.has("attr")) {
+	                JSONObject attr = jo.getJSONObject("attr");
+	                if (attr.has("queryHash")) {
+	                    queryHashEntriesFound++;
+	                }
+	            }
+				
 			} catch (JSONException jse) {
 				if (currentLine.length() > 0) {
 					localParseErrors++;
@@ -102,10 +105,11 @@ class LogParserTask implements Callable<ProcessingStats> {
 
 					// Add to query hash accumulator
 					if (queryHashAccumulator != null) {
-						synchronized (queryHashAccumulator) {
-							queryHashAccumulator.accumulate(slowQuery);
-						}
-					}
+			            synchronized (queryHashAccumulator) {
+			                queryHashAccumulator.accumulate(slowQuery);
+			                queryHashEntriesAccumulated++;
+			            }
+			        }
 
 					localFoundOps++;
 					incrementOperationStat("index_operation");
@@ -161,11 +165,10 @@ class LogParserTask implements Callable<ProcessingStats> {
 						accumulator.accumulate(slowQuery);
 					}
 
-					// Add to query hash accumulator
 					if (queryHashAccumulator != null) {
-						synchronized (queryHashAccumulator) {
-							queryHashAccumulator.accumulate(slowQuery);
-						}
+					    synchronized (queryHashAccumulator) {
+					        queryHashAccumulator.accumulate(slowQuery);
+					    }
 					}
 
 					// Add to plan cache accumulator if enabled and has plan cache key
@@ -247,6 +250,10 @@ class LogParserTask implements Callable<ProcessingStats> {
 				localParseErrors, localNoAttr, localNoCommand, localNoNs);
 
 		this.linesChunk = null;
+		
+		LogParser.logger.info("DEBUG: Thread {} - Found {} queryHash entries, accumulated {} entries", 
+		        Thread.currentThread().getName(), queryHashEntriesFound, queryHashEntriesAccumulated);
+		
 		return new ProcessingStats(localParseErrors, localNoAttr, localNoCommand, localNoNs, localFoundOps);
 	}
 
