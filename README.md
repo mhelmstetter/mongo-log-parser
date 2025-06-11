@@ -61,11 +61,17 @@ Console output only:
 java -jar bin/MongoLogParser.jar -f server.log
 ```
 
+Analyze compressed log files directly:
+```bash
+java -jar bin/MongoLogParser.jar -f server.log.gz --html report.html
+java -jar bin/MongoLogParser.jar -f logs.zip --html report.html
+```
+
 ### Advanced Usage
 
-**Multiple log files:**
+**Multiple log files (including compressed):**
 ```bash
-java -jar bin/MongoLogParser.jar -f server1.log server2.log server3.log --html report.html
+java -jar bin/MongoLogParser.jar -f server1.log server2.log.gz server3.zip --html report.html
 ```
 
 **Namespace filtering:**
@@ -118,8 +124,10 @@ java -jar bin/MongoLogParser.jar -f *.log --config filter-config.properties --ht
 
 The parser supports MongoDB log files in JSON format (MongoDB 4.4+). Supported file formats:
 - Plain text `.log` files
-- Gzip compressed `.gz` files  
-- Zip compressed `.zip` files
+- Gzip compressed `.gz` files (processed directly without extraction)
+- Zip compressed `.zip` files (processed directly without extraction)
+
+**Note:** The parser can process compressed files directly - there's no need to extract `.gz` or `.zip` files before analysis. Simply point the parser at the compressed files and it will handle the decompression automatically.
 
 ## Report Sections
 
@@ -183,7 +191,8 @@ ignore.database.local=true
 - Use namespace filtering (`--ns`) to focus on specific databases/collections
 - For large log files, consider filtering by time range first
 - The HTML report loads faster than processing multiple CSV outputs
-- Use compressed log files when possible to reduce I/O
+- Use compressed log files (`.gz`, `.zip`) to reduce disk I/O and storage space
+- The parser handles decompression automatically, so no need to extract files first
 
 ## Example Output
 
