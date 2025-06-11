@@ -12,6 +12,8 @@ java -jar bin/MongoLogParser.jar -f *.log --html logParseReport.html
 
 This will analyze all `.log` files in the current directory and create an interactive HTML report with sortable tables, filtering capabilities, and comprehensive analytics.
 
+**Note:** The parser can process compressed files directly - there's no need to extract `.gz` or `.zip` files before analysis. Simply point the parser at the compressed files and it will handle the decompression automatically.
+
 ## Features
 
 - **Interactive HTML Reports** - Sortable and filterable tables with navigation
@@ -122,12 +124,12 @@ java -jar bin/MongoLogParser.jar -f *.log --config filter-config.properties --ht
 
 ## Supported Log Formats
 
-The parser supports MongoDB log files in JSON format (MongoDB 4.4+). Supported file formats:
+The parser supports MongoDB log files in JSON format (MongoDB 4.4+) from both **mongod** (database server) and **mongos** (sharded cluster router) processes.
+
+Supported file formats:
 - Plain text `.log` files
 - Gzip compressed `.gz` files (processed directly without extraction)
 - Zip compressed `.zip` files (processed directly without extraction)
-
-**Note:** The parser can process compressed files directly - there's no need to extract `.gz` or `.zip` files before analysis. Simply point the parser at the compressed files and it will handle the decompression automatically.
 
 ## Report Sections
 
