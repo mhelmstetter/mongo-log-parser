@@ -85,10 +85,10 @@ java -jar bin/MongoLogParser.jar -f *.log --ns "myapp.*" --ns "analytics.events"
 java -jar bin/MongoLogParser.jar -f *.log \
   --html full-report.html \
   --csv operations.csv \
-  --plan-cache-csv plan-cache.csv \
-  --query-hash-csv query-hash.csv \
-  --error-codes-csv errors.csv \
-  --transaction-csv transactions.csv
+  --planCacheCsv plan-cache.csv \
+  --queryHashCsv query-hash.csv \
+  --errorCodesCsv errors.csv \
+  --transactionCsv transactions.csv
 ```
 
 **Custom filtering configuration:**
@@ -103,13 +103,13 @@ java -jar bin/MongoLogParser.jar -f *.log --config filter-config.properties --ht
 | `-f, --files <files>` | MongoDB log file(s) to analyze (required) |
 | `--html <file>` | Generate interactive HTML report |
 | `-c, --csv <file>` | Generate CSV output for main operations |
-| `--plan-cache-csv <file>` | Generate CSV for plan cache analysis |
-| `--query-hash-csv <file>` | Generate CSV for query hash analysis |
-| `--error-codes-csv <file>` | Generate CSV for error code analysis |
-| `--transaction-csv <file>` | Generate CSV for transaction analysis |
+| `--planCacheCsv <file>` | Generate CSV for plan cache analysis |
+| `--queryHashCsv <file>` | Generate CSV for query hash analysis |
+| `--errorCodesCsv <file>` | Generate CSV for error code analysis |
+| `--transactionCsv <file>` | Generate CSV for transaction analysis |
 | `--ns, --namespace <namespace>` | Filter to specific namespace(s), supports wildcards |
 | `--config <file>` | Load filter configuration from properties file |
-| `--ignored-analysis <file>` | Output file for ignored lines analysis |
+| `--ignoredAnalysis <file>` | Output file for ignored lines analysis |
 | `--debug` | Enable debug logging |
 | `-h, --help` | Show help message |
 | `-V, --version` | Show version information |
