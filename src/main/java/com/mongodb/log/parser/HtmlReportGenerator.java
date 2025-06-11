@@ -240,6 +240,8 @@ public class HtmlReportGenerator {
 				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 10, 'number')\">Avg Return</th>");
 		writer.println(
 				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 11, 'number')\">Ex/Ret Ratio</th>");
+		writer.println(
+				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 12, 'number')\">Avg Shards</th>");
 		writer.println("                    </tr>");
 		writer.println("                </thead>");
 		writer.println("                <tbody>");
@@ -294,6 +296,8 @@ public class HtmlReportGenerator {
 							+ NUMBER_FORMAT.format(acc.getAvgReturned()) + "</td>");
 					writer.println("                        <td class=\"number\">"
 							+ NUMBER_FORMAT.format(acc.getScannedReturnRatio()) + "</td>");
+					writer.println("                        <td class=\"number\">"
+							+ NUMBER_FORMAT.format(acc.getAvgShards()) + "</td>");
 					writer.println("                    </tr>");
 				});
 
@@ -465,9 +469,11 @@ public class HtmlReportGenerator {
 		writer.println(
 				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 16, 'number')\">Ex/Ret Ratio</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 17, 'string')\">Read Preference</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 17, 'number')\">Avg Shards</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 18, 'string')\">Sanitized Query</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 18, 'string')\">Read Preference</th>");
+		writer.println(
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 19, 'string')\">Sanitized Query</th>");
 		writer.println("                    </tr>");
 		writer.println("                </thead>");
 		writer.println("                <tbody>");
@@ -512,6 +518,8 @@ public class HtmlReportGenerator {
 							+ NUMBER_FORMAT.format(entry.getAvgReturned()) + "</td>");
 					writer.println("                        <td class=\"number\">"
 							+ NUMBER_FORMAT.format(entry.getScannedReturnRatio()) + "</td>");
+					writer.println("                        <td class=\"number\">"
+							+ NUMBER_FORMAT.format(entry.getAvgShards()) + "</td>");
 					writer.println("                        <td class=\"truncated\" title=\""
 					        + escapeHtml(entry.getReadPreferenceSummary().replace("<br>", ", ")) + "\">"
 					        + entry.getReadPreferenceSummaryTruncated(30) + "</td>");

@@ -483,6 +483,10 @@ class LogParserTask implements Callable<ProcessingStats> {
 		if (attr.has("remote")) {
 			slowQuery.remote = attr.getString("remote");
 		}
+		
+		if (attr.has("nShards")) {
+			slowQuery.nShards = getMetric(attr, "nShards");
+		}
 	}
 
 	private boolean processCommandOperation(JSONObject command, SlowQuery slowQuery, Namespace ns) {

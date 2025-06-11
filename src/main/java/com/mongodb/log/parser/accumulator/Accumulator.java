@@ -34,17 +34,22 @@ public class Accumulator {
     }
 
     protected void accumulate(File file, String command, Namespace namespace, Long execTime) {
-        accumulate(file, command, namespace, execTime, null, null, null, null, null);
+        accumulate(file, command, namespace, execTime, null, null, null, null, null, null);
+    }
+    
+    public void accumulate(File file, String command, Namespace namespace, Long execTime, Long keysExamined,
+            Long docsExamined, Long nReturned, Long reslen, Long bytesRead) {
+        accumulate(file, command, namespace, execTime, keysExamined, docsExamined, nReturned, reslen, bytesRead, null);
     }
 
     int count = 0;
     public synchronized void accumulate(SlowQuery slowQuery) {
         accumulate(null, slowQuery.opType.getType(), slowQuery.ns, slowQuery.durationMillis, slowQuery.keysExamined,
-                slowQuery.docsExamined, slowQuery.nreturned, slowQuery.reslen, slowQuery.bytesRead);
+                slowQuery.docsExamined, slowQuery.nreturned, slowQuery.reslen, slowQuery.bytesRead, slowQuery.nShards);
     }
 
     public void accumulate(File file, String command, Namespace namespace, Long execTime, Long keysExamined,
-            Long docsExamined, Long nReturned, Long reslen, Long bytesRead) {
+            Long docsExamined, Long nReturned, Long reslen, Long bytesRead, Long nShards) {
         // TODO add an option to accumulate per file, for now glob all files
         // together
         AccumulatorKey key = new AccumulatorKey(null, namespace, command);
@@ -72,6 +77,10 @@ public class Accumulator {
 
         if (nReturned != null) {
             accum.addReturned(nReturned);
+        }
+        
+        if (nShards != null) {
+            accum.addShards(nShards);
         }
     }
 

@@ -25,6 +25,7 @@ public class QueryHashAccumulatorEntry {
     private long totalReturned = 0;
     private long reslen = 0;
     private long bytesRead = 0;
+    private long totalShards = 0;
     
     // Statistics for percentiles
     private DescriptiveStatistics executionStats = new DescriptiveStatistics();
@@ -85,6 +86,10 @@ public class QueryHashAccumulatorEntry {
             bytesRead += slowQuery.bytesRead;
         }
         
+        if (slowQuery.nShards != null) {
+            totalShards += slowQuery.nShards;
+        }
+        
         // Track read preferences with detailed breakdown
         if (slowQuery.readPreference != null && !slowQuery.readPreference.isEmpty()) {
             readPreferenceCounts.merge(slowQuery.readPreference, 1L, Long::sum);
@@ -130,6 +135,10 @@ public class QueryHashAccumulatorEntry {
     
     public long getAvgKeysExamined() {
         return count > 0 ? totalKeysExamined / count : 0;
+    }
+    
+    public long getAvgShards() {
+        return count > 0 ? totalShards / count : 0;
     }
     
     public long getTotalKeysExamined() {
