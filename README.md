@@ -4,13 +4,13 @@ A comprehensive MongoDB log analysis tool that parses log files and generates de
 
 ## Quick Start
 
-The simplest way to get started is to generate an interactive HTML report:
+The simplest way to get started is to analyze your log files:
 
 ```bash
-java -jar bin/MongoLogParser.jar -f *.log --html logParseReport.html
+java -jar bin/MongoLogParser.jar -f *.log
 ```
 
-This will analyze all `.log` files in the current directory and create an interactive HTML report with sortable tables, filtering capabilities, and comprehensive analytics.
+This will analyze all `.log` files in the current directory and automatically generate an interactive HTML report (`report.html`) with sortable tables, filtering capabilities, and comprehensive analytics.
 
 **Note:** The parser can process compressed files directly - there's no need to extract `.gz` or `.zip` files before analysis. Simply point the parser at the compressed files and it will handle the decompression automatically.
 
@@ -48,44 +48,49 @@ The executable JAR will be created at `bin/MongoLogParser.jar`.
 
 ### Basic Usage
 
-Generate an HTML report (recommended):
-```bash
-java -jar bin/MongoLogParser.jar -f server.log --html report.html
-```
-
-Generate a CSV report:
-```bash
-java -jar bin/MongoLogParser.jar -f server.log --csv output.csv
-```
-
-Console output only:
+**Default behavior (generates HTML report):**
 ```bash
 java -jar bin/MongoLogParser.jar -f server.log
 ```
 
-Analyze compressed log files directly:
+**Custom HTML report filename:**
 ```bash
-java -jar bin/MongoLogParser.jar -f server.log.gz --html report.html
-java -jar bin/MongoLogParser.jar -f logs.zip --html report.html
+java -jar bin/MongoLogParser.jar -f server.log --html my-report.html
+```
+
+**Generate CSV report:**
+```bash
+java -jar bin/MongoLogParser.jar -f server.log --csv output.csv
+```
+
+**Console text output:**
+```bash
+java -jar bin/MongoLogParser.jar -f server.log --text
+```
+
+**Analyze compressed log files directly:**
+```bash
+java -jar bin/MongoLogParser.jar -f server.log.gz
+java -jar bin/MongoLogParser.jar -f logs.zip
 ```
 
 ### Advanced Usage
 
 **Multiple log files (including compressed):**
 ```bash
-java -jar bin/MongoLogParser.jar -f server1.log server2.log.gz server3.zip --html report.html
+java -jar bin/MongoLogParser.jar -f server1.log server2.log.gz server3.zip
 ```
 
 **Namespace filtering:**
 ```bash
 # Analyze only myapp database
-java -jar bin/MongoLogParser.jar -f *.log --ns myapp --html report.html
+java -jar bin/MongoLogParser.jar -f *.log --ns myapp
 
 # Analyze specific collection
-java -jar bin/MongoLogParser.jar -f *.log --ns myapp.users --html report.html
+java -jar bin/MongoLogParser.jar -f *.log --ns myapp.users
 
 # Multiple namespaces with wildcards
-java -jar bin/MongoLogParser.jar -f *.log --ns "myapp.*" --ns "analytics.events" --html report.html
+java -jar bin/MongoLogParser.jar -f *.log --ns "myapp.*" --ns "analytics.events"
 ```
 
 **Comprehensive analysis with all outputs:**
@@ -99,9 +104,9 @@ java -jar bin/MongoLogParser.jar -f *.log \
   --transactionCsv transactions.csv
 ```
 
-**Custom filtering configuration:**
+**Text output with custom filtering:**
 ```bash
-java -jar bin/MongoLogParser.jar -f *.log --config filter-config.properties --html report.html
+java -jar bin/MongoLogParser.jar -f *.log --text --config filter-config.properties
 ```
 
 ## Command Line Options
@@ -109,7 +114,8 @@ java -jar bin/MongoLogParser.jar -f *.log --config filter-config.properties --ht
 | Option | Description |
 |--------|-------------|
 | `-f, --files <files>` | MongoDB log file(s) to analyze (required) |
-| `--html <file>` | Generate interactive HTML report |
+| `--html <file>` | Generate interactive HTML report (default: report.html) |
+| `--text` | Enable text output to console |
 | `-c, --csv <file>` | Generate CSV output for main operations |
 | `--planCacheCsv <file>` | Generate CSV for plan cache analysis |
 | `--queryHashCsv <file>` | Generate CSV for query hash analysis |
