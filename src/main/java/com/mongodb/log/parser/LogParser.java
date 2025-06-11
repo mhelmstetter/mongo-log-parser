@@ -56,9 +56,6 @@ public class LogParser implements Callable<Integer> {
     @Option(names = { "-f", "--files" }, description = "MongoDB log file(s)", required = true, arity = "1..*")
     private String[] fileNames;
 
-    @Option(names = { "-q", "--queries" }, description = "Parse queries")
-    private boolean parseQueries = false;
-
     @Option(names = { "-c", "--csv" }, description = "CSV output file")
     private String csvOutputFile;
 
@@ -631,15 +628,6 @@ public class LogParser implements Callable<Integer> {
 
     public int getUnmatchedCount() {
         return unmatchedCount;
-    }
-
-    // Setter methods for programmatic configuration
-    public boolean isParseQueries() {
-        return parseQueries;
-    }
-
-    public void setParseQueries(boolean parseQueries) {
-        this.parseQueries = parseQueries;
     }
 
     public String[] getFileNames() {
