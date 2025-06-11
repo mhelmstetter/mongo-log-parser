@@ -64,6 +64,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 				if (jo.has("attr")) {
 	                JSONObject attr = jo.getJSONObject("attr");
 	                processErrorCode(jo, attr);
+	                processTransaction(jo, attr);
 	            }
 				
 			} catch (JSONException jse) {
