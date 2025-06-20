@@ -38,7 +38,7 @@ public class HtmlReportGenerator {
 	        writeNavigationHeader(writer, accumulator, ttlAccumulator, planCacheAccumulator, 
 	                             queryHashAccumulator, errorCodeAccumulator, transactionAccumulator, 
 	                             operationTypeStats, earliestTimestamp, latestTimestamp);
-	        writeMainOperationsTable(writer, accumulator);
+	        writeMainOperationsTable(writer, accumulator, redactQueries);
 	        writeTtlOperationsTable(writer, ttlAccumulator);
 	        writeOperationStatsTable(writer, operationTypeStats);
 	        writeErrorCodesTable(writer, errorCodeAccumulator);
@@ -205,7 +205,7 @@ public class HtmlReportGenerator {
 	    writer.println("        </div>");
 	}
 
-	private static void writeMainOperationsTable(PrintWriter writer, Accumulator accumulator) {
+	private static void writeMainOperationsTable(PrintWriter writer, Accumulator accumulator, boolean redactQueries) {
 		if (accumulator.getAccumulators().isEmpty()) {
 			return;
 		}
@@ -245,6 +245,10 @@ public class HtmlReportGenerator {
 				"                <input type=\"text\" id=\"mainOpsFilter\" class=\"filter-input\" placeholder=\"Filter by namespace or operation...\">");
 		writer.println(
 				"                <button class=\"clear-btn\" onclick=\"clearFilter('mainOpsFilter', 'mainOpsTable')\">Clear Filter</button>");
+		writer.println(
+				"                <button class=\"expand-btn\" onclick=\"expandAllAccordions('mainOpsTable')\">Expand All</button>");
+		writer.println(
+				"                <button class=\"collapse-btn\" onclick=\"collapseAllAccordions('mainOpsTable')\">Collapse All</button>");
 		writer.println("            </div>");
 		writer.println("            <table id=\"mainOpsTable\">");
 		writer.println("                <thead>");
@@ -304,9 +308,10 @@ public class HtmlReportGenerator {
 						namespace = accString.trim();
 					}
 
-					writer.println("                    <tr>");
+					String rowId = "mo-" + Math.abs((namespace + operation).hashCode());
+					writer.println("                    <tr class=\"accordion-row\" onclick=\"toggleAccordion('" + rowId + "')\">");
 					writer.println("                        <td class=\"truncated\" title=\"" + escapeHtml(namespace)
-							+ "\">" + escapeHtml(truncate(namespace, 50)) + "</td>");
+							+ "\"><span class=\"accordion-toggle\"></span>" + escapeHtml(truncate(namespace, 50)) + "</td>");
 					writer.println("                        <td>" + escapeHtml(operation) + "</td>");
 					writer.println("                        <td class=\"number\">"
 							+ NUMBER_FORMAT.format(acc.getCount()) + "</td>");
@@ -332,6 +337,19 @@ public class HtmlReportGenerator {
 					writer.println("                        <td class=\"number\">"
 							+ NUMBER_FORMAT.format(acc.getAvgShards()) + "</td>");
 					writer.println("                    </tr>");
+					
+					// Add accordion content row for sample log message
+					if (acc.getSampleLogMessage() != null) {
+						String processedLogMessage = LogRedactionUtil.processLogMessage(acc.getSampleLogMessage(), redactQueries);
+						writer.println("                    <tr id=\"" + rowId + "\" class=\"accordion-content\">");
+						writer.println("                        <td colspan=\"13\">");
+						writer.println("                            <div class=\"log-sample\">");
+						writer.println("                                <strong>Sample Log Message:</strong><br>");
+						writer.println("                                " + escapeHtml(processedLogMessage));
+						writer.println("                            </div>");
+						writer.println("                        </td>");
+						writer.println("                    </tr>");
+					}
 				});
 
 		writer.println("                </tbody>");

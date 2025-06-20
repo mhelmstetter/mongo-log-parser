@@ -24,6 +24,9 @@ public class LogLineAccumulator {
     private long bytesRead = 0;
     private long totalShards = 0;
     
+    // Sample log message storage
+    private String sampleLogMessage = null;
+    
     // Statistics for percentiles (optional, can be disabled for performance)
     private DescriptiveStatistics executionStats = new DescriptiveStatistics();
     private DescriptiveStatistics keysExaminedStats = new DescriptiveStatistics();
@@ -164,5 +167,16 @@ public class LogLineAccumulator {
                 totalKeysExamined/1000.0, totalDocsExamined/1000.0, 
                 count > 0 ? totalReturned/count : 0, 
                 getScannedReturnRatio());
+    }
+    
+    public void addSampleLogMessage(String logMessage) {
+        // Store sample log message if we don't have one yet and one is provided
+        if (sampleLogMessage == null && logMessage != null) {
+            sampleLogMessage = logMessage;
+        }
+    }
+    
+    public String getSampleLogMessage() {
+        return sampleLogMessage;
     }
 }

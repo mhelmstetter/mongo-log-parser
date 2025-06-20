@@ -47,9 +47,19 @@ public class Accumulator {
         accumulate(null, slowQuery.opType.getType(), slowQuery.ns, slowQuery.durationMillis, slowQuery.keysExamined,
                 slowQuery.docsExamined, slowQuery.nreturned, slowQuery.reslen, slowQuery.bytesRead, slowQuery.nShards);
     }
+    
+    public synchronized void accumulate(SlowQuery slowQuery, String logMessage) {
+        accumulate(null, slowQuery.opType.getType(), slowQuery.ns, slowQuery.durationMillis, slowQuery.keysExamined,
+                slowQuery.docsExamined, slowQuery.nreturned, slowQuery.reslen, slowQuery.bytesRead, slowQuery.nShards, logMessage);
+    }
 
     public void accumulate(File file, String command, Namespace namespace, Long execTime, Long keysExamined,
             Long docsExamined, Long nReturned, Long reslen, Long bytesRead, Long nShards) {
+        accumulate(file, command, namespace, execTime, keysExamined, docsExamined, nReturned, reslen, bytesRead, nShards, null);
+    }
+
+    public void accumulate(File file, String command, Namespace namespace, Long execTime, Long keysExamined,
+            Long docsExamined, Long nReturned, Long reslen, Long bytesRead, Long nShards, String logMessage) {
         // TODO add an option to accumulate per file, for now glob all files
         // together
         AccumulatorKey key = new AccumulatorKey(null, namespace, command);
@@ -81,6 +91,10 @@ public class Accumulator {
         
         if (nShards != null) {
             accum.addShards(nShards);
+        }
+        
+        if (logMessage != null) {
+            accum.addSampleLogMessage(logMessage);
         }
     }
 

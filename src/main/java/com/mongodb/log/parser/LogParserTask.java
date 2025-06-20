@@ -122,7 +122,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 					}
 
 					synchronized (accumulator) {
-						accumulator.accumulate(slowQuery);
+						accumulator.accumulate(slowQuery, currentLine);
 					}
 
 					// Add to query hash accumulator
@@ -183,7 +183,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 					slowQuery.durationMillis = getMetric(attr, "durationMillis");
 
 					synchronized (accumulator) {
-						accumulator.accumulate(slowQuery);
+						accumulator.accumulate(slowQuery, currentLine);
 					}
 
 					if (queryHashAccumulator != null) {
@@ -220,7 +220,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 					slowQuery.durationMillis = getMetric(attr, "durationMillis");
 
 					synchronized (accumulator) {
-						accumulator.accumulate(slowQuery);
+						accumulator.accumulate(slowQuery, currentLine);
 					}
 
 					// Add to query hash accumulator
