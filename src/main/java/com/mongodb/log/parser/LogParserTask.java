@@ -28,13 +28,14 @@ class LogParserTask implements Callable<ProcessingStats> {
 	private final Set<String> namespaceFilters;
 	private final AtomicLong totalFilteredByNamespace;
 	private final boolean redactQueries;
+	private final LogParser logParser;
 
 	public LogParserTask(List<String> linesChunk, Accumulator accumulator,
 			PlanCacheAccumulator planCacheAccumulator, QueryHashAccumulator queryHashAccumulator,
 			ErrorCodeAccumulator errorCodeAccumulator,
 			TransactionAccumulator transactionAccumulator,
 			Map<String, AtomicLong> operationTypeStats, boolean debug,
-			Set<String> namespaceFilters, AtomicLong totalFilteredByNamespace, boolean redactQueries) {
+			Set<String> namespaceFilters, AtomicLong totalFilteredByNamespace, boolean redactQueries, LogParser logParser) {
 		this.linesChunk = linesChunk;
 		this.accumulator = accumulator;
 		this.planCacheAccumulator = planCacheAccumulator;
@@ -46,6 +47,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 		this.namespaceFilters = namespaceFilters;
 		this.totalFilteredByNamespace = totalFilteredByNamespace;
 		this.redactQueries = redactQueries;
+		this.logParser = logParser;
 	}
 
 	@Override
@@ -62,6 +64,21 @@ class LogParserTask implements Callable<ProcessingStats> {
 			JSONObject jo = null;
 			try {
 				jo = new JSONObject(currentLine);
+				
+				// Extract timestamp for tracking
+				if (jo.has("t") && logParser != null) {
+					try {
+						Object tObj = jo.get("t");
+						if (tObj instanceof JSONObject) {
+							JSONObject tJson = (JSONObject) tObj;
+							if (tJson.has("$date")) {
+								logParser.updateTimestamps(tJson.getString("$date"));
+							}
+						}
+					} catch (Exception e) {
+						// Ignore timestamp extraction errors
+					}
+				}
 				
 				if (jo.has("attr")) {
 	                JSONObject attr = jo.getJSONObject("attr");

@@ -100,6 +100,10 @@ public class LogParser implements Callable<Integer> {
     private AtomicLong totalFoundOps = new AtomicLong(0);
     private AtomicLong totalFilteredByNamespace = new AtomicLong(0);
     private Map<String, AtomicLong> operationTypeStats = new HashMap<>();
+    
+    // Timestamp tracking
+    private volatile String earliestTimestamp = null;
+    private volatile String latestTimestamp = null;
 
     private String currentLine = null;
     private final Accumulator accumulator;
@@ -222,7 +226,9 @@ public class LogParser implements Callable<Integer> {
                 errorCodeAccumulator,
                 transactionAccumulator,
                 operationTypeStats,
-                redactQueries
+                redactQueries,
+                earliestTimestamp,
+                latestTimestamp
             );
             System.out.println("🎉 HTML report completed: " + htmlOutputFile);
         } catch (IOException e) {
@@ -376,7 +382,7 @@ public class LogParser implements Callable<Integer> {
             if (lines.size() >= 25000) {
                 completionService.submit(
                     new LogParserTask(new ArrayList<>(lines), accumulator, planCacheAccumulator, queryHashAccumulator,
-                    		errorCodeAccumulator, transactionAccumulator, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries));
+                    		errorCodeAccumulator, transactionAccumulator, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this));
                 submittedTasks++;
                 lines.clear();
             }
@@ -386,7 +392,7 @@ public class LogParser implements Callable<Integer> {
         if (!lines.isEmpty()) {
             completionService.submit(
                 new LogParserTask(new ArrayList<>(lines), accumulator, planCacheAccumulator, queryHashAccumulator,
-                		errorCodeAccumulator, transactionAccumulator, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries));
+                		errorCodeAccumulator, transactionAccumulator, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this));
             submittedTasks++;
         }
 
@@ -679,6 +685,17 @@ public class LogParser implements Callable<Integer> {
 
     public void addNamespaceFilter(String namespaceFilter) {
         this.namespaceFilters.add(namespaceFilter);
+    }
+    
+    public synchronized void updateTimestamps(String timestamp) {
+        if (timestamp != null) {
+            if (earliestTimestamp == null || timestamp.compareTo(earliestTimestamp) < 0) {
+                earliestTimestamp = timestamp;
+            }
+            if (latestTimestamp == null || timestamp.compareTo(latestTimestamp) > 0) {
+                latestTimestamp = timestamp;
+            }
+        }
     }
 
     public static void main(String[] args) {

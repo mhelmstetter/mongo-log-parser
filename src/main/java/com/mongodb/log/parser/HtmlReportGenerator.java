@@ -30,13 +30,14 @@ public class HtmlReportGenerator {
 	        QueryHashAccumulator queryHashAccumulator,
 	        ErrorCodeAccumulator errorCodeAccumulator,
 	        TransactionAccumulator transactionAccumulator,  // Add transaction accumulator
-	        Map<String, java.util.concurrent.atomic.AtomicLong> operationTypeStats, boolean redactQueries) throws IOException {
+	        Map<String, java.util.concurrent.atomic.AtomicLong> operationTypeStats, boolean redactQueries,
+	        String earliestTimestamp, String latestTimestamp) throws IOException {
 
 	    try (PrintWriter writer = new PrintWriter(new FileWriter(fileName))) {
 	        writeHtmlHeader(writer);
 	        writeNavigationHeader(writer, accumulator, ttlAccumulator, planCacheAccumulator, 
 	                             queryHashAccumulator, errorCodeAccumulator, transactionAccumulator, 
-	                             operationTypeStats);
+	                             operationTypeStats, earliestTimestamp, latestTimestamp);
 	        writeMainOperationsTable(writer, accumulator);
 	        writeTtlOperationsTable(writer, ttlAccumulator);
 	        writeOperationStatsTable(writer, operationTypeStats);
@@ -134,7 +135,8 @@ public class HtmlReportGenerator {
 	        Accumulator ttlAccumulator, PlanCacheAccumulator planCacheAccumulator,
 	        QueryHashAccumulator queryHashAccumulator, ErrorCodeAccumulator errorCodeAccumulator,
 	        TransactionAccumulator transactionAccumulator,
-	        Map<String, java.util.concurrent.atomic.AtomicLong> operationTypeStats) {
+	        Map<String, java.util.concurrent.atomic.AtomicLong> operationTypeStats,
+	        String earliestTimestamp, String latestTimestamp) {
 	    
 	    writer.println("        <div class=\"nav-header\">");
 	    writer.println("            <div class=\"nav-content\">");
@@ -177,7 +179,23 @@ public class HtmlReportGenerator {
 	    }
 	    
 	    writer.println("                </div>");
-	    writer.println("                <div class=\"report-info\">Generated on " + new java.util.Date() + "</div>");
+	    
+	    // Add timestamp range information
+	    StringBuilder reportInfo = new StringBuilder();
+	    reportInfo.append("Generated on ").append(new java.util.Date());
+	    if (earliestTimestamp != null && latestTimestamp != null) {
+	        try {
+	            // Format the timestamp range for display
+	            String timeRange = formatTimestampRange(earliestTimestamp, latestTimestamp);
+	            reportInfo.append(" | Log data: ").append(timeRange);
+	        } catch (Exception e) {
+	            // Fallback to raw timestamps if formatting fails
+	            reportInfo.append(" | Log data: ").append(earliestTimestamp.substring(0, Math.min(19, earliestTimestamp.length())))
+	                     .append(" to ").append(latestTimestamp.substring(0, Math.min(19, latestTimestamp.length())));
+	        }
+	    }
+	    
+	    writer.println("                <div class=\"report-info\">" + reportInfo.toString() + "</div>");
 	    writer.println("            </div>");
 	    writer.println("        </div>");
 	}
@@ -483,7 +501,7 @@ public class HtmlReportGenerator {
 		writer.println(
 				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 18, 'string')\">Read Preference</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 19, 'string')\">Sanitized Query</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 19, 'string')\">Query</th>");
 		writer.println("                    </tr>");
 		writer.println("                </thead>");
 		writer.println("                <tbody>");
@@ -1124,5 +1142,25 @@ public class HtmlReportGenerator {
 		if (text.length() <= maxLength)
 			return text;
 		return text.substring(0, maxLength - 3) + "...";
+	}
+	
+	private static String formatTimestampRange(String earliestTimestamp, String latestTimestamp) {
+	    try {
+	        // MongoDB timestamps are in ISO format like "2024-01-01T12:00:00.000+00:00"
+	        // Extract date and time parts for display
+	        String earliestDisplay = earliestTimestamp.substring(0, Math.min(19, earliestTimestamp.length())).replace("T", " ");
+	        String latestDisplay = latestTimestamp.substring(0, Math.min(19, latestTimestamp.length())).replace("T", " ");
+	        
+	        // If same date, show date once
+	        if (earliestDisplay.substring(0, 10).equals(latestDisplay.substring(0, 10))) {
+	            return earliestDisplay.substring(0, 10) + " " + 
+	                   earliestDisplay.substring(11) + " to " + latestDisplay.substring(11);
+	        } else {
+	            return earliestDisplay + " to " + latestDisplay;
+	        }
+	    } catch (Exception e) {
+	        // Fallback to simple format
+	        return earliestTimestamp + " to " + latestTimestamp;
+	    }
 	}
 }
