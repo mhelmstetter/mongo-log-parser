@@ -93,7 +93,9 @@ public class Accumulator {
             accum.addShards(nShards);
         }
         
-        if (logMessage != null) {
+        if (logMessage != null && execTime != null) {
+            accum.addSampleLogMessage(logMessage, execTime);
+        } else if (logMessage != null) {
             accum.addSampleLogMessage(logMessage);
         }
     }

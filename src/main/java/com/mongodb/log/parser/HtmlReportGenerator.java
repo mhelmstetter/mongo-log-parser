@@ -344,7 +344,7 @@ public class HtmlReportGenerator {
 						writer.println("                    <tr id=\"" + rowId + "\" class=\"accordion-content\">");
 						writer.println("                        <td colspan=\"13\">");
 						writer.println("                            <div class=\"log-sample\">");
-						writer.println("                                <strong>Sample Log Message:</strong><br>");
+						writer.println("                                <strong>Slowest Query Log Message:</strong><br>");
 						writer.println("                                " + escapeHtml(processedLogMessage));
 						writer.println("                            </div>");
 						writer.println("                        </td>");
@@ -591,7 +591,7 @@ public class HtmlReportGenerator {
 						writer.println("                    <tr id=\"" + rowId + "\" class=\"accordion-content\">");
 						writer.println("                        <td colspan=\"19\">");
 						writer.println("                            <div class=\"log-sample\">");
-						writer.println("                                <strong>Sample Log Message:</strong><br>");
+						writer.println("                                <strong>Slowest Query Log Message:</strong><br>");
 						writer.println("                                " + escapeHtml(processedLogMessage));
 						writer.println("                            </div>");
 						writer.println("                        </td>");
@@ -821,7 +821,7 @@ public class HtmlReportGenerator {
 						writer.println("                    <tr id=\"" + rowId + "\" class=\"accordion-content\">");
 						writer.println("                        <td colspan=\"14\">");
 						writer.println("                            <div class=\"log-sample\">");
-						writer.println("                                <strong>Sample Log Message:</strong><br>");
+						writer.println("                                <strong>Slowest Query Log Message:</strong><br>");
 						writer.println("                                " + escapeHtml(processedLogMessage));
 						writer.println("                            </div>");
 						writer.println("                        </td>");

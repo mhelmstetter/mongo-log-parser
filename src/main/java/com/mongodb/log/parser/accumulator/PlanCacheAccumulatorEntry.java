@@ -40,8 +40,9 @@ public class PlanCacheAccumulatorEntry {
     private DescriptiveStatistics docsExaminedStats = new DescriptiveStatistics();
     private DescriptiveStatistics planningTimeStats = new DescriptiveStatistics();
     
-    // Store a sample log message for accordion display
+    // Store a sample log message for accordion display - store the slowest query
     private String sampleLogMessage = null;
+    private long maxDurationForSample = 0;
     
     public PlanCacheAccumulatorEntry(PlanCacheKey key) {
         this.key = key;
@@ -132,9 +133,10 @@ public class PlanCacheAccumulatorEntry {
             collectionScanCount++;
         }
         
-        // Store sample log message if we don't have one yet and one is provided
-        if (sampleLogMessage == null && logMessage != null) {
+        // Store sample log message if this is the slowest query we've seen
+        if (logMessage != null && slowQuery.durationMillis != null && slowQuery.durationMillis >= maxDurationForSample) {
             sampleLogMessage = logMessage;
+            maxDurationForSample = slowQuery.durationMillis;
         }
     }
     

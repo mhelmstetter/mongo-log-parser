@@ -24,8 +24,9 @@ public class LogLineAccumulator {
     private long bytesRead = 0;
     private long totalShards = 0;
     
-    // Sample log message storage
+    // Sample log message storage - store the log message for the slowest query
     private String sampleLogMessage = null;
+    private long maxDurationForSample = 0;
     
     // Statistics for percentiles (optional, can be disabled for performance)
     private DescriptiveStatistics executionStats = new DescriptiveStatistics();
@@ -169,8 +170,17 @@ public class LogLineAccumulator {
                 getScannedReturnRatio());
     }
     
+    public void addSampleLogMessage(String logMessage, long durationMs) {
+        // Store sample log message if this is the slowest query we've seen
+        if (logMessage != null && durationMs >= maxDurationForSample) {
+            sampleLogMessage = logMessage;
+            maxDurationForSample = durationMs;
+        }
+    }
+    
+    // Backward compatibility method - deprecated but kept for now
     public void addSampleLogMessage(String logMessage) {
-        // Store sample log message if we don't have one yet and one is provided
+        // If no duration provided, only store if we don't have one yet
         if (sampleLogMessage == null && logMessage != null) {
             sampleLogMessage = logMessage;
         }
