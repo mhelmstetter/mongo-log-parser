@@ -9,3 +9,6 @@
 hs_err_pid*
 replay_pid*
 /target/
+
+# Ignore backup jar files
+bin/original-MongoLogParser.jar

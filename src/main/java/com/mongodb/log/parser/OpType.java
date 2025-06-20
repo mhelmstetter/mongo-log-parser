@@ -3,7 +3,7 @@ package com.mongodb.log.parser;
 public enum OpType {
     CMD(1, "command", true, false),
     QUERY(2, "find", true, true),
-    GETMORE(3, "getmore", true, false),
+    GETMORE(3, "getMore", true, false),
     INSERT(4, "insert", false, false),
     UPDATE(5, "update", true, true),
     UPDATE_W(6, "update_w", true, true),
@@ -11,7 +11,7 @@ public enum OpType {
     AGGREGATE(8, "aggregate", true, true),
     FIND_AND_MODIFY(9, "findAndModify", true, true),
     DISTINCT(10, "distinct", true, true),
-    COUNT(11, "COUNT", true, true);
+    COUNT(11, "count", true, true);
 
     OpType(final int pCode, final String pOpType, final boolean pSupportsQueryShape, final boolean pSupportsExecStats) {
         this.code = pCode;

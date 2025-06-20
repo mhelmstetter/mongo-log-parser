@@ -180,22 +180,21 @@ public class HtmlReportGenerator {
 	    
 	    writer.println("                </div>");
 	    
-	    // Add timestamp range information
-	    StringBuilder reportInfo = new StringBuilder();
-	    reportInfo.append("Generated on ").append(new java.util.Date());
+	    // Add timestamp range information with right-justified generation date
+	    String logDataInfo = "";
 	    if (earliestTimestamp != null && latestTimestamp != null) {
 	        try {
 	            // Format the timestamp range for display
 	            String timeRange = formatTimestampRange(earliestTimestamp, latestTimestamp);
-	            reportInfo.append(" | Log data: ").append(timeRange);
+	            logDataInfo = "Log data: " + timeRange;
 	        } catch (Exception e) {
 	            // Fallback to raw timestamps if formatting fails
-	            reportInfo.append(" | Log data: ").append(earliestTimestamp.substring(0, Math.min(19, earliestTimestamp.length())))
-	                     .append(" to ").append(latestTimestamp.substring(0, Math.min(19, latestTimestamp.length())));
+	            logDataInfo = "Log data: " + earliestTimestamp.substring(0, Math.min(19, earliestTimestamp.length()))
+	                       + " to " + latestTimestamp.substring(0, Math.min(19, latestTimestamp.length()));
 	        }
 	    }
 	    
-	    writer.println("                <div class=\"report-info\">" + reportInfo.toString() + "</div>");
+	    writer.println("                <div class=\"report-info\" style=\"display: flex; justify-content: space-between;\"><span>" + logDataInfo + "</span><span>Generated on " + new java.util.Date() + "</span></div>");
 	    writer.println("            </div>");
 	    writer.println("        </div>");
 	}
