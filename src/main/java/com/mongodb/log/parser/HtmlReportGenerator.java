@@ -120,7 +120,7 @@ public class HtmlReportGenerator {
 		writer.println("        .accordion-content { display: none; }");
 		writer.println("        .accordion-content.open { display: table-row; }");
 		writer.println("        .log-sample { background-color: #f8f9fa; padding: 10px; font-family: 'Courier New', monospace; font-size: 12px; word-wrap: break-word; border-left: 4px solid #00684A; max-height: 300px; overflow-y: auto; }");
-		writer.println("        .accordion-toggle { font-size: 12px; opacity: 0.7; margin-left: 5px; }");
+		writer.println("        .accordion-toggle { font-size: 12px; opacity: 0.7; margin-right: 8px; display: inline-block; }");
 		writer.println("        .accordion-toggle::before { content: '▶'; }");
 		writer.println("        .accordion-row.open .accordion-toggle::before { content: '▼'; }");
 		
@@ -496,8 +496,8 @@ public class HtmlReportGenerator {
 					writer.println("                    <tr class=\"accordion-row\" onclick=\"toggleAccordion('" + rowId + "')\">");
 					writer.println(
 							"                        <td class=\"truncated\" title=\"" + escapeHtml(key.getQueryHash())
-									+ "\">" + escapeHtml(truncate(key.getQueryHash(), 12)) 
-									+ "<span class=\"accordion-toggle\"></span></td>");
+									+ "\"><span class=\"accordion-toggle\"></span>" + escapeHtml(truncate(key.getQueryHash(), 12)) 
+									+ "</td>");
 					writer.println("                        <td class=\"truncated\" title=\""
 							+ escapeHtml(key.getNamespace().toString()) + "\">"
 							+ escapeHtml(truncate(key.getNamespace().toString(), 40)) + "</td>");
@@ -711,9 +711,8 @@ public class HtmlReportGenerator {
 
 					writer.println("                    <tr class=\"" + rowClass + "\" onclick=\"toggleAccordion('" + rowId + "')\">");
 					writer.println("                        <td class=\"truncated\" title=\""
-							+ escapeHtml(key.getNamespace().toString()) + "\">"
-							+ escapeHtml(truncate(key.getNamespace().toString(), 40)) 
-							+ "<span class=\"accordion-toggle\"></span></td>");
+							+ escapeHtml(key.getNamespace().toString()) + "\"><span class=\"accordion-toggle\"></span>" + escapeHtml(truncate(key.getNamespace().toString(), 40)) 
+							+ "</td>");
 					writer.println("                        <td class=\"truncated\" title=\""
 							+ escapeHtml(key.getPlanCacheKey()) + "\">"
 							+ escapeHtml(truncate(key.getPlanCacheKey(), 12)) + "</td>");
@@ -947,7 +946,7 @@ public class HtmlReportGenerator {
 	    writer.println("        function sortTable(tableId, column, type) {");
 	    writer.println("            const table = document.getElementById(tableId);");
 	    writer.println("            const tbody = table.querySelector('tbody');");
-	    writer.println("            const rows = Array.from(tbody.querySelectorAll('tr'));");
+	    writer.println("            const rows = Array.from(tbody.querySelectorAll('tr:not(.accordion-content)'));");
 	    writer.println("            const headers = table.querySelectorAll('th');");
 	    writer.println("            ");
 	    writer.println("            // Initialize sort state for this table/column");
