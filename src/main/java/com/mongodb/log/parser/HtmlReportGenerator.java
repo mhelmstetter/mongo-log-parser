@@ -631,15 +631,25 @@ public class HtmlReportGenerator {
 	private static void writePlanCacheTable(PrintWriter writer, PlanCacheAccumulator planCacheAccumulator, boolean redactQueries) {
 		writer.println("        <h2 id=\"plan-cache\">Plan Cache Analysis</h2>");
 
-		// Filter out entries with UNKNOWN plan summaries
-		var filteredEntries = planCacheAccumulator.getPlanCacheEntries().values().stream().filter(
+		// Get all entries, but separate those with and without valid plan summaries
+		var allEntries = planCacheAccumulator.getPlanCacheEntries().values().stream()
+				.collect(java.util.stream.Collectors.toList());
+		
+		var entriesWithPlanSummary = allEntries.stream().filter(
 				entry -> entry.getKey().getPlanSummary() != null && !"UNKNOWN".equals(entry.getKey().getPlanSummary()))
 				.collect(java.util.stream.Collectors.toList());
+		
+		var entriesWithoutPlanSummary = allEntries.stream().filter(
+				entry -> entry.getKey().getPlanSummary() == null || "UNKNOWN".equals(entry.getKey().getPlanSummary()))
+				.collect(java.util.stream.Collectors.toList());
 
-		if (filteredEntries.isEmpty()) {
-			writer.println("        <p>No plan cache entries with valid plan summaries found.</p>");
+		if (allEntries.isEmpty()) {
+			writer.println("        <p>No plan cache entries found.</p>");
 			return;
 		}
+		
+		// Use all entries for the table, but note which ones lack plan summaries
+		var filteredEntries = allEntries;
 
 		// Calculate plan cache summary (using filtered entries)
 		long totalQueries = filteredEntries.stream().mapToLong(PlanCacheAccumulatorEntry::getCount).sum();
@@ -673,6 +683,17 @@ public class HtmlReportGenerator {
 		writer.println("                </div>");
 		writer.println("            </div>");
 		writer.println("        </div>");
+		
+		// Add informational note if there are entries without plan summaries
+		if (!entriesWithoutPlanSummary.isEmpty()) {
+			long entriesWithoutPlanSummaryCount = entriesWithoutPlanSummary.stream().mapToLong(PlanCacheAccumulatorEntry::getCount).sum();
+			writer.println("        <div class=\"summary\">");
+			writer.println("            <h3>Note</h3>");
+			writer.println("            <p>" + NUMBER_FORMAT.format(entriesWithoutPlanSummaryCount) + " queries (" + 
+			             NUMBER_FORMAT.format(entriesWithoutPlanSummary.size()) + " unique plan cache keys) do not have plan summary information. " +
+			             "This may indicate older MongoDB versions or specific operation types that don't provide plan summaries.</p>");
+			writer.println("        </div>");
+		}
 
 		writer.println("        <div class=\"table-container\">");
 		writer.println("            <div class=\"controls\">");
