@@ -80,6 +80,12 @@ public class HtmlReportGenerator {
 		writer.println(
 				"        .clear-btn { padding: 8px 12px; background-color: #5d6c74; color: white; border: none; border-radius: 4px; cursor: pointer; }");
 		writer.println("        .clear-btn:hover { background-color: #21313C; }");
+		writer.println(
+				"        .expand-btn { padding: 8px 12px; background-color: #00684A; color: white; border: none; border-radius: 4px; cursor: pointer; margin-left: 10px; }");
+		writer.println("        .expand-btn:hover { background-color: #006CFA; }");
+		writer.println(
+				"        .collapse-btn { padding: 8px 12px; background-color: #00684A; color: white; border: none; border-radius: 4px; cursor: pointer; margin-left: 5px; }");
+		writer.println("        .collapse-btn:hover { background-color: #006CFA; }");
 		writer.println("        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; }");
 		writer.println("        th, td { border: 1px solid #b8c4c2; padding: 8px; text-align: left; }");
 		writer.println(
@@ -457,6 +463,10 @@ public class HtmlReportGenerator {
 				"                <input type=\"text\" id=\"queryHashFilter\" class=\"filter-input\" placeholder=\"Filter by query hash, namespace, etc...\">");
 		writer.println(
 				"                <button class=\"clear-btn\" onclick=\"clearFilter('queryHashFilter', 'queryHashTable')\">Clear Filter</button>");
+		writer.println(
+				"                <button class=\"expand-btn\" onclick=\"expandAllAccordions('queryHashTable')\">Expand All</button>");
+		writer.println(
+				"                <button class=\"collapse-btn\" onclick=\"collapseAllAccordions('queryHashTable')\">Collapse All</button>");
 		writer.println("            </div>");
 		writer.println("            <table id=\"queryHashTable\">");
 		writer.println("                <thead>");
@@ -701,6 +711,10 @@ public class HtmlReportGenerator {
 				"                <input type=\"text\" id=\"planCacheFilter\" class=\"filter-input\" placeholder=\"Filter by namespace, plan summary, etc...\">");
 		writer.println(
 				"                <button class=\"clear-btn\" onclick=\"clearFilter('planCacheFilter', 'planCacheTable')\">Clear Filter</button>");
+		writer.println(
+				"                <button class=\"expand-btn\" onclick=\"expandAllAccordions('planCacheTable')\">Expand All</button>");
+		writer.println(
+				"                <button class=\"collapse-btn\" onclick=\"collapseAllAccordions('planCacheTable')\">Collapse All</button>");
 		writer.println("            </div>");
 		writer.println("            <table id=\"planCacheTable\">");
 		writer.println("                <thead>");
@@ -1164,6 +1178,26 @@ public class HtmlReportGenerator {
 	    writer.println("                    accordionRow.classList.add('open');");
 	    writer.println("                }");
 	    writer.println("            }");
+	    writer.println("        }");
+	    writer.println("");
+	    writer.println("        // Expand all accordions in a table");
+	    writer.println("        function expandAllAccordions(tableId) {");
+	    writer.println("            const table = document.getElementById(tableId);");
+	    writer.println("            const accordionRows = table.querySelectorAll('.accordion-row');");
+	    writer.println("            const accordionContents = table.querySelectorAll('.accordion-content');");
+	    writer.println("            ");
+	    writer.println("            accordionRows.forEach(row => row.classList.add('open'));");
+	    writer.println("            accordionContents.forEach(content => content.classList.add('open'));");
+	    writer.println("        }");
+	    writer.println("");
+	    writer.println("        // Collapse all accordions in a table");
+	    writer.println("        function collapseAllAccordions(tableId) {");
+	    writer.println("            const table = document.getElementById(tableId);");
+	    writer.println("            const accordionRows = table.querySelectorAll('.accordion-row');");
+	    writer.println("            const accordionContents = table.querySelectorAll('.accordion-content');");
+	    writer.println("            ");
+	    writer.println("            accordionRows.forEach(row => row.classList.remove('open'));");
+	    writer.println("            accordionContents.forEach(content => content.classList.remove('open'));");
 	    writer.println("        }");
 	    writer.println("    </script>");
 	    writer.println("</body>");
