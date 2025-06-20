@@ -17,7 +17,10 @@ This will analyze all `.log` files in the current directory and automatically ge
 ## Features
 
 - **Interactive HTML Reports** - Sortable and filterable tables with navigation
+- **Sample Log Accordions** - Click table rows to view actual log messages for debugging
+- **Configurable Query Redaction** - Protect sensitive data while preserving analysis value  
 - **Operation Analysis** - Detailed metrics for find, aggregate, update, insert, delete operations
+- **Enhanced getMore Support** - Extract queries from originatingCommand for cursor operations
 - **Transaction Analysis** - Transaction performance and termination cause tracking
 - **Plan Cache Analysis** - Query plan effectiveness and collection scan detection
 - **Query Hash Analysis** - Query pattern identification and performance profiling
@@ -25,6 +28,7 @@ This will analyze all `.log` files in the current directory and automatically ge
 - **TTL Operations** - Time-to-live operation monitoring
 - **Namespace Filtering** - Focus analysis on specific databases or collections
 - **Multiple Output Formats** - HTML, CSV, and console output
+- **Memory Efficient** - Optimized for large log files with minimal memory footprint
 
 ## Installation
 
@@ -68,6 +72,11 @@ java -jar bin/MongoLogParser.jar -f server.log --csv output.csv
 java -jar bin/MongoLogParser.jar -f server.log --text
 ```
 
+**Enable query redaction for sensitive data:**
+```bash
+java -jar bin/MongoLogParser.jar -f server.log --redact
+```
+
 **Analyze compressed log files directly:**
 ```bash
 java -jar bin/MongoLogParser.jar -f server.log.gz
@@ -104,6 +113,11 @@ java -jar bin/MongoLogParser.jar -f *.log \
   --transactionCsv transactions.csv
 ```
 
+**Production analysis with query redaction:**
+```bash
+java -jar bin/MongoLogParser.jar -f *.log --redact --ns "myapp.*"
+```
+
 **Text output with custom filtering:**
 ```bash
 java -jar bin/MongoLogParser.jar -f *.log --text --config filter-config.properties
@@ -115,6 +129,7 @@ java -jar bin/MongoLogParser.jar -f *.log --text --config filter-config.properti
 |--------|-------------|
 | `-f, --files <files>` | MongoDB log file(s) to analyze (required) |
 | `--html <file>` | Generate interactive HTML report (default: report.html) |
+| `--redact` | Enable query redaction/sanitization (default: false) |
 | `--text` | Enable text output to console |
 | `-c, --csv <file>` | Generate CSV output for main operations |
 | `--planCacheCsv <file>` | Generate CSV for plan cache analysis |
@@ -143,8 +158,10 @@ Supported file formats:
 - **Sticky Navigation** - Quick access to all report sections
 - **Sortable Tables** - Click column headers to sort by any metric
 - **Live Filtering** - Real-time search within each table
+- **Expandable Rows** - Click Query Hash or Plan Cache rows to view sample log messages
 - **Performance Highlights** - Collection scans and slow operations are highlighted
 - **Summary Statistics** - Key metrics for each analysis type
+- **MongoDB Styling** - Modern interface using MongoDB's color scheme
 
 ### Analysis Types
 
@@ -194,6 +211,49 @@ ignore.database.local=true
 --ns "logs_*"
 ```
 
+## Query Redaction and Privacy
+
+### Overview
+The `--redact` option provides configurable privacy protection for sensitive query data while preserving analytical value.
+
+### Default Behavior (No Redaction)
+```bash
+java -jar bin/MongoLogParser.jar -f server.log
+```
+- Query values are preserved in their original form
+- Complete log messages are shown in accordions
+- Ideal for development and testing environments
+
+### Redacted Mode
+```bash
+java -jar bin/MongoLogParser.jar -f server.log --redact
+```
+- Sensitive query values are obfuscated (e.g., `"username": "xxx"`)
+- Log messages are trimmed to remove verbose fields
+- Field names and query structure are preserved for analysis
+- Safe for production log analysis and sharing
+
+### What Gets Redacted
+- **String values** → replaced with `"xxx"`
+- **Numeric values** → digits replaced with `9` (e.g., `123` → `999`)
+- **Regular expressions** → pattern content obfuscated, anchors preserved
+- **Verbose log fields** → removed to reduce noise (locks, lsid, etc.)
+
+### What's Preserved
+- **Field names** and query structure
+- **Performance metrics** (duration, docs examined, etc.)
+- **Namespace information**
+- **Operation types** and plan summaries
+- **Error codes** and messages
+- **Index usage** and plan cache data
+
+### Sample Log Accordions
+Click any row in the **Query Hash Analysis** or **Plan Cache Analysis** tables to expand and view:
+- Actual log message that generated the entry
+- Formatted for easy reading with syntax highlighting
+- Automatically redacted based on `--redact` setting
+- Useful for debugging and understanding query patterns
+
 ## Performance Tips
 
 - Use namespace filtering (`--ns`) to focus on specific databases/collections
@@ -209,6 +269,15 @@ The HTML report provides an interactive dashboard with:
 - Sortable tables with performance metrics
 - Visual highlighting of collection scans and slow operations
 - Filtering capabilities for detailed analysis
+- **Expandable rows** showing sample log messages for debugging
+- MongoDB-styled interface with professional color scheme
+
+### New Features in Latest Version
+- **Row-level accordions** in Query Hash and Plan Cache tables
+- **Configurable query redaction** with `--redact` option
+- **Enhanced getMore query extraction** from originatingCommand
+- **Memory-optimized** sample log storage
+- **Consolidated redaction utilities** for consistent privacy protection
 
 ## Troubleshooting
 
@@ -224,6 +293,12 @@ The HTML report provides an interactive dashboard with:
 **Performance issues:**
 - Use namespace filtering to reduce data volume
 - Consider processing log files individually for very large datasets
+- Enable redaction (`--redact`) to reduce memory usage with trimmed log messages
+
+**Sample log messages not showing:**
+- Ensure log files contain JSON-formatted entries (MongoDB 4.4+)
+- Sample messages are only stored for Query Hash and Plan Cache entries
+- Click table rows to expand and view accordion content
 
 ## Contributing
 

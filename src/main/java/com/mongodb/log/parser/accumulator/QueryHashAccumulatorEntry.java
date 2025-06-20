@@ -38,11 +38,18 @@ public class QueryHashAccumulatorEntry {
     // Store one example of the sanitized query
     private String sanitizedQuery = null;
     
+    // Store a sample log message for accordion display
+    private String sampleLogMessage = null;
+    
     public QueryHashAccumulatorEntry(QueryHashKey key) {
         this.key = key;
     }
     
     public void addExecution(SlowQuery slowQuery) {
+        addExecution(slowQuery, null);
+    }
+    
+    public void addExecution(SlowQuery slowQuery, String logMessage) {
         if (slowQuery.durationMillis != null) {
             count++;
             total += slowQuery.durationMillis;
@@ -101,6 +108,11 @@ public class QueryHashAccumulatorEntry {
         // Store sanitized query if we don't have one yet
         if (sanitizedQuery == null && slowQuery.sanitizedFilter != null) {
             sanitizedQuery = slowQuery.sanitizedFilter;
+        }
+        
+        // Store sample log message if we don't have one yet and one is provided
+        if (sampleLogMessage == null && logMessage != null) {
+            sampleLogMessage = logMessage;
         }
     }
     
@@ -245,6 +257,10 @@ public class QueryHashAccumulatorEntry {
     
     public String getSanitizedQuery() {
         return sanitizedQuery != null ? sanitizedQuery : "none";
+    }
+    
+    public String getSampleLogMessage() {
+        return sampleLogMessage;
     }
     
     /**

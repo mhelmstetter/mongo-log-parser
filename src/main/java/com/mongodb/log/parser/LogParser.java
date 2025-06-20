@@ -88,6 +88,9 @@ public class LogParser implements Callable<Integer> {
     
     @Option(names = {"--text"}, description = "Enable text output to console")
     private boolean textOutput = false;
+    
+    @Option(names = {"--redact"}, description = "Enable query redaction/sanitization (default: false)")
+    private boolean redactQueries = false;
 
     // Statistics tracking
     private AtomicLong totalParseErrors = new AtomicLong(0);
@@ -135,6 +138,13 @@ public class LogParser implements Callable<Integer> {
         // Improved console output
         System.out.println("🚀 MongoDB Log Analyzer");
         System.out.println("📁 Processing " + fileNames.length + " file(s)...");
+        
+        // Show redaction status early in processing
+        if (redactQueries) {
+            System.out.println("🔒 Query redaction/sanitization: ENABLED");
+        } else {
+            System.out.println("⚠️  Query redaction/sanitization: DISABLED (use --redact to enable)");
+        }
         
         if (!namespaceFilters.isEmpty()) {
             System.out.println("🔍 Namespace filters: " + String.join(", ", namespaceFilters));
@@ -211,7 +221,8 @@ public class LogParser implements Callable<Integer> {
                 queryHashAccumulator,
                 errorCodeAccumulator,
                 transactionAccumulator,
-                operationTypeStats
+                operationTypeStats,
+                redactQueries
             );
             System.out.println("🎉 HTML report completed: " + htmlOutputFile);
         } catch (IOException e) {
@@ -365,7 +376,7 @@ public class LogParser implements Callable<Integer> {
             if (lines.size() >= 25000) {
                 completionService.submit(
                     new LogParserTask(new ArrayList<>(lines), accumulator, planCacheAccumulator, queryHashAccumulator,
-                    		errorCodeAccumulator, transactionAccumulator, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace));
+                    		errorCodeAccumulator, transactionAccumulator, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries));
                 submittedTasks++;
                 lines.clear();
             }
@@ -375,7 +386,7 @@ public class LogParser implements Callable<Integer> {
         if (!lines.isEmpty()) {
             completionService.submit(
                 new LogParserTask(new ArrayList<>(lines), accumulator, planCacheAccumulator, queryHashAccumulator,
-                		errorCodeAccumulator, transactionAccumulator, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace));
+                		errorCodeAccumulator, transactionAccumulator, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries));
             submittedTasks++;
         }
 

@@ -26,6 +26,10 @@ public class PlanCacheAccumulator {
     	};
 
     public void accumulate(SlowQuery slowQuery) {
+        accumulate(slowQuery, null);
+    }
+    
+    public void accumulate(SlowQuery slowQuery, String logMessage) {
         if (slowQuery.planCacheKey == null || slowQuery.planSummary == null) {
             return;
         }
@@ -43,7 +47,7 @@ public class PlanCacheAccumulator {
             planCacheEntries.put(key, entry);
         }
         
-        entry.addExecution(slowQuery);
+        entry.addExecution(slowQuery, logMessage);
     }
     
     public void report() {

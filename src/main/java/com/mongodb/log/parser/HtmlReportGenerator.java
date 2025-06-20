@@ -30,7 +30,7 @@ public class HtmlReportGenerator {
 	        QueryHashAccumulator queryHashAccumulator,
 	        ErrorCodeAccumulator errorCodeAccumulator,
 	        TransactionAccumulator transactionAccumulator,  // Add transaction accumulator
-	        Map<String, java.util.concurrent.atomic.AtomicLong> operationTypeStats) throws IOException {
+	        Map<String, java.util.concurrent.atomic.AtomicLong> operationTypeStats, boolean redactQueries) throws IOException {
 
 	    try (PrintWriter writer = new PrintWriter(new FileWriter(fileName))) {
 	        writeHtmlHeader(writer);
@@ -43,11 +43,11 @@ public class HtmlReportGenerator {
 	        writeErrorCodesTable(writer, errorCodeAccumulator);
 
 	        if (queryHashAccumulator != null) {
-	            writeQueryHashTable(writer, queryHashAccumulator);
+	            writeQueryHashTable(writer, queryHashAccumulator, redactQueries);
 	        }
 
 	        if (planCacheAccumulator != null && !planCacheAccumulator.getPlanCacheEntries().isEmpty()) {
-	            writePlanCacheTable(writer, planCacheAccumulator);
+	            writePlanCacheTable(writer, planCacheAccumulator, redactQueries);
 	        }
 	        
 	        if (transactionAccumulator != null && transactionAccumulator.hasTransactions()) {
@@ -67,52 +67,62 @@ public class HtmlReportGenerator {
 		writer.println("    <title>MongoDB Log Analysis Report</title>");
 		writer.println("    <style>");
 		writer.println(
-				"        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; background-color: #f5f5f5; }");
+				"        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; background-color: #f8f9fa; }");
 		writer.println("        .container { max-width: 95%; margin: 0 auto; background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }");
-		writer.println("        h1 { color: #2c3e50; text-align: center; margin-bottom: 10px; }");
+		writer.println("        h1 { color: #001E2B; text-align: center; margin-bottom: 10px; }");
 		writer.println(
-				"        h2 { color: #34495e; margin-top: 40px; margin-bottom: 20px; border-bottom: 2px solid #3498db; padding-bottom: 5px; scroll-margin-top: 70px; }");
+				"        h2 { color: #001E2B; margin-top: 40px; margin-bottom: 20px; border-bottom: 2px solid #00684A; padding-bottom: 5px; scroll-margin-top: 70px; }");
 		writer.println("        .table-container { margin-bottom: 40px; overflow-x: auto; }");
 		writer.println("        .controls { margin-bottom: 15px; }");
 		writer.println(
-				"        .filter-input { padding: 8px; border: 1px solid #ddd; border-radius: 4px; margin-right: 10px; width: 200px; }");
+				"        .filter-input { padding: 8px; border: 1px solid #b8c4c2; border-radius: 4px; margin-right: 10px; width: 200px; }");
 		writer.println(
-				"        .clear-btn { padding: 8px 12px; background-color: #95a5a6; color: white; border: none; border-radius: 4px; cursor: pointer; }");
-		writer.println("        .clear-btn:hover { background-color: #7f8c8d; }");
+				"        .clear-btn { padding: 8px 12px; background-color: #5d6c74; color: white; border: none; border-radius: 4px; cursor: pointer; }");
+		writer.println("        .clear-btn:hover { background-color: #21313C; }");
 		writer.println("        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; }");
-		writer.println("        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }");
+		writer.println("        th, td { border: 1px solid #b8c4c2; padding: 8px; text-align: left; }");
 		writer.println(
-				"        th { background-color: #3498db; color: white; font-weight: bold; cursor: pointer; user-select: none; position: relative; }");
-		writer.println("        th:hover { background-color: #2980b9; }");
+				"        th { background-color: #00684A; color: white; font-weight: bold; cursor: pointer; user-select: none; position: relative; }");
+		writer.println("        th:hover { background-color: #001E2B; }");
 		writer.println("        th.sortable::after { content: ' ↕'; font-size: 12px; opacity: 0.5; }");
 		writer.println("        th.sort-asc::after { content: ' ↑'; opacity: 1; }");
 		writer.println("        th.sort-desc::after { content: ' ↓'; opacity: 1; }");
-		writer.println("        tr:nth-child(even) { background-color: #f9f9f9; }");
-		writer.println("        tr:hover { background-color: #e8f4fd; }");
+		writer.println("        tr:nth-child(even) { background-color: #f8f9fa; }");
+		writer.println("        tr:hover { background-color: #E9FF99; }");
 		writer.println("        .number { text-align: right; }");
-		writer.println("        .highlight { background-color: #fff3cd !important; }");
+		writer.println("        .highlight { background-color: #E9FF99 !important; }");
 		writer.println(
-				"        .summary { background-color: #e8f6f3; padding: 15px; border-radius: 5px; margin-bottom: 20px; }");
-		writer.println("        .summary h3 { margin-top: 0; color: #16a085; }");
+				"        .summary { background-color: #f0f7f4; padding: 15px; border-radius: 5px; margin-bottom: 20px; border-left: 4px solid #00684A; }");
+		writer.println("        .summary h3 { margin-top: 0; color: #00684A; }");
 		writer.println(
 				"        .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }");
 		writer.println(
-				"        .summary-item { background-color: white; padding: 10px; border-radius: 4px; border-left: 4px solid #3498db; }");
-		writer.println("        .summary-label { font-weight: bold; color: #2c3e50; }");
-		writer.println("        .summary-value { font-size: 18px; color: #27ae60; }");
+				"        .summary-item { background-color: white; padding: 10px; border-radius: 4px; border-left: 4px solid #00684A; }");
+		writer.println("        .summary-label { font-weight: bold; color: #21313C; }");
+		writer.println("        .summary-value { font-size: 18px; color: #00684A; }");
 		writer.println("        .collscan { background-color: #ffebee !important; }");
 		writer.println(
 				"        .truncated { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help; }");
 		
 		// Navigation styles
-		writer.println("        .nav-header { background-color: #2c3e50; color: white; padding: 15px 0; margin: -20px -20px 20px -20px; position: sticky; top: 0; z-index: 1000; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }");
+		writer.println("        .nav-header { background-color: #001E2B; color: white; padding: 15px 0; margin: -20px -20px 20px -20px; position: sticky; top: 0; z-index: 1000; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }");
 		writer.println("        .nav-content { max-width: 95%; margin: 0 auto; padding: 0 20px; }");
 		writer.println("        .nav-title { margin: 0 0 10px 0; font-size: 1.2em; font-weight: bold; }");
 		writer.println("        .nav-links { display: flex; flex-wrap: wrap; gap: 10px; }");
-		writer.println("        .nav-link { color: #ecf0f1; text-decoration: none; padding: 8px 12px; border-radius: 4px; background-color: #34495e; transition: background-color 0.2s; font-size: 0.9em; }");
-		writer.println("        .nav-link:hover { background-color: #3498db; color: white; }");
-		writer.println("        .nav-link.active { background-color: #3498db; }");
-		writer.println("        .report-info { color: #bdc3c7; font-size: 0.85em; margin-top: 5px; }");
+		writer.println("        .nav-link { color: #ffffff; text-decoration: none; padding: 8px 12px; border-radius: 4px; background-color: #00684A; transition: background-color 0.2s; font-size: 0.9em; }");
+		writer.println("        .nav-link:hover { background-color: #006CFA; color: white; }");
+		writer.println("        .nav-link.active { background-color: #00ED64; color: #001E2B; }");
+		writer.println("        .report-info { color: #b8c4c2; font-size: 0.85em; margin-top: 5px; }");
+		
+		// Accordion styles
+		writer.println("        .accordion-row { cursor: pointer; }");
+		writer.println("        .accordion-row:hover { background-color: #E9FF99 !important; }");
+		writer.println("        .accordion-content { display: none; }");
+		writer.println("        .accordion-content.open { display: table-row; }");
+		writer.println("        .log-sample { background-color: #f8f9fa; padding: 10px; font-family: 'Courier New', monospace; font-size: 12px; word-wrap: break-word; border-left: 4px solid #00684A; max-height: 300px; overflow-y: auto; }");
+		writer.println("        .accordion-toggle { font-size: 12px; opacity: 0.7; margin-left: 5px; }");
+		writer.println("        .accordion-toggle::before { content: '▶'; }");
+		writer.println("        .accordion-row.open .accordion-toggle::before { content: '▼'; }");
 		
 		writer.println("    </style>");
 		writer.println("</head>");
@@ -387,7 +397,7 @@ public class HtmlReportGenerator {
 		writer.println("        </div>");
 	}
 
-	private static void writeQueryHashTable(PrintWriter writer, QueryHashAccumulator queryHashAccumulator) {
+	private static void writeQueryHashTable(PrintWriter writer, QueryHashAccumulator queryHashAccumulator, boolean redactQueries) {
 		writer.println("        <h2 id=\"query-hash\">Query Hash Analysis</h2>");
 
 		var entries = queryHashAccumulator.getQueryHashEntries().values();
@@ -481,11 +491,13 @@ public class HtmlReportGenerator {
 		entries.stream().sorted(Comparator.comparingLong(QueryHashAccumulatorEntry::getCount).reversed())
 				.forEach(entry -> {
 					QueryHashKey key = entry.getKey();
+					String rowId = "qh-" + Math.abs(key.getQueryHash().hashCode());
 
-					writer.println("                    <tr>");
+					writer.println("                    <tr class=\"accordion-row\" onclick=\"toggleAccordion('" + rowId + "')\">");
 					writer.println(
 							"                        <td class=\"truncated\" title=\"" + escapeHtml(key.getQueryHash())
-									+ "\">" + escapeHtml(truncate(key.getQueryHash(), 12)) + "</td>");
+									+ "\">" + escapeHtml(truncate(key.getQueryHash(), 12)) 
+									+ "<span class=\"accordion-toggle\"></span></td>");
 					writer.println("                        <td class=\"truncated\" title=\""
 							+ escapeHtml(key.getNamespace().toString()) + "\">"
 							+ escapeHtml(truncate(key.getNamespace().toString(), 40)) + "</td>");
@@ -527,6 +539,19 @@ public class HtmlReportGenerator {
 							+ escapeHtml(entry.getSanitizedQuery()) + "\">"
 							+ escapeHtml(truncate(entry.getSanitizedQuery(), 80)) + "</td>");
 					writer.println("                    </tr>");
+					
+					// Add accordion content row for sample log message
+					if (entry.getSampleLogMessage() != null) {
+						String processedLogMessage = LogRedactionUtil.processLogMessage(entry.getSampleLogMessage(), redactQueries);
+						writer.println("                    <tr id=\"" + rowId + "\" class=\"accordion-content\">");
+						writer.println("                        <td colspan=\"19\">");
+						writer.println("                            <div class=\"log-sample\">");
+						writer.println("                                <strong>Sample Log Message:</strong><br>");
+						writer.println("                                " + escapeHtml(processedLogMessage));
+						writer.println("                            </div>");
+						writer.println("                        </td>");
+						writer.println("                    </tr>");
+					}
 				});
 
 		writer.println("                </tbody>");
@@ -586,7 +611,7 @@ public class HtmlReportGenerator {
 		writer.println("        </div>");
 	}
 
-	private static void writePlanCacheTable(PrintWriter writer, PlanCacheAccumulator planCacheAccumulator) {
+	private static void writePlanCacheTable(PrintWriter writer, PlanCacheAccumulator planCacheAccumulator, boolean redactQueries) {
 		writer.println("        <h2 id=\"plan-cache\">Plan Cache Analysis</h2>");
 
 		// Filter out entries with UNKNOWN plan summaries
@@ -677,16 +702,18 @@ public class HtmlReportGenerator {
 		filteredEntries.stream().sorted(Comparator.comparingLong(PlanCacheAccumulatorEntry::getCount).reversed())
 				.forEach(entry -> {
 					PlanCacheKey key = entry.getKey();
+					String rowId = "pc-" + Math.abs(key.getPlanCacheKey().hashCode());
 
-					String rowClass = "";
+					String rowClass = "accordion-row";
 					if (key.getPlanSummary() != null && key.getPlanSummary().contains("COLLSCAN")) {
-						rowClass = " class=\"collscan\"";
+						rowClass += " collscan";
 					}
 
-					writer.println("                    <tr" + rowClass + ">");
+					writer.println("                    <tr class=\"" + rowClass + "\" onclick=\"toggleAccordion('" + rowId + "')\">");
 					writer.println("                        <td class=\"truncated\" title=\""
 							+ escapeHtml(key.getNamespace().toString()) + "\">"
-							+ escapeHtml(truncate(key.getNamespace().toString(), 40)) + "</td>");
+							+ escapeHtml(truncate(key.getNamespace().toString(), 40)) 
+							+ "<span class=\"accordion-toggle\"></span></td>");
 					writer.println("                        <td class=\"truncated\" title=\""
 							+ escapeHtml(key.getPlanCacheKey()) + "\">"
 							+ escapeHtml(truncate(key.getPlanCacheKey(), 12)) + "</td>");
@@ -718,6 +745,19 @@ public class HtmlReportGenerator {
 					writer.println("                        <td class=\"number\">"
 							+ String.format("%.1f%%", entry.getReplannedPercentage()) + "</td>");
 					writer.println("                    </tr>");
+					
+					// Add accordion content row for sample log message
+					if (entry.getSampleLogMessage() != null) {
+						String processedLogMessage = LogRedactionUtil.processLogMessage(entry.getSampleLogMessage(), redactQueries);
+						writer.println("                    <tr id=\"" + rowId + "\" class=\"accordion-content\">");
+						writer.println("                        <td colspan=\"14\">");
+						writer.println("                            <div class=\"log-sample\">");
+						writer.println("                                <strong>Sample Log Message:</strong><br>");
+						writer.println("                                " + escapeHtml(processedLogMessage));
+						writer.println("                            </div>");
+						writer.println("                        </td>");
+						writer.println("                    </tr>");
+					}
 				});
 
 		writer.println("                </tbody>");
@@ -1051,6 +1091,22 @@ public class HtmlReportGenerator {
 	    writer.println("                });");
 	    writer.println("            });");
 	    writer.println("        });");
+	    writer.println("        ");
+	    writer.println("        // Accordion toggle functionality");
+	    writer.println("        function toggleAccordion(rowId) {");
+	    writer.println("            const accordionContent = document.getElementById(rowId);");
+	    writer.println("            const accordionRow = accordionContent ? accordionContent.previousElementSibling : null;");
+	    writer.println("            ");
+	    writer.println("            if (accordionContent && accordionRow) {");
+	    writer.println("                if (accordionContent.classList.contains('open')) {");
+	    writer.println("                    accordionContent.classList.remove('open');");
+	    writer.println("                    accordionRow.classList.remove('open');");
+	    writer.println("                } else {");
+	    writer.println("                    accordionContent.classList.add('open');");
+	    writer.println("                    accordionRow.classList.add('open');");
+	    writer.println("                }");
+	    writer.println("            }");
+	    writer.println("        }");
 	    writer.println("    </script>");
 	    writer.println("</body>");
 	    writer.println("</html>");

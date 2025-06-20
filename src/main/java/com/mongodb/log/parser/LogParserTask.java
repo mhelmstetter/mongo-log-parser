@@ -27,13 +27,14 @@ class LogParserTask implements Callable<ProcessingStats> {
 	private final boolean debug;
 	private final Set<String> namespaceFilters;
 	private final AtomicLong totalFilteredByNamespace;
+	private final boolean redactQueries;
 
 	public LogParserTask(List<String> linesChunk, Accumulator accumulator,
 			PlanCacheAccumulator planCacheAccumulator, QueryHashAccumulator queryHashAccumulator,
 			ErrorCodeAccumulator errorCodeAccumulator,
 			TransactionAccumulator transactionAccumulator,
 			Map<String, AtomicLong> operationTypeStats, boolean debug,
-			Set<String> namespaceFilters, AtomicLong totalFilteredByNamespace) {
+			Set<String> namespaceFilters, AtomicLong totalFilteredByNamespace, boolean redactQueries) {
 		this.linesChunk = linesChunk;
 		this.accumulator = accumulator;
 		this.planCacheAccumulator = planCacheAccumulator;
@@ -44,6 +45,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 		this.debug = debug;
 		this.namespaceFilters = namespaceFilters;
 		this.totalFilteredByNamespace = totalFilteredByNamespace;
+		this.redactQueries = redactQueries;
 	}
 
 	@Override
@@ -109,7 +111,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 					// Add to query hash accumulator
 					if (queryHashAccumulator != null) {
 			            synchronized (queryHashAccumulator) {
-			                queryHashAccumulator.accumulate(slowQuery);
+			                queryHashAccumulator.accumulate(slowQuery, currentLine);
 			            }
 			        }
 
@@ -169,14 +171,14 @@ class LogParserTask implements Callable<ProcessingStats> {
 
 					if (queryHashAccumulator != null) {
 					    synchronized (queryHashAccumulator) {
-					        queryHashAccumulator.accumulate(slowQuery);
+					        queryHashAccumulator.accumulate(slowQuery, currentLine);
 					    }
 					}
 
 					// Add to plan cache accumulator if enabled and has plan cache key
 					if (planCacheAccumulator != null && slowQuery.planCacheKey != null) {
 						synchronized (planCacheAccumulator) {
-							planCacheAccumulator.accumulate(slowQuery);
+							planCacheAccumulator.accumulate(slowQuery, currentLine);
 						}
 					}
 
@@ -207,14 +209,14 @@ class LogParserTask implements Callable<ProcessingStats> {
 					// Add to query hash accumulator
 					if (queryHashAccumulator != null) {
 						synchronized (queryHashAccumulator) {
-							queryHashAccumulator.accumulate(slowQuery);
+							queryHashAccumulator.accumulate(slowQuery, currentLine);
 						}
 					}
 
 					// Add to plan cache accumulator if enabled and has plan cache key
 					if (planCacheAccumulator != null && slowQuery.planCacheKey != null) {
 						synchronized (planCacheAccumulator) {
-							planCacheAccumulator.accumulate(slowQuery);
+							planCacheAccumulator.accumulate(slowQuery, currentLine);
 						}
 					}
 
@@ -333,21 +335,21 @@ class LogParserTask implements Callable<ProcessingStats> {
 	                }
 	            }
 
-	            // Extract and sanitize filter for find operations
+	            // Extract and optionally sanitize filter for find operations
 	            if (command.has("filter")) {
 	                Object filterObj = command.get("filter");
 	                if (filterObj instanceof JSONObject) {
 	                    JSONObject filter = (JSONObject) filterObj;
-	                    slowQuery.sanitizedFilter = QuerySanitizer.sanitizeFilter(filter);
+	                    slowQuery.sanitizedFilter = LogRedactionUtil.sanitizeFilter(filter, redactQueries);
 	                }
 	            }
 
-	            // Extract and sanitize query for other operations that use "q" field
+	            // Extract and optionally sanitize query for other operations that use "q" field
 	            if (command.has("q")) {
 	                Object queryObj = command.get("q");
 	                if (queryObj instanceof JSONObject) {
 	                    JSONObject query = (JSONObject) queryObj;
-	                    slowQuery.sanitizedFilter = QuerySanitizer.sanitizeFilter(query);
+	                    slowQuery.sanitizedFilter = LogRedactionUtil.sanitizeFilter(query, redactQueries);
 	                }
 	            }
 
@@ -365,7 +367,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 	                                    Object matchObj = stage.get("$match");
 	                                    if (matchObj instanceof JSONObject) {
 	                                        JSONObject matchFilter = (JSONObject) matchObj;
-	                                        slowQuery.sanitizedFilter = QuerySanitizer.sanitizeFilter(matchFilter);
+	                                        slowQuery.sanitizedFilter = LogRedactionUtil.sanitizeFilter(matchFilter, redactQueries);
 	                                        break; // Use the first $match stage
 	                                    }
 	                                }
@@ -376,6 +378,37 @@ class LogParserTask implements Callable<ProcessingStats> {
 	                    if (debug) {
 	                        LogParser.logger.debug("Error extracting $match from pipeline: {}", e.getMessage());
 	                    }
+	                }
+	            }
+	        }
+	        
+	        // Handle getMore operations - extract query from originatingCommand
+	        if (attr.has("originatingCommand") && slowQuery.sanitizedFilter == null) {
+	            try {
+	                JSONObject originatingCommand = attr.getJSONObject("originatingCommand");
+	                
+	                // Extract filter from find operation in originatingCommand
+	                if (originatingCommand.has("filter")) {
+	                    Object filterObj = originatingCommand.get("filter");
+	                    if (filterObj instanceof JSONObject) {
+	                        JSONObject filter = (JSONObject) filterObj;
+	                        slowQuery.sanitizedFilter = LogRedactionUtil.sanitizeFilter(filter, redactQueries);
+	                    }
+	                }
+	                
+	                // Also extract read preference from originatingCommand if not already set
+	                if (slowQuery.readPreference == null && originatingCommand.has("$readPreference")) {
+	                    Object readPrefObj = originatingCommand.get("$readPreference");
+	                    if (readPrefObj instanceof JSONObject) {
+	                        JSONObject readPref = (JSONObject) readPrefObj;
+	                        slowQuery.readPreference = readPref.toString();
+	                    } else if (readPrefObj instanceof String) {
+	                        slowQuery.readPreference = (String) readPrefObj;
+	                    }
+	                }
+	            } catch (Exception e) {
+	                if (debug) {
+	                    LogParser.logger.debug("Error extracting query from originatingCommand: {}", e.getMessage());
 	                }
 	            }
 	        }
@@ -556,6 +589,10 @@ class LogParserTask implements Callable<ProcessingStats> {
 					ns.setCollectionName((String) collectionVal);
 				}
 			}
+			
+			// For getMore operations, we'll try to extract the query from originatingCommand
+			// This will be handled in extractReadPreferenceAndFilter method which has access to attr
+			
 			incrementOperationStat("getMore");
 			return true;
 

@@ -40,11 +40,18 @@ public class PlanCacheAccumulatorEntry {
     private DescriptiveStatistics docsExaminedStats = new DescriptiveStatistics();
     private DescriptiveStatistics planningTimeStats = new DescriptiveStatistics();
     
+    // Store a sample log message for accordion display
+    private String sampleLogMessage = null;
+    
     public PlanCacheAccumulatorEntry(PlanCacheKey key) {
         this.key = key;
     }
     
     public void addExecution(SlowQuery slowQuery) {
+        addExecution(slowQuery, null);
+    }
+    
+    public void addExecution(SlowQuery slowQuery, String logMessage) {
         if (slowQuery.durationMillis != null) {
             count++;
             total += slowQuery.durationMillis;
@@ -123,6 +130,11 @@ public class PlanCacheAccumulatorEntry {
         // Track collection scans based on current query's plan summary
         if (slowQuery.planSummary != null && slowQuery.planSummary.contains("COLLSCAN")) {
             collectionScanCount++;
+        }
+        
+        // Store sample log message if we don't have one yet and one is provided
+        if (sampleLogMessage == null && logMessage != null) {
+            sampleLogMessage = logMessage;
         }
     }
     
@@ -230,6 +242,10 @@ public class PlanCacheAccumulatorEntry {
             .max(java.util.Map.Entry.comparingByValue())
             .map(java.util.Map.Entry::getKey)
             .orElse("none");
+    }
+    
+    public String getSampleLogMessage() {
+        return sampleLogMessage;
     }
     
     @Override

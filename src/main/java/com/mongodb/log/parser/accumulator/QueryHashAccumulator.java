@@ -23,6 +23,10 @@ public class QueryHashAccumulator {
     	};
 
     public void accumulate(SlowQuery slowQuery) {
+        accumulate(slowQuery, null);
+    }
+    
+    public void accumulate(SlowQuery slowQuery, String logMessage) {
         if (slowQuery.queryHash == null) {
             return;
         }
@@ -39,7 +43,7 @@ public class QueryHashAccumulator {
             queryHashEntries.put(key, entry);
         }
         
-        entry.addExecution(slowQuery);
+        entry.addExecution(slowQuery, logMessage);
     }
     
     public void report() {
