@@ -41,14 +41,10 @@ public class HtmlReportGenerator {
 	        writeMainOperationsTable(writer, accumulator, redactQueries);
 	        writeTtlOperationsTable(writer, ttlAccumulator);
 	        writeOperationStatsTable(writer, operationTypeStats);
-	        writeErrorCodesTable(writer, errorCodeAccumulator);
+	        writeErrorCodesTable(writer, errorCodeAccumulator, redactQueries);
 
 	        if (queryHashAccumulator != null) {
 	            writeQueryHashTable(writer, queryHashAccumulator, redactQueries);
-	        }
-
-	        if (planCacheAccumulator != null && !planCacheAccumulator.getPlanCacheEntries().isEmpty()) {
-	            writePlanCacheTable(writer, planCacheAccumulator, redactQueries);
 	        }
 	        
 	        if (transactionAccumulator != null && transactionAccumulator.hasTransactions()) {
@@ -110,6 +106,8 @@ public class HtmlReportGenerator {
 		writer.println("        .collscan { background-color: #ffebee !important; }");
 		writer.println(
 				"        .truncated { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help; }");
+		writer.println(
+				"        .wrapped { max-width: 400px; word-wrap: break-word; white-space: normal; cursor: help; }");
 		
 		// Navigation styles
 		writer.println("        .nav-header { background-color: #001E2B; color: white; padding: 15px 0; margin: -20px -20px 20px -20px; position: sticky; top: 0; z-index: 1000; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }");
@@ -126,6 +124,7 @@ public class HtmlReportGenerator {
 		writer.println("        .accordion-row:hover { background-color: #E9FF99 !important; }");
 		writer.println("        .accordion-content { display: none; }");
 		writer.println("        .accordion-content.open { display: table-row; }");
+		writer.println("        .accordion-content td { max-width: 0; overflow: hidden; }");
 		writer.println("        .log-sample { background-color: #f8f9fa; padding: 10px; font-family: 'Courier New', monospace; font-size: 12px; word-wrap: break-word; border-left: 4px solid #00684A; max-height: 300px; overflow-y: auto; }");
 		writer.println("        .accordion-toggle { font-size: 12px; opacity: 0.7; margin-right: 8px; display: inline-block; }");
 		writer.println("        .accordion-toggle::before { content: '▶'; }");
@@ -172,11 +171,6 @@ public class HtmlReportGenerator {
 	    // Query Hash Analysis
 	    if (queryHashAccumulator != null && !queryHashAccumulator.getQueryHashEntries().isEmpty()) {
 	        writer.println("                    <a href=\"#query-hash\" class=\"nav-link\">Query Hash Analysis</a>");
-	    }
-	    
-	    // Plan Cache Analysis
-	    if (planCacheAccumulator != null && !planCacheAccumulator.getPlanCacheEntries().isEmpty()) {
-	        writer.println("                    <a href=\"#plan-cache\" class=\"nav-link\">Plan Cache Analysis</a>");
 	    }
 	    
 	    // Transaction Analysis
@@ -290,23 +284,9 @@ public class HtmlReportGenerator {
 					// %10d %10d",
 					// namespace, operation, count, ...)
 
-					String accString = acc.toString();
-
-					// Extract namespace (first 65 characters) and operation (next 20 characters)
-					String namespace = "";
-					String operation = "";
-
-					if (accString.length() > 65) {
-						namespace = accString.substring(0, 65).trim();
-						if (accString.length() > 85) {
-							operation = accString.substring(65, 85).trim();
-						} else {
-							operation = accString.substring(65).trim();
-						}
-					} else {
-						// Handle case where string is shorter than expected
-						namespace = accString.trim();
-					}
+					// Get namespace and operation directly from the accumulator instead of parsing toString()
+					String namespace = acc.getNamespace();
+					String operation = acc.getOperation();
 
 					String rowId = "mo-" + Math.abs((namespace + operation).hashCode());
 					writer.println("                    <tr class=\"accordion-row\" onclick=\"toggleAccordion('" + rowId + "')\">");
@@ -512,23 +492,19 @@ public class HtmlReportGenerator {
 		writer.println(
 				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 10, 'number')\">Avg Docs Ex</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 11, 'number')\">Keys P95</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 11, 'number')\">Avg Return</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 12, 'number')\">Docs P95</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 12, 'number')\">Ex/Ret Ratio</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 13, 'number')\">Total Keys (K)</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 13, 'number')\">Avg Shards</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 14, 'number')\">Total Docs (K)</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 14, 'string')\">Read Preference</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 15, 'number')\">Avg Return</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 15, 'string')\">Plan Summary</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 16, 'number')\">Ex/Ret Ratio</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 16, 'number')\">Avg Plan (ms)</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 17, 'number')\">Avg Shards</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 18, 'string')\">Read Preference</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 19, 'string')\">Query</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 17, 'number')\">Replan %</th>");
 		writer.println("                    </tr>");
 		writer.println("                </thead>");
 		writer.println("                <tbody>");
@@ -536,7 +512,7 @@ public class HtmlReportGenerator {
 		entries.stream().sorted(Comparator.comparingLong(QueryHashAccumulatorEntry::getCount).reversed())
 				.forEach(entry -> {
 					QueryHashKey key = entry.getKey();
-					String rowId = "qh-" + Math.abs(key.getQueryHash().hashCode());
+					String rowId = "qh-" + Math.abs(key.hashCode());
 
 					writer.println("                    <tr class=\"accordion-row\" onclick=\"toggleAccordion('" + rowId + "')\">");
 					writer.println(
@@ -564,14 +540,6 @@ public class HtmlReportGenerator {
 					writer.println("                        <td class=\"number\">"
 							+ NUMBER_FORMAT.format(entry.getAvgDocsExamined()) + "</td>");
 					writer.println("                        <td class=\"number\">"
-							+ String.format("%.0f", entry.getKeysExaminedPercentile95()) + "</td>");
-					writer.println("                        <td class=\"number\">"
-							+ String.format("%.0f", entry.getDocsExaminedPercentile95()) + "</td>");
-					writer.println("                        <td class=\"number\">"
-							+ String.format("%.1f", entry.getTotalKeysExamined() / 1000.0) + "</td>");
-					writer.println("                        <td class=\"number\">"
-							+ String.format("%.1f", entry.getTotalDocsExamined() / 1000.0) + "</td>");
-					writer.println("                        <td class=\"number\">"
 							+ NUMBER_FORMAT.format(entry.getAvgReturned()) + "</td>");
 					writer.println("                        <td class=\"number\">"
 							+ NUMBER_FORMAT.format(entry.getScannedReturnRatio()) + "</td>");
@@ -580,17 +548,25 @@ public class HtmlReportGenerator {
 					writer.println("                        <td class=\"truncated\" title=\""
 					        + escapeHtml(entry.getReadPreferenceSummary().replace("<br>", ", ")) + "\">"
 					        + entry.getReadPreferenceSummaryTruncated(30) + "</td>");
-					writer.println("                        <td class=\"truncated\" title=\""
-							+ escapeHtml(entry.getSanitizedQuery()) + "\">"
-							+ escapeHtml(truncate(entry.getSanitizedQuery(), 80)) + "</td>");
+					String planSummary = entry.getPlanSummary();
+					String compressedPlanSummary = compressPlanSummary(planSummary);
+					writer.println("                        <td class=\"wrapped\" title=\""
+							+ escapeHtml(planSummary) + "\">" + escapeHtml(compressedPlanSummary) + "</td>");
+					writer.println("                        <td class=\"number\">"
+							+ NUMBER_FORMAT.format(entry.getAvgPlanningTimeMs()) + "</td>");
+					writer.println("                        <td class=\"number\">"
+							+ String.format("%.1f", entry.getReplannedPercentage()) + "</td>");
 					writer.println("                    </tr>");
 					
 					// Add accordion content row for sample log message
 					if (entry.getSampleLogMessage() != null) {
 						String processedLogMessage = LogRedactionUtil.processLogMessage(entry.getSampleLogMessage(), redactQueries);
 						writer.println("                    <tr id=\"" + rowId + "\" class=\"accordion-content\">");
-						writer.println("                        <td colspan=\"19\">");
+						writer.println("                        <td colspan=\"18\">");
 						writer.println("                            <div class=\"log-sample\">");
+						writer.println("                                <strong>Query:</strong><br>");
+						writer.println("                                " + escapeHtml(entry.getSanitizedQuery()));
+						writer.println("                                <br><br>");
 						writer.println("                                <strong>Slowest Query Log Message:</strong><br>");
 						writer.println("                                " + escapeHtml(processedLogMessage));
 						writer.println("                            </div>");
@@ -740,31 +716,29 @@ public class HtmlReportGenerator {
 		writer.println(
 				"                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 0, 'string')\">Namespace</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 1, 'string')\">Plan Cache Key</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 1, 'string')\">Query Hash</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 2, 'string')\">Query Hash</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 2, 'string')\">Plan Summary</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 3, 'string')\">Plan Summary</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 3, 'number')\">Count</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 4, 'number')\">Count</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 4, 'number')\">Min (ms)</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 5, 'number')\">Min (ms)</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 5, 'number')\">Max (ms)</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 6, 'number')\">Max (ms)</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 6, 'number')\">Avg (ms)</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 7, 'number')\">Avg (ms)</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 7, 'number')\">P95 (ms)</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 8, 'number')\">P95 (ms)</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 8, 'number')\">Avg Keys Ex</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 9, 'number')\">Avg Keys Ex</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 9, 'number')\">Avg Docs Ex</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 10, 'number')\">Avg Docs Ex</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 10, 'number')\">Avg Return</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 11, 'number')\">Avg Return</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 11, 'number')\">Avg Plan (ms)</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 12, 'number')\">Avg Plan (ms)</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 13, 'number')\">Replan %</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 12, 'number')\">Replan %</th>");
 		writer.println("                    </tr>");
 		writer.println("                </thead>");
 		writer.println("                <tbody>");
@@ -772,7 +746,7 @@ public class HtmlReportGenerator {
 		filteredEntries.stream().sorted(Comparator.comparingLong(PlanCacheAccumulatorEntry::getCount).reversed())
 				.forEach(entry -> {
 					PlanCacheKey key = entry.getKey();
-					String rowId = "pc-" + Math.abs(key.getPlanCacheKey().hashCode());
+					String rowId = "pc-" + Math.abs(key.hashCode());
 
 					String rowClass = "accordion-row";
 					if (key.getPlanSummary() != null && key.getPlanSummary().contains("COLLSCAN")) {
@@ -783,14 +757,12 @@ public class HtmlReportGenerator {
 					writer.println("                        <td class=\"truncated\" title=\""
 							+ escapeHtml(key.getNamespace().toString()) + "\"><span class=\"accordion-toggle\"></span>" + escapeHtml(truncate(key.getNamespace().toString(), 40)) 
 							+ "</td>");
-					writer.println("                        <td class=\"truncated\" title=\""
-							+ escapeHtml(key.getPlanCacheKey()) + "\">"
-							+ escapeHtml(truncate(key.getPlanCacheKey(), 12)) + "</td>");
 					writer.println(
 							"                        <td class=\"truncated\" title=\"" + escapeHtml(key.getQueryHash())
 									+ "\">" + escapeHtml(truncate(key.getQueryHash(), 10)) + "</td>");
-					writer.println("                        <td class=\"truncated\" title=\""
-							+ escapeHtml(key.getPlanSummary()) + "\">" + escapeHtml(truncate(key.getPlanSummary(), 35))
+					String compressedPlanSummary = compressPlanSummary(key.getPlanSummary());
+					writer.println("                        <td class=\"wrapped\" title=\""
+							+ escapeHtml(key.getPlanSummary()) + "\">" + escapeHtml(compressedPlanSummary)
 							+ "</td>");
 					// Removed Plan Type column
 					writer.println("                        <td class=\"number\">"
@@ -834,7 +806,7 @@ public class HtmlReportGenerator {
 		writer.println("        </div>");
 	}
 	
-	private static void writeErrorCodesTable(PrintWriter writer, ErrorCodeAccumulator errorCodeAccumulator) {
+	private static void writeErrorCodesTable(PrintWriter writer, ErrorCodeAccumulator errorCodeAccumulator, boolean redactQueries) {
 	    if (errorCodeAccumulator == null || !errorCodeAccumulator.hasErrors()) {
 	        return;
 	    }
@@ -896,9 +868,15 @@ public class HtmlReportGenerator {
 	                        + NUMBER_FORMAT.format(entry.getCount()) + "</td>");
 	                writer.println("                        <td class=\"number\">" + String.format("%.1f%%", percentage)
 	                        + "</td>");
-	                writer.println("                        <td class=\"truncated\" title=\""
-	                        + escapeHtml(entry.getSampleErrorMessage()) + "\">"
-	                        + escapeHtml(truncate(entry.getSampleErrorMessage(), 100)) + "</td>");
+	                String sampleErrorMessage = entry.getSampleErrorMessage();
+	                if (sampleErrorMessage != null) {
+	                    String processedErrorMessage = LogRedactionUtil.processLogMessage(sampleErrorMessage, redactQueries);
+	                    writer.println("                        <td class=\"truncated\" title=\""
+	                            + escapeHtml(processedErrorMessage) + "\">"
+	                            + escapeHtml(truncate(processedErrorMessage, 100)) + "</td>");
+	                } else {
+	                    writer.println("                        <td>N/A</td>");
+	                }
 	                writer.println("                    </tr>");
 	            });
 
@@ -1235,6 +1213,63 @@ public class HtmlReportGenerator {
 		if (text.length() <= maxLength)
 			return text;
 		return text.substring(0, maxLength - 3) + "...";
+	}
+	
+	private static String compressPlanSummary(String planSummary) {
+		if (planSummary == null || planSummary.length() < 50) {
+			return planSummary;
+		}
+		
+		// Split by comma and look for repeated patterns
+		String[] parts = planSummary.split(", ");
+		if (parts.length < 3) {
+			return planSummary;
+		}
+		
+		StringBuilder compressed = new StringBuilder();
+		String lastPart = null;
+		int repeatCount = 1;
+		boolean wasCompressed = false;
+		
+		for (int i = 0; i < parts.length; i++) {
+			String part = parts[i].trim();
+			
+			if (part.equals(lastPart)) {
+				repeatCount++;
+				wasCompressed = true;
+			} else {
+				// Output the previous part with its count
+				if (lastPart != null) {
+					if (compressed.length() > 0) {
+						compressed.append(", ");
+					}
+					compressed.append(lastPart);
+					if (repeatCount > 1) {
+						compressed.append(" (x").append(repeatCount).append(")");
+					}
+				}
+				lastPart = part;
+				repeatCount = 1;
+			}
+		}
+		
+		// Don't forget the last part
+		if (lastPart != null) {
+			if (compressed.length() > 0) {
+				compressed.append(", ");
+			}
+			compressed.append(lastPart);
+			if (repeatCount > 1) {
+				compressed.append(" (x").append(repeatCount).append(")");
+			}
+		}
+		
+		// Add indicator if compressed
+		if (wasCompressed) {
+			compressed.append(" ⚡");
+		}
+		
+		return compressed.toString();
 	}
 	
 	private static String formatTimestampRange(String earliestTimestamp, String latestTimestamp) {

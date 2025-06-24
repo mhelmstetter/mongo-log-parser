@@ -27,10 +27,25 @@ public class QueryHashAccumulatorEntry {
     private long bytesRead = 0;
     private long totalShards = 0;
     
+    // Planning time tracking
+    private long totalPlanningTimeMicros = 0;
+    private long planningTimeCount = 0;
+    private long minPlanningTimeMicros = Long.MAX_VALUE;
+    private long maxPlanningTimeMicros = Long.MIN_VALUE;
+    
+    // Replanning tracking
+    private long replannedCount = 0;
+    private long multiPlannerCount = 0;
+    private Map<String, Long> replanReasons = new HashMap<>();
+    
+    // Plan summary tracking - store the most recent one
+    private String planSummary = null;
+    
     // Statistics for percentiles
     private DescriptiveStatistics executionStats = new DescriptiveStatistics();
     private DescriptiveStatistics keysExaminedStats = new DescriptiveStatistics();
     private DescriptiveStatistics docsExaminedStats = new DescriptiveStatistics();
+    private DescriptiveStatistics planningTimeStats = new DescriptiveStatistics();
     
     // Read preference tracking - store detailed breakdown
     private Map<String, Long> readPreferenceCounts = new HashMap<>();
@@ -96,6 +111,43 @@ public class QueryHashAccumulatorEntry {
         
         if (slowQuery.nShards != null) {
             totalShards += slowQuery.nShards;
+        }
+        
+        // Track planning time
+        if (slowQuery.planningTimeMicros != null) {
+            planningTimeCount++;
+            totalPlanningTimeMicros += slowQuery.planningTimeMicros;
+            
+            if (slowQuery.planningTimeMicros > maxPlanningTimeMicros) {
+                maxPlanningTimeMicros = slowQuery.planningTimeMicros;
+            }
+            if (slowQuery.planningTimeMicros < minPlanningTimeMicros) {
+                minPlanningTimeMicros = slowQuery.planningTimeMicros;
+            }
+            
+            if (planningTimeStats.getN() < 10000) {
+                planningTimeStats.addValue(slowQuery.planningTimeMicros);
+            }
+        }
+        
+        // Track replanning events
+        if (slowQuery.replanned != null && slowQuery.replanned) {
+            replannedCount++;
+            
+            // Track replan reasons
+            if (slowQuery.replanReason != null) {
+                replanReasons.merge(slowQuery.replanReason, 1L, Long::sum);
+            }
+        }
+        
+        // Track multi-planner usage
+        if (slowQuery.fromMultiPlanner != null && slowQuery.fromMultiPlanner) {
+            multiPlannerCount++;
+        }
+        
+        // Track plan summary (use the most recent one)
+        if (slowQuery.planSummary != null) {
+            planSummary = slowQuery.planSummary;
         }
         
         // Track read preferences with detailed breakdown
@@ -263,6 +315,56 @@ public class QueryHashAccumulatorEntry {
     
     public String getSampleLogMessage() {
         return sampleLogMessage;
+    }
+    
+    // Planning time getters (converted to milliseconds)
+    public long getMinPlanningTimeMs() {
+        return planningTimeCount > 0 ? Math.round(minPlanningTimeMicros / 1000.0) : 0;
+    }
+    
+    public long getMaxPlanningTimeMs() {
+        return planningTimeCount > 0 ? Math.round(maxPlanningTimeMicros / 1000.0) : 0;
+    }
+    
+    public long getAvgPlanningTimeMs() {
+        return planningTimeCount > 0 ? Math.round((totalPlanningTimeMicros / planningTimeCount) / 1000.0) : 0;
+    }
+    
+    public double getPlanningTimePercentile95Ms() {
+        return planningTimeStats.getN() > 0 ? planningTimeStats.getPercentile(95) / 1000.0 : 0.0;
+    }
+    
+    // Replanning getters
+    public long getReplannedCount() {
+        return replannedCount;
+    }
+    
+    public double getReplannedPercentage() {
+        return count > 0 ? (replannedCount * 100.0) / count : 0.0;
+    }
+    
+    public long getMultiPlannerCount() {
+        return multiPlannerCount;
+    }
+    
+    public double getMultiPlannerPercentage() {
+        return count > 0 ? (multiPlannerCount * 100.0) / count : 0.0;
+    }
+    
+    public Map<String, Long> getReplanReasons() {
+        return new HashMap<>(replanReasons);
+    }
+    
+    public String getMostCommonReplanReason() {
+        return replanReasons.entrySet().stream()
+            .max(Map.Entry.comparingByValue())
+            .map(Map.Entry::getKey)
+            .orElse("none");
+    }
+    
+    // Plan summary getter
+    public String getPlanSummary() {
+        return planSummary != null ? planSummary : "UNKNOWN";
     }
     
     /**

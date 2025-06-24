@@ -32,20 +32,18 @@ public class LogRedactionUtil {
         "durationMillis", "planSummary", "queryHash", "planCacheKey",
         "keysExamined", "docsExamined", "nreturned", "nModified", "nDeleted", "nInserted",
         "executionTimeMillis", "totalTime", "cpuNanos", "reslen",
-        // Query structure (operators and field names, but not values)
-        "$match", "$sort", "$limit", "$skip", "$project", "$group", "$lookup", "$unwind",
-        "$and", "$or", "$not", "$nor", "$in", "$nin", "$eq", "$ne", "$gt", "$gte", "$lt", "$lte",
-        "$exists", "$type", "$regex", "$options", "$elemMatch", "$size", "$all",
         // Index and plan info
         "indexName", "direction", "stage", "inputStage", "rejectedPlans", "winningPlan",
         // Shard info
         "nShards", "shardName", "shardVersion",
         // Error codes and messages
-        "code", "codeName", "ok", "errmsg",
+        "code", "codeName", "ok", "errmsg", "errCode", "errMsg", "errName",
         // Transaction info
         "txnNumber", "autocommit", "startTransaction",
         // System info
-        "component", "context", "severity", "id", "msg", "attr", "t", "c", "s"
+        "component", "context", "severity", "id", "msg", "attr", "t", "c", "s", "type",
+        // Date/time fields
+        "$date"
     );
     
     // Fields that should be completely removed for log trimming (similar to LogFilter)
@@ -132,6 +130,10 @@ public class LogRedactionUtil {
     
     // Private helper methods for redaction
     private static JSONObject redactObject(JSONObject obj) throws JSONException {
+        return redactObject(obj, false);
+    }
+    
+    private static JSONObject redactObject(JSONObject obj, boolean isInQueryContext) throws JSONException {
         JSONObject redacted = new JSONObject();
         
         Iterator<String> keys = obj.keys();
@@ -139,19 +141,42 @@ public class LogRedactionUtil {
             String key = keys.next();
             Object value = obj.get(key);
             
-            if (PRESERVE_FIELDS.contains(key)) {
-                // Preserve these fields completely
+            if (!isInQueryContext && PRESERVE_FIELDS.contains(key) && !key.equals("attr")) {
+                // Preserve these fields completely (only at top level), except attr which needs processing
                 redacted.put(key, value);
+            } else if (isQueryField(key)) {
+                // For query fields, redact values but preserve structure
+                redacted.put(key, redactValue(value, true));
+            } else if (isInQueryContext) {
+                // We're inside a query context, redact all values
+                redacted.put(key, redactValue(value, true));
             } else {
                 // Redact the value but keep the field
-                redacted.put(key, redactValue(value));
+                redacted.put(key, redactValue(value, false));
             }
         }
         
         return redacted;
     }
     
+    // Check if a field contains query data that should be redacted
+    private static boolean isQueryField(String fieldName) {
+        return fieldName.equals("filter") || 
+               fieldName.equals("command") || 
+               fieldName.equals("find") || 
+               fieldName.equals("aggregate") || 
+               fieldName.equals("update") || 
+               fieldName.equals("delete") || 
+               fieldName.equals("insert") || 
+               fieldName.equals("pipeline") ||
+               fieldName.startsWith("$");
+    }
+    
     private static Object redactValue(Object value) throws JSONException {
+        return redactValue(value, false);
+    }
+    
+    private static Object redactValue(Object value, boolean isInQueryContext) throws JSONException {
         if (value == null || value == JSONObject.NULL) {
             return value;
         }
@@ -164,11 +189,11 @@ public class LogRedactionUtil {
                 return redactRegularExpression(obj);
             }
             
-            return redactObject(obj);
+            return redactObject(obj, isInQueryContext);
         }
         
         if (value instanceof JSONArray) {
-            return redactArray((JSONArray) value);
+            return redactArray((JSONArray) value, isInQueryContext);
         }
         
         if (value instanceof String) {
@@ -187,11 +212,15 @@ public class LogRedactionUtil {
     }
     
     private static JSONArray redactArray(JSONArray arr) throws JSONException {
+        return redactArray(arr, false);
+    }
+    
+    private static JSONArray redactArray(JSONArray arr, boolean isInQueryContext) throws JSONException {
         JSONArray redacted = new JSONArray();
         
         for (int i = 0; i < arr.length(); i++) {
             Object value = arr.get(i);
-            redacted.put(redactValue(value));
+            redacted.put(redactValue(value, isInQueryContext));
         }
         
         return redacted;

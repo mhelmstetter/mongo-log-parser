@@ -44,6 +44,12 @@ public class PlanCacheAccumulatorEntry {
     private String sampleLogMessage = null;
     private long maxDurationForSample = 0;
     
+    // Additional fields from Query Hash Analysis
+    private long totalShards = 0;
+    private long shardCount = 0;
+    private String readPreference = null;
+    private long readPreferenceCount = 0;
+    
     public PlanCacheAccumulatorEntry(PlanCacheKey key) {
         this.key = key;
     }
@@ -131,6 +137,18 @@ public class PlanCacheAccumulatorEntry {
         // Track collection scans based on current query's plan summary
         if (slowQuery.planSummary != null && slowQuery.planSummary.contains("COLLSCAN")) {
             collectionScanCount++;
+        }
+        
+        // Track shard information
+        if (slowQuery.nShards != null) {
+            totalShards += slowQuery.nShards;
+            shardCount++;
+        }
+        
+        // Track read preference (use the most recent one)
+        if (slowQuery.readPreference != null) {
+            readPreference = slowQuery.readPreference;
+            readPreferenceCount++;
         }
         
         // Store sample log message if this is the slowest query we've seen
@@ -250,17 +268,32 @@ public class PlanCacheAccumulatorEntry {
         return sampleLogMessage;
     }
     
+    // Additional fields from Query Hash Analysis
+    public double getAvgShards() {
+        return shardCount > 0 ? (double) totalShards / shardCount : 0.0;
+    }
+    
+    public String getReadPreference() {
+        return readPreference != null ? readPreference : "none";
+    }
+    
+    public double getExaminedToReturnedRatio() {
+        return totalReturned > 0 ? (double) (totalKeysExamined + totalDocsExamined) / totalReturned : 0.0;
+    }
+    
+    public double getTotalSeconds() {
+        return total / 1000.0;
+    }
+    
     @Override
     public String toString() {
         // Dynamic truncation based on reasonable limits
         String truncatedNamespace = truncateString(key.getNamespace().toString(), 45);
-        String truncatedPlanCacheKey = truncateString(key.getPlanCacheKey(), 12);
         String truncatedQueryHash = truncateString(key.getQueryHash(), 10);
         String truncatedPlanSummary = truncateString(key.getPlanSummary(), 80);
         
-        return String.format("%-45s %-12s %-10s %-80s %8d %8d %8d %8d %8.0f %10d %10d %10d %8d %8d %8d %8.1f",
+        return String.format("%-45s %-10s %-80s %8d %8d %8d %8d %8.0f %10d %10d %10d %8d %8d %8d %8.1f",
                 truncatedNamespace,
-                truncatedPlanCacheKey,
                 truncatedQueryHash,
                 truncatedPlanSummary,
                 count,
@@ -279,9 +312,8 @@ public class PlanCacheAccumulatorEntry {
     }
     
     public String toCsvString() {
-        return String.format("%s,%s,%s,%s,%d,%d,%d,%d,%.0f,%d,%d,%d,%.0f,%.0f,%.1f,%.1f,%d,%d,%d,%.1f,%d,%d,%d,%.0f,%d,%.1f,%d,%.1f,%s",
+        return String.format("%s,%s,%s,%d,%d,%d,%d,%.0f,%d,%d,%d,%.0f,%.0f,%.1f,%.1f,%d,%d,%d,%.1f,%d,%d,%d,%.0f,%d,%.1f,%d,%.1f,%s",
                 key.getNamespace(),
-                escapeCsv(key.getPlanCacheKey()),
                 escapeCsv(key.getQueryHash()),
                 escapeCsv(key.getPlanSummary()),
                 count,

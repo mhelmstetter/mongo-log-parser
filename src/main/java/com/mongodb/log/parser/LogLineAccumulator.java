@@ -189,4 +189,12 @@ public class LogLineAccumulator {
     public String getSampleLogMessage() {
         return sampleLogMessage;
     }
+    
+    public String getNamespace() {
+        return namespace != null ? namespace.toString() : "";
+    }
+    
+    public String getOperation() {
+        return operation != null ? operation : "";
+    }
 }

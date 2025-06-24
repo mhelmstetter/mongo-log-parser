@@ -42,7 +42,7 @@ public class LogFilter implements Callable<Integer> {
 
     private static Logger logger = LoggerFactory.getLogger(LogFilter.class);
 
-    @Option(names = "-f", description = "File names", required = true)
+    @Option(names = "-f", description = "File names (if not provided, reads from stdin)")
     private List<String> files;
 
     @Option(names = "--config", description = "Properties file for filter configuration")
@@ -50,20 +50,31 @@ public class LogFilter implements Callable<Integer> {
 
     @Option(names = "--report-ttl", description = "Report TTL operations by namespace")
     private boolean reportTtl = false;
+    
+    @Option(names = "--stdout", description = "Output filtered logs to stdout instead of files")
+    private boolean outputToStdout = false;
+
+    @Option(names = "--aggressive", description = "Use aggressive filtering mode (removes more fields)")
+    private boolean aggressiveMode = false;
 
     private String currentLine;
     private FilterConfig filterConfig;
 
-    // Simplified ignore keys for JSON filtering
-    private static List<String> ignoreJsonKeys = List.of(
+    // Default filtering keys
+    private static List<String> defaultIgnoreKeys = List.of(
         "writeConcern", "$audit", "$client", "$clusterTime", "$configTime", "$db", 
         "$topologyTime", "advanced", "bypassDocumentValidation", "clientOperationKey",
         "clusterTime", "collation", "cpuNanos", "cursor", "cursorid", "cursorExhausted", 
         "databaseVersion", "flowControl", "fromMongos", "fromMultiPlanner", "let", "locks", 
         "lsid", "maxTimeMS", "maxTimeMSOpOnly", "mayBypassWriteBlocking", "multiKeyPaths", 
-        "needsMerge", "needTime", "numYields", "planningTimeMicros", "protocol", 
+        "needsMerge", "needTime", "numYields", "protocol", 
         "queryFramework", "readConcern", "remote", "runtimeConstants", "shardVersion",
         "totalOplogSlotDurationMicros", "waitForWriteConcernDurationMillis", "works"
+    );
+
+    // Additional keys to ignore in aggressive mode (additive to default)
+    private static List<String> additionalAggressiveKeys = List.of(
+        "planningTimeMicros"
     );
 
     private static List<String> preserveTextFields = List.of("ns", "planSummary");
@@ -91,9 +102,15 @@ public class LogFilter implements Callable<Integer> {
     }
 
     public void read() throws IOException, ParseException, InterruptedException, ExecutionException {
-        for (String fileName : files) {
-            File f = new File(fileName);
-            read(f);
+        if (files == null || files.isEmpty()) {
+            // Read from stdin
+            readFromStdin();
+        } else {
+            // Read from files
+            for (String fileName : files) {
+                File f = new File(fileName);
+                read(f);
+            }
         }
     }
 
@@ -106,14 +123,19 @@ public class LogFilter implements Callable<Integer> {
             originalFileName = originalFileName.substring(0, dotIndex);
         }
 
-        String filteredFileName = originalFileName + "_filtered" + originalFileExtension;
-        File filteredFile = new File(file.getParent(), filteredFileName);
-
         String guess = MimeTypes.guessContentTypeFromName(originalFileName);
         logger.debug("MIME type guess: {}", guess);
 
         BufferedReader in = createReader(file, guess);
-        PrintStream os = new PrintStream(new BufferedOutputStream(new FileOutputStream(filteredFile)));
+        PrintStream os;
+        
+        if (outputToStdout) {
+            os = System.out;
+        } else {
+            String filteredFileName = originalFileName + "_filtered" + originalFileExtension;
+            File filteredFile = new File(file.getParent(), filteredFileName);
+            os = new PrintStream(new BufferedOutputStream(new FileOutputStream(filteredFile)));
+        }
 
         int filteredCount = 0;
         int ttlCount = 0;
@@ -123,7 +145,7 @@ public class LogFilter implements Callable<Integer> {
         while ((currentLine = in.readLine()) != null) {
             lineNum++;
 
-            if (shouldIgnoreLine(currentLine) || !currentLine.startsWith("{\"t\":{\"$date\"")) {
+            if (shouldIgnoreLine(currentLine) || !containsMongoJsonPattern(currentLine)) {
                 filteredCount++;
                 continue;
             }
@@ -142,12 +164,70 @@ public class LogFilter implements Callable<Integer> {
         }
 
         in.close();
-        os.close();
+        if (!outputToStdout) {
+            os.close();
+        }
         
         long end = System.currentTimeMillis();
         long dur = (end - start);
         logger.info("Processed file: {} in {}ms", file.getName(), dur);
         logger.info("Lines: {}, Filtered: {}, TTL ops: {}", lineNum, filteredCount, ttlCount);
+    }
+
+    private String processLine(String line) {
+        // Extract JSON part if line has filename prefix from grep
+        String jsonPart = extractJsonFromLine(line);
+        JsonNode filteredNode = filterJsonContent(jsonPart);
+        if (filteredNode != null && !filteredNode.isEmpty()) {
+            return filteredNode.toString();
+        }
+        return null;
+    }
+
+    private String extractJsonFromLine(String line) {
+        int colonIndex = line.indexOf(':');
+        if (colonIndex > 0 && colonIndex < line.length() - 1) {
+            String afterColon = line.substring(colonIndex + 1);
+            if (afterColon.startsWith("{\"t\":{\"$date\"")) {
+                return afterColon;
+            }
+        }
+        return line;
+    }
+
+    public void readFromStdin() throws IOException {
+        BufferedReader in = new BufferedReader(new InputStreamReader(System.in));
+        PrintStream os = outputToStdout ? System.out : System.err; // Use stderr for stats when stdout is for data
+        
+        int filteredCount = 0;
+        int totalCount = 0;
+        long start = System.currentTimeMillis();
+        
+        String line;
+        while ((line = in.readLine()) != null) {
+            totalCount++;
+            currentLine = line;
+            
+            if (!shouldIgnoreLine(line) && containsMongoJsonPattern(line)) {
+                String processedLine = processLine(line);
+                if (processedLine != null) {
+                    filteredCount++;
+                    System.out.println(processedLine);
+                }
+            }
+        }
+        
+        long end = System.currentTimeMillis();
+        long dur = (end - start);
+        
+        // Send stats to stderr so they don't interfere with piped output
+        if (outputToStdout) {
+            System.err.printf("Processed stdin in %dms%n", dur);
+            System.err.printf("Lines: %d, Filtered: %d%n", totalCount, filteredCount);
+        } else {
+            logger.info("Processed stdin in {}ms", dur);
+            logger.info("Lines: {}, Filtered: {}", totalCount, filteredCount);
+        }
     }
 
     private BufferedReader createReader(File file, String mimeType) throws IOException {
@@ -166,6 +246,27 @@ public class LogFilter implements Callable<Integer> {
 
     private boolean shouldIgnoreLine(String line) {
         return filterConfig.shouldIgnore(line);
+    }
+
+    private boolean containsMongoJsonPattern(String line) {
+        // Handle grep output with filename prefix (filename.gz:{"t":{"$date"...)
+        int colonIndex = line.indexOf(':');
+        if (colonIndex > 0 && colonIndex < line.length() - 1) {
+            String jsonPart = line.substring(colonIndex + 1);
+            return jsonPart.startsWith("{\"t\":{\"$date\"");
+        }
+        // Also handle direct JSON input
+        return line.startsWith("{\"t\":{\"$date\"");
+    }
+
+    private List<String> getIgnoreKeys() {
+        if (aggressiveMode) {
+            // Combine default keys with additional aggressive keys
+            List<String> combined = new ArrayList<>(defaultIgnoreKeys);
+            combined.addAll(additionalAggressiveKeys);
+            return combined;
+        }
+        return defaultIgnoreKeys;
     }
 
     private JsonNode filterJsonContent(String jsonLine) {
@@ -188,7 +289,7 @@ public class LogFilter implements Callable<Integer> {
                 String fieldName = fieldNames.next();
                 JsonNode childNode = node.get(fieldName);
 
-                if (ignoreJsonKeys.contains(fieldName)) {
+                if (getIgnoreKeys().contains(fieldName)) {
                     keysToRemove.add(fieldName);
                 } else {
                     processJsonField(node, fieldName, childNode);

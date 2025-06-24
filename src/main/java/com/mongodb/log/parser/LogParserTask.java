@@ -257,16 +257,22 @@ class LogParserTask implements Callable<ProcessingStats> {
 	 * Check if a namespace matches any of the configured filters
 	 */
 	private boolean matchesNamespaceFilter(Namespace namespace) {
-		if (namespaceFilters.isEmpty()) {
-			return true; // No filters means accept all
-		}
-
 		if (namespace == null) {
 			return false;
 		}
 
 		String fullNamespace = namespace.toString();
 		String dbName = namespace.getDatabaseName();
+		
+		// Always exclude the config database
+		if ("config".equals(dbName)) {
+			return false;
+		}
+		
+		// If no filters configured, accept all (except config which was already excluded)
+		if (namespaceFilters.isEmpty()) {
+			return true;
+		}
 
 		for (String filter : namespaceFilters) {
 			// Exact match

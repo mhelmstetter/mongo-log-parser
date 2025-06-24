@@ -36,7 +36,7 @@ public class PlanCacheAccumulator {
         
         PlanCacheKey key = new PlanCacheKey(
             slowQuery.ns, 
-            slowQuery.planCacheKey, 
+            slowQuery.opType,
             slowQuery.queryHash,
             slowQuery.planSummary
         );
@@ -57,34 +57,32 @@ public class PlanCacheAccumulator {
         ColumnWidths widths = calculateColumnWidths();
         
         // Create dynamic format strings
-        String headerFormat = String.format("%%-%ds %%-%ds %%-%ds %%-%ds %%8s %%8s %%8s %%8s %%8s %%10s %%10s %%10s %%8s %%8s %%8s %%8s %%8s", 
-                widths.namespaceWidth, widths.planCacheKeyWidth, widths.queryHashWidth, widths.planSummaryWidth);
+        String headerFormat = String.format("%%-%ds %%-%ds %%-%ds %%8s %%8s %%8s %%8s %%8s %%10s %%10s %%10s %%8s %%8s %%8s %%8s %%8s", 
+                widths.namespaceWidth, widths.queryHashWidth, widths.planSummaryWidth);
         
         // Print header
         System.out.println(String.format(headerFormat,
-                "Namespace", "PlanCacheKey", "QueryHash", "PlanSummary", "Count", 
+                "Namespace", "QueryHash", "PlanSummary", "Count", 
                 "MinMs", "MaxMs", "AvgMs", "P95Ms", "TotalSec", "AvgKeysEx", 
                 "AvgDocsEx", "AvgRet", "MinPlanMs", "MaxPlanMs", "AvgPlanMs", "ReplanPct"));
         
         // Calculate separator length dynamically
-        int separatorLength = widths.namespaceWidth + widths.planCacheKeyWidth + widths.queryHashWidth + 
-                             widths.planSummaryWidth + (8 * 13) + 16; // 8 chars * 13 columns + spaces
+        int separatorLength = widths.namespaceWidth + widths.queryHashWidth + 
+                             widths.planSummaryWidth + (8 * 13) + 14; // 8 chars * 13 columns + spaces
         System.out.println("=".repeat(separatorLength));
         
         planCacheEntries.values().stream()
             .sorted(Comparator.comparingLong(PlanCacheAccumulatorEntry::getCount).reversed())
             .forEach(entry -> {
                 String truncatedNamespace = truncateToWidth(entry.getKey().getNamespace().toString(), widths.namespaceWidth);
-                String truncatedPlanCacheKey = truncateToWidth(entry.getKey().getPlanCacheKey(), widths.planCacheKeyWidth);
                 String truncatedQueryHash = truncateToWidth(entry.getKey().getQueryHash(), widths.queryHashWidth);
                 String truncatedPlanSummary = truncateToWidth(entry.getKey().getPlanSummary(), widths.planSummaryWidth);
                 
-                String dataFormat = String.format("%%-%ds %%-%ds %%-%ds %%-%ds %%8d %%8d %%8d %%8d %%8.0f %%10d %%10d %%10d %%8d %%8d %%8d %%8d %%8.1f", 
-                        widths.namespaceWidth, widths.planCacheKeyWidth, widths.queryHashWidth, widths.planSummaryWidth);
+                String dataFormat = String.format("%%-%ds %%-%ds %%-%ds %%8d %%8d %%8d %%8d %%8.0f %%10d %%10d %%10d %%8d %%8d %%8d %%8d %%8.1f", 
+                        widths.namespaceWidth, widths.queryHashWidth, widths.planSummaryWidth);
                 
                 System.out.println(String.format(dataFormat,
                         truncatedNamespace,
-                        truncatedPlanCacheKey,
                         truncatedQueryHash,
                         truncatedPlanSummary,
                         entry.getCount(),
@@ -158,7 +156,6 @@ public class PlanCacheAccumulator {
     
     private ColumnWidths calculateColumnWidths() {
         int maxNamespaceWidth = "Namespace".length();
-        int maxPlanCacheKeyWidth = "PlanCacheKey".length();
         int maxQueryHashWidth = "QueryHash".length();
         int maxPlanSummaryWidth = "PlanSummary".length();
         
@@ -170,10 +167,6 @@ public class PlanCacheAccumulator {
                     Math.min(key.getNamespace().toString().length(), 45));
             }
             
-            if (key.getPlanCacheKey() != null) {
-                maxPlanCacheKeyWidth = Math.max(maxPlanCacheKeyWidth, 
-                    Math.min(key.getPlanCacheKey().length(), 15));
-            }
             
             if (key.getQueryHash() != null) {
                 maxQueryHashWidth = Math.max(maxQueryHashWidth, 
@@ -186,7 +179,7 @@ public class PlanCacheAccumulator {
             }
         }
         
-        return new ColumnWidths(maxNamespaceWidth, maxPlanCacheKeyWidth, maxQueryHashWidth, maxPlanSummaryWidth);
+        return new ColumnWidths(maxNamespaceWidth, maxQueryHashWidth, maxPlanSummaryWidth);
     }
     
     public void reportCsv(String fileName) throws FileNotFoundException {
@@ -244,34 +237,31 @@ public class PlanCacheAccumulator {
                 queryHash, plans.size()));
             
             // Print column headers
-            String headerFormat = String.format("  %%-%ds %%-%ds %%-%ds %%8s %%8s %%8s %%8s %%8s %%10s %%8s %%8s %%8s", 
-                widths.planCacheKeyWidth, widths.planSummaryWidth, widths.namespaceWidth);
+            String headerFormat = String.format("  %%-%ds %%-%ds %%8s %%8s %%8s %%8s %%8s %%10s %%8s %%8s %%8s", 
+                widths.planSummaryWidth, widths.namespaceWidth);
                 
             System.out.println(String.format(headerFormat,
-                "PlanCacheKey", "PlanSummary", "Namespace", "Count", "MinMs", "MaxMs", "AvgMs", "P95Ms", "TotalSec", "AvgPlanMs", "PlanP95", "ReplanPct"));
+                "PlanSummary", "Namespace", "Count", "MinMs", "MaxMs", "AvgMs", "P95Ms", "TotalSec", "AvgPlanMs", "PlanP95", "ReplanPct"));
             
-            String separatorFormat = String.format("  %%-%ds %%-%ds %%-%ds %%8s %%8s %%8s %%8s %%8s %%10s %%8s %%8s %%8s", 
-                widths.planCacheKeyWidth, widths.planSummaryWidth, widths.namespaceWidth);
+            String separatorFormat = String.format("  %%-%ds %%-%ds %%8s %%8s %%8s %%8s %%8s %%10s %%8s %%8s %%8s", 
+                widths.planSummaryWidth, widths.namespaceWidth);
                 
             System.out.println(String.format(separatorFormat,
-                "=".repeat(widths.planCacheKeyWidth), 
                 "=".repeat(widths.planSummaryWidth),
                 "=".repeat(widths.namespaceWidth),
                 "========", "========", "========", "========", "========", "==========", "========", "========", "========"));
             
             // Print data rows with consistent formatting
-            String dataFormat = String.format("  %%-%ds %%-%ds %%-%ds %%8d %%8d %%8d %%8d %%8.0f %%10d %%8d %%8.0f %%8.1f", 
-                widths.planCacheKeyWidth, widths.planSummaryWidth, widths.namespaceWidth);
+            String dataFormat = String.format("  %%-%ds %%-%ds %%8d %%8d %%8d %%8d %%8.0f %%10d %%8d %%8.0f %%8.1f", 
+                widths.planSummaryWidth, widths.namespaceWidth);
                 
             plans.stream()
                 .sorted(Comparator.comparingLong(PlanCacheAccumulatorEntry::getCount).reversed())
                 .forEach(plan -> {
-                    String planCacheKey = truncateToWidth(plan.getKey().getPlanCacheKey(), widths.planCacheKeyWidth);
                     String planSummary = truncateToWidth(plan.getKey().getPlanSummary(), widths.planSummaryWidth);
                     String namespace = truncateToWidth(plan.getKey().getNamespace().toString(), widths.namespaceWidth);
                     
                     System.out.println(String.format(dataFormat,
-                        planCacheKey,
                         planSummary,
                         namespace,
                         plan.getCount(),
@@ -291,17 +281,12 @@ public class PlanCacheAccumulator {
      * Calculate optimal column widths by scanning all data
      */
     private ColumnWidths calculateOptimalColumnWidths(java.util.List<Map.Entry<String, java.util.List<PlanCacheAccumulatorEntry>>> queries) {
-        int maxPlanCacheKeyWidth = "PlanCacheKey".length();
         int maxPlanSummaryWidth = "PlanSummary".length();
         int maxNamespaceWidth = "Namespace".length();
         
         for (var queryEntry : queries) {
             for (var plan : queryEntry.getValue()) {
                 // Track actual lengths, but set reasonable limits
-                if (plan.getKey().getPlanCacheKey() != null) {
-                    maxPlanCacheKeyWidth = Math.max(maxPlanCacheKeyWidth, 
-                        Math.min(plan.getKey().getPlanCacheKey().length(), 15));
-                }
                 
                 if (plan.getKey().getPlanSummary() != null) {
                     maxPlanSummaryWidth = Math.max(maxPlanSummaryWidth, 
@@ -315,7 +300,7 @@ public class PlanCacheAccumulator {
             }
         }
         
-        return new ColumnWidths(maxPlanCacheKeyWidth, maxPlanSummaryWidth, maxNamespaceWidth);
+        return new ColumnWidths(maxPlanSummaryWidth, maxNamespaceWidth);
     }
     
     /**
@@ -339,21 +324,18 @@ public class PlanCacheAccumulator {
      */
     private static class ColumnWidths {
         final int namespaceWidth;
-        final int planCacheKeyWidth;
         final int queryHashWidth;
         final int planSummaryWidth;
         
-        // Constructor for main report (4 parameters)
-        ColumnWidths(int namespaceWidth, int planCacheKeyWidth, int queryHashWidth, int planSummaryWidth) {
+        // Constructor for main report (3 parameters)
+        ColumnWidths(int namespaceWidth, int queryHashWidth, int planSummaryWidth) {
             this.namespaceWidth = namespaceWidth;
-            this.planCacheKeyWidth = planCacheKeyWidth;
             this.queryHashWidth = queryHashWidth;
             this.planSummaryWidth = planSummaryWidth;
         }
         
-        // Constructor for query hash report (3 parameters) - reusing existing fields
-        ColumnWidths(int planCacheKeyWidth, int planSummaryWidth, int namespaceWidth) {
-            this.planCacheKeyWidth = planCacheKeyWidth;
+        // Constructor for query hash report (2 parameters) - reusing existing fields
+        ColumnWidths(int planSummaryWidth, int namespaceWidth) {
             this.planSummaryWidth = planSummaryWidth;
             this.namespaceWidth = namespaceWidth;
             this.queryHashWidth = 10; // Default for query hash display
