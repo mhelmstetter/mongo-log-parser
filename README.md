@@ -17,15 +17,16 @@ This will analyze all `.log` files in the current directory and automatically ge
 ## Features
 
 - **Interactive HTML Reports** - Sortable and filterable tables with navigation
+- **Query Redaction** - `--redact` option protects sensitive data while preserving analysis value
+- **Index Usage Statistics** - Comprehensive index utilization analysis and optimization insights
 - **Sample Log Accordions** - Click table rows to view actual log messages for debugging
-- **Configurable Query Redaction** - Protect sensitive data while preserving analysis value  
 - **Operation Analysis** - Detailed metrics for find, aggregate, update, insert, delete operations
 - **Enhanced getMore Support** - Extract queries from originatingCommand for cursor operations
 - **Transaction Analysis** - Transaction performance and termination cause tracking
-- **Plan Cache Analysis** - Query plan effectiveness and collection scan detection
-- **Query Hash Analysis** - Query pattern identification and performance profiling
+- **Query Hash Analysis** - Consolidated query pattern identification with planning time metrics
 - **Error Code Analysis** - Error frequency and categorization
 - **TTL Operations** - Time-to-live operation monitoring
+- **Config Database Filtering** - Automatically excludes internal MongoDB operations
 - **Namespace Filtering** - Focus analysis on specific databases or collections
 - **Multiple Output Formats** - HTML, CSV, and console output
 - **Memory Efficient** - Optimized for large log files with minimal memory footprint
@@ -169,9 +170,9 @@ Supported file formats:
 2. **TTL Operations** - Time-to-live deletion operations and document counts
 3. **Operation Statistics** - Breakdown by operation type (find, update, etc.)
 4. **Error Codes** - Error frequency analysis with sample messages
-5. **Query Hash Analysis** - Query pattern performance with sanitized queries
-6. **Plan Cache Analysis** - Query plan effectiveness and replan frequency
-7. **Transaction Analysis** - Transaction duration, commit types, and termination causes
+5. **Query Hash Analysis** - Consolidated query pattern performance with planning time and replan metrics
+6. **Transaction Analysis** - Transaction duration, commit types, and termination causes
+7. **Index Usage Statistics** - Index utilization patterns, efficiency metrics, and collection scan detection
 
 ## Configuration
 
@@ -242,13 +243,14 @@ java -jar bin/MongoLogParser.jar -f server.log --redact
 ### What's Preserved
 - **Field names** and query structure
 - **Performance metrics** (duration, docs examined, etc.)
+- **Timestamp and date fields** for timeline analysis
 - **Namespace information**
 - **Operation types** and plan summaries
 - **Error codes** and messages
 - **Index usage** and plan cache data
 
 ### Sample Log Accordions
-Click any row in the **Query Hash Analysis** or **Plan Cache Analysis** tables to expand and view:
+Click any row in the **Query Hash Analysis** table to expand and view:
 - Actual log message that generated the entry
 - Formatted for easy reading with syntax highlighting
 - Automatically redacted based on `--redact` setting
@@ -273,11 +275,12 @@ The HTML report provides an interactive dashboard with:
 - MongoDB-styled interface with professional color scheme
 
 ### New Features in Latest Version
-- **Row-level accordions** in Query Hash and Plan Cache tables
-- **Configurable query redaction** with `--redact` option
-- **Enhanced getMore query extraction** from originatingCommand
-- **Memory-optimized** sample log storage
-- **Consolidated redaction utilities** for consistent privacy protection
+- **Enhanced Query Redaction** - Comprehensive `--redact` option protects sensitive data while preserving analysis value
+- **Index Usage Statistics** - New table showing index utilization patterns and efficiency metrics across all operations
+- **Consolidated Query Analysis** - Combined Query Hash and Plan Cache Analysis tables to eliminate redundancy
+- **Config Database Filtering** - Automatically excludes internal MongoDB operations (config.* collections) from analysis
+- **Improved Accordion UI** - "Expand All/Collapse All" functionality with stable table layouts
+- **Date Preservation in Redaction** - Timestamps and date fields remain visible for timeline analysis
 
 ## Troubleshooting
 
@@ -297,7 +300,7 @@ The HTML report provides an interactive dashboard with:
 
 **Sample log messages not showing:**
 - Ensure log files contain JSON-formatted entries (MongoDB 4.4+)
-- Sample messages are only stored for Query Hash and Plan Cache entries
+- Sample messages are stored for Query Hash entries
 - Click table rows to expand and view accordion content
 
 ## Contributing

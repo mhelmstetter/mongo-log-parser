@@ -35,6 +35,7 @@ import org.slf4j.LoggerFactory;
 import com.mongodb.log.filter.FilterConfig;
 import com.mongodb.log.parser.accumulator.Accumulator;
 import com.mongodb.log.parser.accumulator.ErrorCodeAccumulator;
+import com.mongodb.log.parser.accumulator.IndexStatsAccumulator;
 import com.mongodb.log.parser.accumulator.PlanCacheAccumulator;
 import com.mongodb.log.parser.accumulator.QueryHashAccumulator;
 import com.mongodb.log.parser.accumulator.TransactionAccumulator;
@@ -111,6 +112,7 @@ public class LogParser implements Callable<Integer> {
     private final PlanCacheAccumulator planCacheAccumulator;
     private final ErrorCodeAccumulator errorCodeAccumulator;
     private final TransactionAccumulator transactionAccumulator;
+    private final IndexStatsAccumulator indexStatsAccumulator;
     
     private FilterConfig filterConfig;
     private int unmatchedCount = 0;
@@ -134,6 +136,7 @@ public class LogParser implements Callable<Integer> {
         planCacheAccumulator = new PlanCacheAccumulator();
         errorCodeAccumulator = new ErrorCodeAccumulator();
         transactionAccumulator = new TransactionAccumulator();
+        indexStatsAccumulator = new IndexStatsAccumulator();
         filterConfig = new FilterConfig();
     }
 
@@ -225,6 +228,7 @@ public class LogParser implements Callable<Integer> {
                 queryHashAccumulator,
                 errorCodeAccumulator,
                 transactionAccumulator,
+                indexStatsAccumulator,
                 operationTypeStats,
                 redactQueries,
                 earliestTimestamp,
@@ -388,7 +392,7 @@ public class LogParser implements Callable<Integer> {
             if (lines.size() >= 25000) {
                 completionService.submit(
                     new LogParserTask(new ArrayList<>(lines), accumulator, planCacheAccumulator, queryHashAccumulator,
-                    		errorCodeAccumulator, transactionAccumulator, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this));
+                    		errorCodeAccumulator, transactionAccumulator, indexStatsAccumulator, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this));
                 submittedTasks++;
                 lines.clear();
             }
@@ -398,7 +402,7 @@ public class LogParser implements Callable<Integer> {
         if (!lines.isEmpty()) {
             completionService.submit(
                 new LogParserTask(new ArrayList<>(lines), accumulator, planCacheAccumulator, queryHashAccumulator,
-                		errorCodeAccumulator, transactionAccumulator, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this));
+                		errorCodeAccumulator, transactionAccumulator, indexStatsAccumulator, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this));
             submittedTasks++;
         }
 

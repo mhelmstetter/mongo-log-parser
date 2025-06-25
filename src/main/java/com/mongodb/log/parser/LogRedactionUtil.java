@@ -32,6 +32,7 @@ public class LogRedactionUtil {
         "durationMillis", "planSummary", "queryHash", "planCacheKey",
         "keysExamined", "docsExamined", "nreturned", "nModified", "nDeleted", "nInserted",
         "executionTimeMillis", "totalTime", "cpuNanos", "reslen",
+        "timeReadingMicros", "bytesRead", "limit", "skip",
         // Index and plan info
         "indexName", "direction", "stage", "inputStage", "rejectedPlans", "winningPlan",
         // Shard info
@@ -41,20 +42,27 @@ public class LogRedactionUtil {
         // Transaction info
         "txnNumber", "autocommit", "startTransaction",
         // System info
-        "component", "context", "severity", "id", "msg", "attr", "t", "c", "s", "type",
+        "component", "severity", "id", "msg", "attr", "t", "c", "s", "ctx",
         // Date/time fields
-        "$date"
+        "$date", "$timestamp", "$oid",
+        // Client and connection info  
+        "collation", "locale", "clientOperationKey", "$uuid", "$client", "$readPreference", "mode",
+        "mongos", "host", "client", "driver", "os", "platform",
+        // Read concern info
+        "readConcern", "provenance", "level",
+        // Storage metrics
+        "storage", "data",
+        // Sort and query structure  
+        "$sortKey", "$meta",
+        // Metadata timestamps and shard version fields
+        "i", "e", "v"
     );
     
-    // Fields that should be completely removed for log trimming (similar to LogFilter)
+    // Fields that should be completely removed for log trimming (only truly verbose fields)
     private static final Set<String> TRIM_FIELDS = Set.of(
-        "writeConcern", "$audit", "$client", "$clusterTime", "$configTime", "$db", 
-        "$topologyTime", "advanced", "bypassDocumentValidation", "clientOperationKey",
-        "clusterTime", "collation", "cpuNanos", "cursor", "cursorid", "cursorExhausted", 
-        "databaseVersion", "flowControl", "fromMongos", "fromMultiPlanner", "let", "locks", 
-        "lsid", "maxTimeMS", "maxTimeMSOpOnly", "mayBypassWriteBlocking", "multiKeyPaths", 
-        "needsMerge", "needTime", "numYields", "planningTimeMicros", "protocol", 
-        "queryFramework", "readConcern", "remote", "runtimeConstants", "shardVersion",
+        "advanced", "bypassDocumentValidation", "databaseVersion", "flowControl", 
+        "fromMultiPlanner", "let", "maxTimeMSOpOnly", "mayBypassWriteBlocking", 
+        "multiKeyPaths", "needTime", "planningTimeMicros", "runtimeConstants",
         "totalOplogSlotDurationMicros", "waitForWriteConcernDurationMillis", "works"
     );
     
@@ -64,6 +72,110 @@ public class LogRedactionUtil {
     // Fields that should preserve array structure
     private static final Set<String> PRESERVE_ARRAY_FIELDS = Set.of("pipeline", "$and", "$or");
     
+    // Explicit paths that should NEVER be redacted (MongoDB system data)
+    private static final Set<String> PRESERVE_PATHS = Set.of(
+        // Top level log structure
+        "t", "s", "c", "id", "ctx", "msg",
+        
+        // Top level attr fields  
+        "attr.type", "attr.ns", "attr.ok", "attr.code", "attr.codeName", 
+        "attr.errCode", "attr.errName", "attr.remote", "attr.protocol",
+        
+        // Performance metrics
+        "attr.durationMillis", "attr.cpuNanos", "attr.keysExamined", "attr.docsExamined", 
+        "attr.nreturned", "attr.nModified", "attr.nDeleted", "attr.nInserted", 
+        "attr.reslen", "attr.queryHash", "attr.planCacheKey", "attr.planSummary",
+        "attr.nShards", "attr.nBatches", "attr.cursorExhausted", "attr.numYields",
+        "attr.replanReason", "attr.replanned", "attr.placementVersionRefreshDurationMillis",
+        "attr.queryFramework", "attr.cursorid", "attr.appName",
+        
+        // Storage metrics
+        "attr.storage", "attr.storage.data", "attr.storage.data.timeReadingMicros", 
+        "attr.storage.data.bytesRead",
+        
+        // Locks and system operations
+        "attr.locks", "attr.locks.FeatureCompatibilityVersion", "attr.locks.FeatureCompatibilityVersion.acquireCount",
+        "attr.locks.FeatureCompatibilityVersion.acquireCount.r", "attr.locks.FeatureCompatibilityVersion.acquireCount.w",
+        "attr.locks.Mutex", "attr.locks.Mutex.acquireCount", "attr.locks.Mutex.acquireCount.r",
+        "attr.locks.Global", "attr.locks.Global.acquireCount", "attr.locks.Global.acquireCount.r",
+        "attr.locks.Global.acquireCount.w",
+        
+        // Read concern (all contexts)
+        "attr.readConcern", "attr.readConcern.level", "attr.readConcern.provenance",
+        "attr.originatingCommand.readConcern", "attr.originatingCommand.readConcern.level", 
+        "attr.originatingCommand.readConcern.provenance",
+        "attr.command.readConcern", "attr.command.readConcern.level", 
+        "attr.command.readConcern.provenance",
+        
+        // Command parameters and collection names (needed for MongoDB analysis)
+        "attr.command.limit", "attr.command.skip", "attr.command.maxTimeMS", 
+        "attr.command.cursorid", "attr.command.queryHash", "attr.command.planCacheKey", 
+        "attr.command.cursorExhausted", "attr.command.getMore", "attr.command.$db",
+        "attr.command.mayBypassWriteBlocking", "attr.command.fromMongos", "attr.command.needsMerge",
+        "attr.command.queryFramework", "attr.command.find", "attr.command.aggregate", 
+        "attr.command.update", "attr.command.delete", "attr.command.insert", "attr.command.count",
+        "attr.command.collection",
+        
+        // $audit system fields
+        "attr.command.$audit", "attr.command.$audit.$impersonatedUser", 
+        "attr.command.$audit.$impersonatedUser.user", "attr.command.$audit.$impersonatedUser.db",
+        "attr.command.$audit.$impersonatedRoles", "attr.command.$audit.$impersonatedRoles.role",
+        "attr.command.$audit.$impersonatedRoles.db",
+        "attr.originatingCommand.$audit", "attr.originatingCommand.$audit.$impersonatedUser",
+        "attr.originatingCommand.$audit.$impersonatedUser.user", "attr.originatingCommand.$audit.$impersonatedUser.db",
+        "attr.originatingCommand.$audit.$impersonatedRoles", "attr.originatingCommand.$audit.$impersonatedRoles.role",
+        "attr.originatingCommand.$audit.$impersonatedRoles.db",
+        "attr.originatingCommand.$db", "attr.originatingCommand.mayBypassWriteBlocking",
+        "attr.originatingCommand.fromMongos", "attr.originatingCommand.needsMerge",
+        "attr.originatingCommand.find", "attr.originatingCommand.aggregate", 
+        "attr.originatingCommand.update", "attr.originatingCommand.delete", 
+        "attr.originatingCommand.insert", "attr.originatingCommand.count",
+        "attr.originatingCommand.collection",
+        
+        // Collation system fields
+        "attr.command.collation", "attr.command.collation.locale",
+        "attr.originatingCommand.collation", "attr.originatingCommand.collation.locale",
+        
+        // Client info - preserve all nested paths
+        "attr.command.$client", "attr.command.$client.mongos", 
+        "attr.command.$client.mongos.host", "attr.command.$client.mongos.client", 
+        "attr.command.$client.mongos.version",
+        "attr.command.$client.driver", "attr.command.$client.driver.name", 
+        "attr.command.$client.driver.version",
+        "attr.command.$client.os", "attr.command.$client.os.name", 
+        "attr.command.$client.os.type", "attr.command.$client.os.version", 
+        "attr.command.$client.os.architecture",
+        "attr.command.$client.platform",
+        "attr.command.$client.application", "attr.command.$client.application.name",
+        
+        // Originating command client info
+        "attr.originatingCommand.$client", "attr.originatingCommand.$client.mongos", 
+        "attr.originatingCommand.$client.mongos.host", "attr.originatingCommand.$client.mongos.client", 
+        "attr.originatingCommand.$client.mongos.version",
+        "attr.originatingCommand.$client.driver", "attr.originatingCommand.$client.driver.name", 
+        "attr.originatingCommand.$client.driver.version",
+        "attr.originatingCommand.$client.os", "attr.originatingCommand.$client.os.name", 
+        "attr.originatingCommand.$client.os.type", "attr.originatingCommand.$client.os.version", 
+        "attr.originatingCommand.$client.os.architecture",
+        "attr.originatingCommand.$client.platform",
+        "attr.originatingCommand.$client.application", "attr.originatingCommand.$client.application.name",
+        
+        // Read preference
+        "attr.command.$readPreference", "attr.command.$readPreference.mode",
+        
+        // Shard version structure
+        "attr.command.shardVersion", "attr.command.shardVersion.t", 
+        "attr.command.shardVersion.e", "attr.command.shardVersion.v",
+        
+        // Collation (already defined above)
+        
+        // Client operation key structure (but not value)
+        "attr.command.clientOperationKey",
+        
+        // Originating command read preference
+        "attr.originatingCommand.$readPreference", "attr.originatingCommand.$readPreference.mode"
+    );
+
     /**
      * Redacts sensitive values in a log message while preserving field names and structure
      */
@@ -74,12 +186,200 @@ public class LogRedactionUtil {
         
         try {
             JSONObject jo = new JSONObject(logMessage);
-            JSONObject redacted = redactObject(jo);
+            JSONObject redacted = redactObjectWithExplicitPaths(jo, "");
             return redacted.toString();
         } catch (Exception e) {
             // If redaction fails, return original message
             return logMessage;
         }
+    }
+
+    /**
+     * Path-based redaction using explicit whitelist - much more secure
+     */
+    private static JSONObject redactObjectWithExplicitPaths(JSONObject obj, String currentPath) throws JSONException {
+        JSONObject redacted = new JSONObject();
+        
+        Iterator<String> keys = obj.keys();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            Object value = obj.get(key);
+            String fieldPath = currentPath.isEmpty() ? key : currentPath + "." + key;
+            
+            if (PRESERVE_PATHS.contains(fieldPath)) {
+                // This exact path should be preserved - but may need hostname redaction
+                if (value instanceof String && fieldPath.endsWith(".host")) {
+                    // Debug: System.out.println("Redacting host field: " + fieldPath + " = " + value);
+                    redacted.put(key, redactPreservedHostname((String) value));
+                } else if (value instanceof JSONObject) {
+                    // For preserved object paths, still need to process nested fields
+                    redacted.put(key, redactObjectWithExplicitPaths((JSONObject) value, fieldPath));
+                } else if (value instanceof JSONArray) {
+                    // For preserved array paths, still need to process nested fields
+                    redacted.put(key, redactArrayWithExplicitPaths((JSONArray) value, fieldPath));
+                } else {
+                    // Preserve other values as-is
+                    redacted.put(key, value);
+                }
+            } else if (isMongoDBSpecialObject(key)) {
+                // MongoDB objects should be preserved even in query contexts
+                redacted.put(key, value);
+            } else {
+                // Default: redact the value but continue processing structure
+                redacted.put(key, redactValueWithExplicitPaths(value, fieldPath));
+            }
+        }
+        
+        return redacted;
+    }
+
+    /**
+     * Redact values using explicit path approach
+     */
+    private static Object redactValueWithExplicitPaths(Object value, String currentPath) throws JSONException {
+        if (value == null || value == JSONObject.NULL) {
+            return value;
+        }
+        
+        if (value instanceof JSONObject) {
+            JSONObject obj = (JSONObject) value;
+            
+            // Handle $regularExpression - always redact pattern in user queries
+            if (obj.has("$regularExpression")) {
+                return redactRegularExpressionInQuery(obj);
+            }
+            
+            return redactObjectWithExplicitPaths(obj, currentPath);
+        }
+        
+        if (value instanceof JSONArray) {
+            return redactArrayWithExplicitPaths((JSONArray) value, currentPath);
+        }
+        
+        if (value instanceof String) {
+            return redactAtlasHostname((String) value);  // Smart redaction for Atlas hostnames
+        }
+        
+        if (value instanceof Number) {
+            return redactNumber(value);
+        }
+        
+        if (value instanceof Boolean) {
+            return value;
+        }
+        
+        return "xxx";
+    }
+
+    /**
+     * Redact arrays using explicit path approach
+     */
+    private static JSONArray redactArrayWithExplicitPaths(JSONArray arr, String currentPath) throws JSONException {
+        JSONArray redacted = new JSONArray();
+        
+        for (int i = 0; i < arr.length(); i++) {
+            Object value = arr.get(i);
+            String arrayPath = currentPath + "[" + i + "]";
+            redacted.put(redactValueWithExplicitPaths(value, arrayPath));
+        }
+        
+        return redacted;
+    }
+
+    /**
+     * Check if field is a MongoDB special object or operator
+     */
+    private static boolean isMongoDBSpecialObject(String key) {
+        return key.equals("$date") || key.equals("$timestamp") || 
+               key.equals("$oid") || key.equals("$uuid") ||
+               key.equals("$skip") || key.equals("$limit") ||
+               key.equals("distanceField") || key.equals("maxDistance") ||
+               key.equals("near") || key.equals("spherical") ||
+               key.equals("distanceMultiplier");
+    }
+
+    /**
+     * Smart regex redaction that preserves regex operators but redacts user data
+     */
+    private static JSONObject redactRegularExpressionInQuery(JSONObject regexObj) throws JSONException {
+        JSONObject redacted = new JSONObject();
+        redacted.put("$regularExpression", new JSONObject());
+        
+        JSONObject regex = regexObj.getJSONObject("$regularExpression");
+        JSONObject redactedRegex = redacted.getJSONObject("$regularExpression");
+        
+        if (regex.has("pattern")) {
+            String originalPattern = regex.getString("pattern");
+            // Preserve regex operators but redact user content
+            redactedRegex.put("pattern", redactRegexPatternSmart(originalPattern));
+        }
+        
+        if (regex.has("options")) {
+            redactedRegex.put("options", regex.get("options"));
+        }
+        
+        return redacted;
+    }
+    
+    /**
+     * Smart Atlas hostname redaction that preserves structure while redacting cluster IDs
+     */
+    private static String redactAtlasHostname(String value) {
+        if (value == null || value.isEmpty()) {
+            return value;
+        }
+        
+        // Pattern for MongoDB Atlas hostnames: atlas-[CLUSTER_ID]-shard-XX-XX.[REGION_ID].mongodb.net
+        if (value.contains("atlas-") && value.contains(".mongodb.net")) {
+            // Replace cluster ID (between atlas- and -shard) and region ID (before .mongodb.net)
+            // Handle optional port number at the end
+            String redacted = value.replaceAll("atlas-([a-zA-Z0-9]+)(-shard-[0-9]+-[0-9]+\\.)([a-zA-Z0-9-]+)(\\.mongodb\\.net)(:[0-9]+)?", 
+                                             "atlas-xxx$2xxx$4$5");
+            return redacted;
+        }
+        
+        // For other strings, just return "xxx"
+        return "xxx";
+    }
+    
+    /**
+     * Redact hostnames in preserved paths - only redact Atlas cluster IDs
+     */
+    private static String redactPreservedHostname(String value) {
+        if (value == null || value.isEmpty()) {
+            return value;
+        }
+        
+        // Pattern for MongoDB Atlas hostnames: atlas-[CLUSTER_ID]-shard-XX-XX.[REGION_ID].mongodb.net
+        if (value.contains("atlas-") && value.contains(".mongodb.net")) {
+            // Replace cluster ID (between atlas- and -shard) and region ID (before .mongodb.net)
+            // Handle optional port number at the end
+            String redacted = value.replaceAll("atlas-([a-zA-Z0-9]+)(-shard-[0-9]+-[0-9]+\\.)([a-zA-Z0-9-]+)(\\.mongodb\\.net)(:[0-9]+)?", 
+                                             "atlas-xxx$2xxx$4$5");
+            return redacted;
+        }
+        
+        // For non-Atlas hostnames in preserved paths, keep them as-is
+        return value;
+    }
+    
+    /**
+     * Smart regex pattern redaction that preserves regex operators
+     */
+    private static String redactRegexPatternSmart(String pattern) {
+        if (pattern == null || pattern.isEmpty()) {
+            return pattern;
+        }
+        
+        // For complex patterns with multiple user data segments, just use "xxx"
+        // This avoids the "xxx xxx xxx" issue while still preserving regex structure
+        if (pattern.contains(" ") || pattern.length() > 20) {
+            return "xxx";
+        }
+        
+        // For simple patterns, preserve regex special characters but redact alphanumeric content
+        Pattern userDataPattern = Pattern.compile("[a-zA-Z0-9_\\-/]+");
+        return userDataPattern.matcher(pattern).replaceAll("xxx");
     }
     
     /**
@@ -121,7 +421,7 @@ public class LogRedactionUtil {
         }
         
         try {
-            JSONObject sanitized = sanitizeObject(filter);
+            JSONObject sanitized = redactObjectWithExplicitPaths(filter, "");
             return sanitized.toString();
         } catch (Exception e) {
             return "{\"sanitization_error\": \"xxx\"}";
@@ -134,25 +434,40 @@ public class LogRedactionUtil {
     }
     
     private static JSONObject redactObject(JSONObject obj, boolean isInQueryContext) throws JSONException {
+        return redactObject(obj, isInQueryContext, false);
+    }
+    
+    private static JSONObject redactObject(JSONObject obj, boolean isInQueryContext, boolean isInPreservedContext) throws JSONException {
+        return redactObjectWithPath(obj, isInQueryContext, isInPreservedContext, "");
+    }
+    
+    private static JSONObject redactObjectWithPath(JSONObject obj, boolean isInQueryContext, boolean isInPreservedContext, String path) throws JSONException {
         JSONObject redacted = new JSONObject();
         
         Iterator<String> keys = obj.keys();
         while (keys.hasNext()) {
             String key = keys.next();
             Object value = obj.get(key);
+            String currentPath = path.isEmpty() ? key : path + "." + key;
             
-            if (!isInQueryContext && PRESERVE_FIELDS.contains(key) && !key.equals("attr")) {
-                // Preserve these fields completely (only at top level), except attr which needs processing
-                redacted.put(key, value);
+            if (isInPreservedContext || isSystemFieldPath(currentPath)) {
+                // Preserve system fields completely, including nested content
+                if (value instanceof JSONObject) {
+                    redacted.put(key, redactObjectWithPath((JSONObject) value, isInQueryContext, true, currentPath));
+                } else if (value instanceof JSONArray) {
+                    redacted.put(key, redactArrayWithPath((JSONArray) value, isInQueryContext, true, currentPath));
+                } else {
+                    redacted.put(key, value);
+                }
             } else if (isQueryField(key)) {
                 // For query fields, redact values but preserve structure
-                redacted.put(key, redactValue(value, true));
-            } else if (isInQueryContext) {
-                // We're inside a query context, redact all values
-                redacted.put(key, redactValue(value, true));
+                redacted.put(key, redactValueWithPath(value, true, currentPath));
+            } else if (isInQueryContext && !isAlwaysPreservedInQuery(key)) {
+                // We're inside a query context, redact all values except always preserved fields
+                redacted.put(key, redactValueWithPath(value, true, currentPath));
             } else {
                 // Redact the value but keep the field
-                redacted.put(key, redactValue(value, false));
+                redacted.put(key, redactValueWithPath(value, false, currentPath));
             }
         }
         
@@ -162,6 +477,7 @@ public class LogRedactionUtil {
     // Check if a field contains query data that should be redacted
     private static boolean isQueryField(String fieldName) {
         return fieldName.equals("filter") || 
+               fieldName.equals("query") || 
                fieldName.equals("command") || 
                fieldName.equals("find") || 
                fieldName.equals("aggregate") || 
@@ -172,11 +488,66 @@ public class LogRedactionUtil {
                fieldName.startsWith("$");
     }
     
+    // Check if a path represents a MongoDB system field that should always be preserved
+    private static boolean isSystemFieldPath(String path) {
+        // Top-level MongoDB system fields
+        if (PRESERVE_FIELDS.contains(path)) {
+            return true;
+        }
+        
+        // System field paths within $client, readConcern, etc.
+        if (path.startsWith("$client.") ||
+            path.startsWith("readConcern.") ||
+            path.startsWith("$clusterTime.") ||
+            path.startsWith("$timestamp.") ||
+            path.startsWith("shardVersion.") ||
+            path.startsWith("storage.") ||
+            path.equals("attr")) {
+            return true;
+        }
+        
+        // MongoDB date/time objects
+        if (path.endsWith(".$date") ||
+            path.endsWith(".$timestamp") ||
+            path.endsWith(".$oid") ||
+            path.endsWith(".$uuid")) {
+            return true;
+        }
+        
+        // Specific system field paths that should be preserved
+        if (path.equals("ctx") || // MongoDB context (thread/connection)
+            path.equals("attr.type") || // Command type
+            // Client system fields
+            (path.startsWith("attr.command.$client.") && 
+             (path.endsWith(".version") || path.endsWith(".name") || path.endsWith(".type") || 
+              path.endsWith(".architecture") || path.endsWith(".application"))) ||
+            // Direct $client fields (when $client is at attr level)
+            (path.startsWith("attr.$client.") && 
+             (path.endsWith(".version") || path.endsWith(".name") || path.endsWith(".type") || 
+              path.endsWith(".architecture") || path.endsWith(".application")))) {
+            return true;
+        }
+        
+        return false;
+    }
+    
+    // Fields that should always be preserved even within query contexts
+    private static boolean isAlwaysPreservedInQuery(String key) {
+        return key.equals("$date") || 
+               key.equals("$timestamp") || 
+               key.equals("$oid") ||
+               key.equals("$uuid");
+    }
+    
     private static Object redactValue(Object value) throws JSONException {
         return redactValue(value, false);
     }
     
     private static Object redactValue(Object value, boolean isInQueryContext) throws JSONException {
+        return redactValueWithPath(value, isInQueryContext, "");
+    }
+    
+    private static Object redactValueWithPath(Object value, boolean isInQueryContext, String path) throws JSONException {
         if (value == null || value == JSONObject.NULL) {
             return value;
         }
@@ -186,14 +557,14 @@ public class LogRedactionUtil {
             
             // Special handling for $regularExpression
             if (obj.has("$regularExpression")) {
-                return redactRegularExpression(obj);
+                return redactRegularExpression(obj, isInQueryContext);
             }
             
-            return redactObject(obj, isInQueryContext);
+            return redactObjectWithPath(obj, isInQueryContext, false, path);
         }
         
         if (value instanceof JSONArray) {
-            return redactArray((JSONArray) value, isInQueryContext);
+            return redactArrayWithPath((JSONArray) value, isInQueryContext, false, path);
         }
         
         if (value instanceof String) {
@@ -216,17 +587,41 @@ public class LogRedactionUtil {
     }
     
     private static JSONArray redactArray(JSONArray arr, boolean isInQueryContext) throws JSONException {
+        return redactArray(arr, isInQueryContext, false);
+    }
+    
+    private static JSONArray redactArray(JSONArray arr, boolean isInQueryContext, boolean isInPreservedContext) throws JSONException {
+        return redactArrayWithPath(arr, isInQueryContext, isInPreservedContext, "");
+    }
+    
+    private static JSONArray redactArrayWithPath(JSONArray arr, boolean isInQueryContext, boolean isInPreservedContext, String path) throws JSONException {
         JSONArray redacted = new JSONArray();
         
         for (int i = 0; i < arr.length(); i++) {
             Object value = arr.get(i);
-            redacted.put(redactValue(value, isInQueryContext));
+            String currentPath = path + "[" + i + "]";
+            
+            if (isInPreservedContext) {
+                if (value instanceof JSONObject) {
+                    redacted.put(redactObjectWithPath((JSONObject) value, isInQueryContext, true, currentPath));
+                } else if (value instanceof JSONArray) {
+                    redacted.put(redactArrayWithPath((JSONArray) value, isInQueryContext, true, currentPath));
+                } else {
+                    redacted.put(value);
+                }
+            } else {
+                redacted.put(redactValueWithPath(value, isInQueryContext, currentPath));
+            }
         }
         
         return redacted;
     }
     
     private static JSONObject redactRegularExpression(JSONObject regexObj) throws JSONException {
+        return redactRegularExpression(regexObj, false);
+    }
+    
+    private static JSONObject redactRegularExpression(JSONObject regexObj, boolean isInQueryContext) throws JSONException {
         JSONObject redacted = new JSONObject();
         redacted.put("$regularExpression", new JSONObject());
         
@@ -235,7 +630,13 @@ public class LogRedactionUtil {
         
         if (regex.has("pattern")) {
             String pattern = regex.getString("pattern");
-            redactedRegex.put("pattern", redactRegexPattern(pattern));
+            if (isInQueryContext) {
+                // In query contexts, redact the entire pattern content as user data
+                redactedRegex.put("pattern", "xxx");
+            } else {
+                // In system contexts, preserve regex structure but redact non-regex chars
+                redactedRegex.put("pattern", redactRegexPattern(pattern));
+            }
         }
         
         if (regex.has("options")) {
@@ -265,6 +666,14 @@ public class LogRedactionUtil {
     }
     
     private static Object redactNumber(Object value) {
+        // Preserve sort direction values (-1, 1)
+        if (value instanceof Integer) {
+            int intVal = (Integer) value;
+            if (intVal == 1 || intVal == -1) {
+                return value; // Preserve sort order
+            }
+        }
+        
         if (value instanceof Integer || value instanceof Long) {
             String numStr = value.toString();
             String redacted = DIGITS_PATTERN.matcher(numStr).replaceAll("9");

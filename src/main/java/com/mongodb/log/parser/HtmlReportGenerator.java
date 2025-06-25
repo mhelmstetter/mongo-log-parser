@@ -10,6 +10,8 @@ import java.util.Map;
 
 import com.mongodb.log.parser.accumulator.Accumulator;
 import com.mongodb.log.parser.accumulator.ErrorCodeAccumulator;
+import com.mongodb.log.parser.accumulator.IndexStatsAccumulator;
+import com.mongodb.log.parser.accumulator.IndexStatsEntry;
 import com.mongodb.log.parser.accumulator.PlanCacheAccumulator;
 import com.mongodb.log.parser.accumulator.PlanCacheAccumulatorEntry;
 import com.mongodb.log.parser.accumulator.PlanCacheKey;
@@ -29,7 +31,8 @@ public class HtmlReportGenerator {
 	        PlanCacheAccumulator planCacheAccumulator,
 	        QueryHashAccumulator queryHashAccumulator,
 	        ErrorCodeAccumulator errorCodeAccumulator,
-	        TransactionAccumulator transactionAccumulator,  // Add transaction accumulator
+	        TransactionAccumulator transactionAccumulator,
+	        IndexStatsAccumulator indexStatsAccumulator,
 	        Map<String, java.util.concurrent.atomic.AtomicLong> operationTypeStats, boolean redactQueries,
 	        String earliestTimestamp, String latestTimestamp) throws IOException {
 
@@ -37,7 +40,7 @@ public class HtmlReportGenerator {
 	        writeHtmlHeader(writer);
 	        writeNavigationHeader(writer, accumulator, ttlAccumulator, planCacheAccumulator, 
 	                             queryHashAccumulator, errorCodeAccumulator, transactionAccumulator, 
-	                             operationTypeStats, earliestTimestamp, latestTimestamp);
+	                             indexStatsAccumulator, operationTypeStats, earliestTimestamp, latestTimestamp);
 	        writeMainOperationsTable(writer, accumulator, redactQueries);
 	        writeTtlOperationsTable(writer, ttlAccumulator);
 	        writeOperationStatsTable(writer, operationTypeStats);
@@ -49,6 +52,10 @@ public class HtmlReportGenerator {
 	        
 	        if (transactionAccumulator != null && transactionAccumulator.hasTransactions()) {
 	            writeTransactionTable(writer, transactionAccumulator);
+	        }
+
+	        if (indexStatsAccumulator != null && indexStatsAccumulator.hasIndexStats()) {
+	            writeIndexStatsTable(writer, indexStatsAccumulator, redactQueries);
 	        }
 
 	        writeHtmlFooter(writer);
@@ -139,7 +146,7 @@ public class HtmlReportGenerator {
 	private static void writeNavigationHeader(PrintWriter writer, Accumulator accumulator, 
 	        Accumulator ttlAccumulator, PlanCacheAccumulator planCacheAccumulator,
 	        QueryHashAccumulator queryHashAccumulator, ErrorCodeAccumulator errorCodeAccumulator,
-	        TransactionAccumulator transactionAccumulator,
+	        TransactionAccumulator transactionAccumulator, IndexStatsAccumulator indexStatsAccumulator,
 	        Map<String, java.util.concurrent.atomic.AtomicLong> operationTypeStats,
 	        String earliestTimestamp, String latestTimestamp) {
 	    
@@ -176,6 +183,11 @@ public class HtmlReportGenerator {
 	    // Transaction Analysis
 	    if (transactionAccumulator != null && transactionAccumulator.hasTransactions()) {
 	        writer.println("                    <a href=\"#transactions\" class=\"nav-link\">Transaction Analysis</a>");
+	    }
+	    
+	    // Index Usage Statistics (last)
+	    if (indexStatsAccumulator != null && indexStatsAccumulator.hasIndexStats()) {
+	        writer.println("                    <a href=\"#index-stats\" class=\"nav-link\">Index Usage Statistics</a>");
 	    }
 	    
 	    writer.println("                </div>");
@@ -877,6 +889,102 @@ public class HtmlReportGenerator {
 	                } else {
 	                    writer.println("                        <td>N/A</td>");
 	                }
+	                writer.println("                    </tr>");
+	            });
+
+	    writer.println("                </tbody>");
+	    writer.println("            </table>");
+	    writer.println("        </div>");
+	}
+
+	private static void writeIndexStatsTable(PrintWriter writer, IndexStatsAccumulator indexStatsAccumulator, boolean redactQueries) {
+	    if (indexStatsAccumulator == null || !indexStatsAccumulator.hasIndexStats()) {
+	        return;
+	    }
+
+	    writer.println("        <h2 id=\"index-stats\">Index Usage Statistics</h2>");
+
+	    var entries = indexStatsAccumulator.getIndexStatsEntries().values();
+	    long totalOperations = indexStatsAccumulator.getTotalOperations();
+	    long collectionScanOps = indexStatsAccumulator.getCollectionScanOperations();
+
+	    writer.println("        <div class=\"summary\">");
+	    writer.println("            <h3>Index Usage Summary</h3>");
+	    writer.println("            <div class=\"summary-grid\">");
+	    writer.println("                <div class=\"summary-item\">");
+	    writer.println("                    <div class=\"summary-label\">Total Operations</div>");
+	    writer.println("                    <div class=\"summary-value\">" + NUMBER_FORMAT.format(totalOperations) + "</div>");
+	    writer.println("                </div>");
+	    writer.println("                <div class=\"summary-item\">");
+	    writer.println("                    <div class=\"summary-label\">Unique Index Usage Patterns</div>");
+	    writer.println("                    <div class=\"summary-value\">" + NUMBER_FORMAT.format(indexStatsAccumulator.getUniqueIndexUsagePatterns()) + "</div>");
+	    writer.println("                </div>");
+	    writer.println("                <div class=\"summary-item\">");
+	    writer.println("                    <div class=\"summary-label\">Collection Scans</div>");
+	    writer.println("                    <div class=\"summary-value\">" + NUMBER_FORMAT.format(collectionScanOps)
+	            + " (" + String.format("%.1f%%", (collectionScanOps * 100.0) / Math.max(totalOperations, 1)) + ")</div>");
+	    writer.println("                </div>");
+	    writer.println("            </div>");
+	    writer.println("        </div>");
+
+	    writer.println("        <div class=\"table-container\">");
+	    writer.println("            <div class=\"controls\">");
+	    writer.println("                <input type=\"text\" id=\"indexStatsFilter\" class=\"filter-input\" placeholder=\"Filter by namespace, plan summary...\">");
+	    writer.println("                <button class=\"clear-btn\" onclick=\"clearFilter('indexStatsFilter', 'indexStatsTable')\">Clear Filter</button>");
+	    writer.println("            </div>");
+	    writer.println("            <table id=\"indexStatsTable\">");
+	    writer.println("                <thead>");
+	    writer.println("                    <tr>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('indexStatsTable', 0, 'string')\">Namespace</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('indexStatsTable', 1, 'string')\">Plan Summary</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('indexStatsTable', 2, 'number')\">Count</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('indexStatsTable', 3, 'number')\">Min (ms)</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('indexStatsTable', 4, 'number')\">Max (ms)</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('indexStatsTable', 5, 'number')\">Avg (ms)</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('indexStatsTable', 6, 'number')\">P95 (ms)</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('indexStatsTable', 7, 'number')\">Total (sec)</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('indexStatsTable', 8, 'number')\">Avg Keys Ex</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('indexStatsTable', 9, 'number')\">Avg Docs Ex</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('indexStatsTable', 10, 'number')\">Avg Return</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('indexStatsTable', 11, 'number')\">Ex/Ret Ratio</th>");
+	    writer.println("                    </tr>");
+	    writer.println("                </thead>");
+	    writer.println("                <tbody>");
+
+	    entries.stream().sorted(Comparator.comparingLong(IndexStatsEntry::getCount).reversed())
+	            .forEach(entry -> {
+	                String rowClass = entry.isCollectionScan() ? "collscan" : "";
+	                
+	                writer.println("                    <tr class=\"" + rowClass + "\">");
+	                writer.println("                        <td class=\"truncated\" title=\""
+	                        + escapeHtml(entry.getNamespace().toString()) + "\">"
+	                        + escapeHtml(truncate(entry.getNamespace().toString(), 50)) + "</td>");
+	                
+	                String planSummary = entry.getPlanSummary();
+	                String compressedPlanSummary = compressPlanSummary(planSummary);
+	                writer.println("                        <td class=\"wrapped\" title=\""
+	                        + escapeHtml(planSummary) + "\">" + escapeHtml(compressedPlanSummary) + "</td>");
+	                
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(entry.getCount()) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(entry.getMinDurationMs()) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(entry.getMaxDurationMs()) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(entry.getAvgDurationMs()) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + String.format("%.0f", entry.getPercentile95()) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(entry.getTotalDurationSec()) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(entry.getAvgKeysExamined()) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(entry.getAvgDocsExamined()) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(entry.getAvgReturned()) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(entry.getExaminedToReturnedRatio()) + "</td>");
 	                writer.println("                    </tr>");
 	            });
 

@@ -12,6 +12,7 @@ import org.json.JSONObject;
 
 import com.mongodb.log.parser.accumulator.Accumulator;
 import com.mongodb.log.parser.accumulator.ErrorCodeAccumulator;
+import com.mongodb.log.parser.accumulator.IndexStatsAccumulator;
 import com.mongodb.log.parser.accumulator.PlanCacheAccumulator;
 import com.mongodb.log.parser.accumulator.QueryHashAccumulator;
 import com.mongodb.log.parser.accumulator.TransactionAccumulator;
@@ -23,6 +24,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 	private final QueryHashAccumulator queryHashAccumulator;
 	private final ErrorCodeAccumulator errorCodeAccumulator;
 	private final TransactionAccumulator transactionAccumulator;
+	private final IndexStatsAccumulator indexStatsAccumulator;
 	private final Map<String, AtomicLong> operationTypeStats;
 	private final boolean debug;
 	private final Set<String> namespaceFilters;
@@ -34,6 +36,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 			PlanCacheAccumulator planCacheAccumulator, QueryHashAccumulator queryHashAccumulator,
 			ErrorCodeAccumulator errorCodeAccumulator,
 			TransactionAccumulator transactionAccumulator,
+			IndexStatsAccumulator indexStatsAccumulator,
 			Map<String, AtomicLong> operationTypeStats, boolean debug,
 			Set<String> namespaceFilters, AtomicLong totalFilteredByNamespace, boolean redactQueries, LogParser logParser) {
 		this.linesChunk = linesChunk;
@@ -42,6 +45,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 		this.queryHashAccumulator = queryHashAccumulator;
 		this.errorCodeAccumulator = errorCodeAccumulator;
 		this.transactionAccumulator = transactionAccumulator;
+		this.indexStatsAccumulator = indexStatsAccumulator;
 		this.operationTypeStats = operationTypeStats;
 		this.debug = debug;
 		this.namespaceFilters = namespaceFilters;
@@ -132,6 +136,13 @@ class LogParserTask implements Callable<ProcessingStats> {
 			            }
 			        }
 
+					// Add to index stats accumulator
+					if (indexStatsAccumulator != null) {
+						synchronized (indexStatsAccumulator) {
+							indexStatsAccumulator.accumulate(slowQuery);
+						}
+					}
+
 					localFoundOps++;
 					incrementOperationStat("index_operation");
 					continue;
@@ -192,6 +203,13 @@ class LogParserTask implements Callable<ProcessingStats> {
 					    }
 					}
 
+					// Add to index stats accumulator
+					if (indexStatsAccumulator != null) {
+						synchronized (indexStatsAccumulator) {
+							indexStatsAccumulator.accumulate(slowQuery);
+						}
+					}
+
 					// Add to plan cache accumulator if enabled and has plan cache key
 					if (planCacheAccumulator != null && slowQuery.planCacheKey != null) {
 						synchronized (planCacheAccumulator) {
@@ -227,6 +245,13 @@ class LogParserTask implements Callable<ProcessingStats> {
 					if (queryHashAccumulator != null) {
 						synchronized (queryHashAccumulator) {
 							queryHashAccumulator.accumulate(slowQuery, currentLine);
+						}
+					}
+
+					// Add to index stats accumulator
+					if (indexStatsAccumulator != null) {
+						synchronized (indexStatsAccumulator) {
+							indexStatsAccumulator.accumulate(slowQuery);
 						}
 					}
 
