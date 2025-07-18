@@ -19,6 +19,8 @@ import com.mongodb.log.parser.accumulator.QueryHashAccumulator;
 import com.mongodb.log.parser.accumulator.QueryHashAccumulatorEntry;
 import com.mongodb.log.parser.accumulator.QueryHashKey;
 import com.mongodb.log.parser.accumulator.TransactionAccumulator;
+import com.mongodb.log.parser.model.MainOperationEntry;
+import com.mongodb.log.parser.service.MainOperationService;
 
 /**
  * Generates interactive HTML reports with sortable and filterable tables
@@ -76,7 +78,7 @@ public class HtmlReportGenerator {
 		writer.println("        h1 { color: #001E2B; text-align: center; margin-bottom: 10px; }");
 		writer.println(
 				"        h2 { color: #001E2B; margin-top: 40px; margin-bottom: 20px; border-bottom: 2px solid #00684A; padding-bottom: 5px; scroll-margin-top: 70px; }");
-		writer.println("        .table-container { margin-bottom: 40px; overflow-x: auto; }");
+		writer.println("        .table-container { margin-bottom: 40px; overflow-x: auto; position: relative; }");
 		writer.println("        .controls { margin-bottom: 15px; }");
 		writer.println(
 				"        .filter-input { padding: 8px; border: 1px solid #b8c4c2; border-radius: 4px; margin-right: 10px; width: 200px; }");
@@ -92,11 +94,13 @@ public class HtmlReportGenerator {
 		writer.println("        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; }");
 		writer.println("        th, td { border: 1px solid #b8c4c2; padding: 8px; text-align: left; }");
 		writer.println(
-				"        th { background-color: #00684A; color: white; font-weight: bold; cursor: pointer; user-select: none; position: relative; }");
+				"        th { background-color: #00684A; color: white; font-weight: bold; cursor: pointer; user-select: none; position: sticky; top: 60px; z-index: 100; }");
 		writer.println("        th:hover { background-color: #001E2B; }");
 		writer.println("        th.sortable::after { content: ' ↕'; font-size: 12px; opacity: 0.5; }");
 		writer.println("        th.sort-asc::after { content: ' ↑'; opacity: 1; }");
 		writer.println("        th.sort-desc::after { content: ' ↓'; opacity: 1; }");
+		writer.println("        tbody { display: table-row-group; }");
+		writer.println("        tbody tr:first-child td { padding-top: 12px; }");
 		writer.println("        tr:nth-child(even) { background-color: #f8f9fa; }");
 		writer.println("        tr:hover { background-color: #E9FF99; }");
 		writer.println("        .number { text-align: right; }");
@@ -133,9 +137,15 @@ public class HtmlReportGenerator {
 		writer.println("        .accordion-content.open { display: table-row; }");
 		writer.println("        .accordion-content td { max-width: 0; overflow: hidden; }");
 		writer.println("        .log-sample { background-color: #f8f9fa; padding: 10px; font-family: 'Courier New', monospace; font-size: 12px; word-wrap: break-word; border-left: 4px solid #00684A; max-height: 300px; overflow-y: auto; }");
+		writer.println("        .log-sample.truncated-query { background-color: #ffebee; border-left: 4px solid #d32f2f; }");
+		writer.println("        .truncated-warning { color: #d32f2f; font-weight: bold; margin-bottom: 8px; }");
 		writer.println("        .accordion-toggle { font-size: 12px; opacity: 0.7; margin-right: 8px; display: inline-block; }");
 		writer.println("        .accordion-toggle::before { content: '▶'; }");
 		writer.println("        .accordion-row.open .accordion-toggle::before { content: '▼'; }");
+		writer.println("        .compact-header { font-size: 11px; padding: 4px 8px; max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }");
+		writer.println("        .pretty-print-btn { background-color: #5d6c74; color: white; border: none; border-radius: 3px; padding: 4px 8px; font-size: 11px; cursor: pointer; margin-left: 10px; }");
+		writer.println("        .pretty-print-btn:hover { background-color: #21313C; }");
+		writer.println("        .json-content { white-space: pre-wrap; }");
 		
 		writer.println("    </style>");
 		writer.println("</head>");
@@ -218,11 +228,13 @@ public class HtmlReportGenerator {
 
 		writer.println("        <h2 id=\"main-operations\">Main Operations Analysis</h2>");
 
-		// Calculate summary statistics
-		long totalOperations = accumulator.getAccumulators().values().stream().mapToLong(LogLineAccumulator::getCount)
-				.sum();
-		long totalTimeMs = accumulator.getAccumulators().values().stream()
-				.mapToLong(acc -> acc.getCount() * acc.getAvg()).sum();
+		// Use MVC pattern: Convert to model objects via service
+		java.util.List<MainOperationEntry> operations = MainOperationService.getMainOperationEntries(accumulator);
+		
+		// Calculate summary statistics using model objects
+		long totalOperations = operations.stream().mapToLong(MainOperationEntry::getCount).sum();
+		long totalTimeMs = operations.stream().mapToLong(op -> op.getCount() * op.getAvgMs()).sum();
+		long writeOperations = MainOperationService.getWriteOperations(operations).size();
 
 		writer.println("        <div class=\"summary\">");
 		writer.println("            <h3>Summary</h3>");
@@ -238,9 +250,14 @@ public class HtmlReportGenerator {
 				+ "</div>");
 		writer.println("                </div>");
 		writer.println("                <div class=\"summary-item\">");
-		writer.println("                    <div class=\"summary-label\">Unique Namespaces</div>");
+		writer.println("                    <div class=\"summary-label\">Unique Operations</div>");
 		writer.println(
-				"                    <div class=\"summary-value\">" + accumulator.getAccumulators().size() + "</div>");
+				"                    <div class=\"summary-value\">" + operations.size() + "</div>");
+		writer.println("                </div>");
+		writer.println("                <div class=\"summary-item\">");
+		writer.println("                    <div class=\"summary-label\">Write Operations</div>");
+		writer.println(
+				"                    <div class=\"summary-value\">" + writeOperations + "</div>");
 		writer.println("                </div>");
 		writer.println("            </div>");
 		writer.println("        </div>");
@@ -285,64 +302,74 @@ public class HtmlReportGenerator {
 				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 11, 'number')\">Ex/Ret Ratio</th>");
 		writer.println(
 				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 12, 'number')\">Avg Shards</th>");
+		writer.println(
+				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 13, 'number')\">Avg Read</th>");
+		writer.println(
+				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 14, 'number')\">Max Read</th>");
+		writer.println(
+				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 15, 'number')\">Avg Write</th>");
+		writer.println(
+				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 16, 'number')\">Max Write</th>");
 		writer.println("                    </tr>");
 		writer.println("                </thead>");
 		writer.println("                <tbody>");
 
-		accumulator.getAccumulators().values().stream()
-				.sorted(Comparator.comparingLong(LogLineAccumulator::getCount).reversed()).forEach(acc -> {
-					// The LogLineAccumulator.toString() method uses this format:
-					// String.format("%-65s %-20s %10d %10.1f %10d %10d %10d %10d %10d %10d %10d
-					// %10d %10d",
-					// namespace, operation, count, ...)
-
-					// Get namespace and operation directly from the accumulator instead of parsing toString()
-					String namespace = acc.getNamespace();
-					String operation = acc.getOperation();
-
-					String rowId = "mo-" + Math.abs((namespace + operation).hashCode());
-					writer.println("                    <tr class=\"accordion-row\" onclick=\"toggleAccordion('" + rowId + "')\">");
-					writer.println("                        <td class=\"truncated\" title=\"" + escapeHtml(namespace)
-							+ "\"><span class=\"accordion-toggle\"></span>" + escapeHtml(truncate(namespace, 50)) + "</td>");
-					writer.println("                        <td>" + escapeHtml(operation) + "</td>");
-					writer.println("                        <td class=\"number\">"
-							+ NUMBER_FORMAT.format(acc.getCount()) + "</td>");
-					writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(acc.getMin())
-							+ "</td>");
-					writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(acc.getMax())
-							+ "</td>");
-					writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(acc.getAvg())
-							+ "</td>");
-					writer.println("                        <td class=\"number\">"
-							+ String.format("%.0f", acc.getPercentile95()) + "</td>");
-					writer.println("                        <td class=\"number\">"
-							+ NUMBER_FORMAT.format((acc.getCount() * acc.getAvg()) / 1000) + "</td>");
-					writer.println("                        <td class=\"number\">"
-							+ NUMBER_FORMAT.format(acc.getCount() > 0 ? acc.getTotalDocsExamined() / acc.getCount() : 0)
-							+ "</td>");
-					writer.println("                        <td class=\"number\">"
-							+ NUMBER_FORMAT.format(acc.getAvgDocsExamined()) + "</td>");
-					writer.println("                        <td class=\"number\">"
-							+ NUMBER_FORMAT.format(acc.getAvgReturned()) + "</td>");
-					writer.println("                        <td class=\"number\">"
-							+ NUMBER_FORMAT.format(acc.getScannedReturnRatio()) + "</td>");
-					writer.println("                        <td class=\"number\">"
-							+ NUMBER_FORMAT.format(acc.getAvgShards()) + "</td>");
-					writer.println("                    </tr>");
-					
-					// Add accordion content row for sample log message
-					if (acc.getSampleLogMessage() != null) {
-						String processedLogMessage = LogRedactionUtil.processLogMessage(acc.getSampleLogMessage(), redactQueries);
-						writer.println("                    <tr id=\"" + rowId + "\" class=\"accordion-content\">");
-						writer.println("                        <td colspan=\"13\">");
-						writer.println("                            <div class=\"log-sample\">");
-						writer.println("                                <strong>Slowest Query Log Message:</strong><br>");
-						writer.println("                                " + escapeHtml(processedLogMessage));
-						writer.println("                            </div>");
-						writer.println("                        </td>");
-						writer.println("                    </tr>");
-					}
-				});
+		// Use model objects for rendering (View layer)
+		operations.forEach(op -> {
+			String namespace = op.getNamespace();
+			String operation = op.getOperation();
+			String rowId = "mo-" + Math.abs((namespace + operation).hashCode());
+			String cssClass = op.getCssClass();
+			
+			writer.println("                    <tr class=\"accordion-row " + cssClass + "\" onclick=\"toggleAccordion('" + rowId + "')\">");
+			writer.println("                        <td class=\"truncated\" title=\"" + escapeHtml(namespace)
+					+ "\"><span class=\"accordion-toggle\"></span>" + escapeHtml(truncate(namespace, 50)) + "</td>");
+			writer.println("                        <td>" + escapeHtml(operation) + "</td>");
+			writer.println("                        <td class=\"number\">" + op.getFormattedCount() + "</td>");
+			writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(op.getMinMs()) + "</td>");
+			writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(op.getMaxMs()) + "</td>");
+			writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(op.getAvgMs()) + "</td>");
+			writer.println("                        <td class=\"number\">" + op.getFormattedP95Ms() + "</td>");
+			writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(op.getTotalSec()) + "</td>");
+			writer.println("                        <td class=\"number\">" + op.getFormattedAvgKeysExamined() + "</td>");
+			writer.println("                        <td class=\"number\">" + op.getFormattedAvgDocsExamined() + "</td>");
+			writer.println("                        <td class=\"number\">" + op.getFormattedAvgReturned() + "</td>");
+			writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(op.getExRetRatio()) + "</td>");
+			writer.println("                        <td class=\"number\">" + op.getFormattedAvgShards() + "</td>");
+			writer.print("                        ");
+			writer.println(op.getFormattedAvgBytesReadCell());
+			writer.print("                        ");
+			writer.println(op.getFormattedMaxBytesReadCell());
+			writer.print("                        ");
+			writer.println(op.getFormattedAvgBytesWrittenCell());
+			writer.print("                        ");
+			writer.println(op.getFormattedMaxBytesWrittenCell());
+			writer.println("                    </tr>");
+			
+			// Add accordion content row for sample log message
+			if (op.getSampleLogMessage() != null) {
+				String processedLogMessage = LogRedactionUtil.processLogMessage(op.getSampleLogMessage(), redactQueries);
+				String enhancedLogMessage = LogRedactionUtil.enhanceLogMessageForHtml(processedLogMessage);
+				enhancedLogMessage = escapeHtml(enhancedLogMessage);
+				String querySource = LogRedactionUtil.detectQuerySource(op.getSampleLogMessage());
+				boolean isTruncated = LogRedactionUtil.isLogMessageTruncated(op.getSampleLogMessage());
+				String logCssClass = isTruncated ? "log-sample truncated-query" : "log-sample";
+				writer.println("                    <tr id=\"" + rowId + "\" class=\"accordion-content\">");
+				writer.println("                        <td colspan=\"17\">");
+				writer.println("                            <div class=\"" + logCssClass + "\">");
+				if (isTruncated) {
+					writer.println("                                <div class=\"truncated-warning\">⚠ Query was truncated in MongoDB logs</div>");
+				}
+				String contentId = "log-content-" + rowId;
+				String buttonId = "btn-" + rowId;
+				writer.println("                                <strong>Slowest Query Log Message" + querySource + ":</strong>");
+				writer.println("                                <button class=\"pretty-print-btn\" id=\"" + buttonId + "\" onclick=\"togglePrettyPrint('" + buttonId + "', '" + contentId + "')\">Pretty</button><br>");
+				writer.println("                                <div class=\"json-content\" id=\"" + contentId + "\">" + enhancedLogMessage + "</div>");
+				writer.println("                            </div>");
+				writer.println("                        </td>");
+				writer.println("                    </tr>");
+			}
+		});
 
 		writer.println("                </tbody>");
 		writer.println("            </table>");
@@ -510,13 +537,21 @@ public class HtmlReportGenerator {
 		writer.println(
 				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 13, 'number')\">Avg Shards</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 14, 'string')\">Read Preference</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 14, 'number')\">Avg Read</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 15, 'string')\">Plan Summary</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 15, 'number')\">Max Read</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 16, 'number')\">Avg Plan (ms)</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 16, 'number')\">Avg Write</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 17, 'number')\">Replan %</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 17, 'number')\">Max Write</th>");
+		writer.println(
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 18, 'string')\">Read Preference</th>");
+		writer.println(
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 19, 'string')\">Plan Summary</th>");
+		writer.println(
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 20, 'number')\">Avg Plan (ms)</th>");
+		writer.println(
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 21, 'number')\">Replan %</th>");
 		writer.println("                    </tr>");
 		writer.println("                </thead>");
 		writer.println("                <tbody>");
@@ -557,6 +592,14 @@ public class HtmlReportGenerator {
 							+ NUMBER_FORMAT.format(entry.getScannedReturnRatio()) + "</td>");
 					writer.println("                        <td class=\"number\">"
 							+ NUMBER_FORMAT.format(entry.getAvgShards()) + "</td>");
+					writer.print("                        ");
+					writer.println(entry.getFormattedAvgBytesReadCell());
+					writer.print("                        ");
+					writer.println(entry.getFormattedMaxBytesReadCell());
+					writer.print("                        ");
+					writer.println(entry.getFormattedAvgBytesWrittenCell());
+					writer.print("                        ");
+					writer.println(entry.getFormattedMaxBytesWrittenCell());
 					writer.println("                        <td class=\"truncated\" title=\""
 					        + escapeHtml(entry.getReadPreferenceSummary().replace("<br>", ", ")) + "\">"
 					        + entry.getReadPreferenceSummaryTruncated(30) + "</td>");
@@ -573,14 +616,25 @@ public class HtmlReportGenerator {
 					// Add accordion content row for sample log message
 					if (entry.getSampleLogMessage() != null) {
 						String processedLogMessage = LogRedactionUtil.processLogMessage(entry.getSampleLogMessage(), redactQueries);
+						String enhancedLogMessage = LogRedactionUtil.enhanceLogMessageForHtml(processedLogMessage);
+						enhancedLogMessage = escapeHtml(enhancedLogMessage);
+						String querySource = LogRedactionUtil.detectQuerySource(entry.getSampleLogMessage());
+						boolean isTruncated = LogRedactionUtil.isLogMessageTruncated(entry.getSampleLogMessage());
+						String cssClass = isTruncated ? "log-sample truncated-query" : "log-sample";
 						writer.println("                    <tr id=\"" + rowId + "\" class=\"accordion-content\">");
 						writer.println("                        <td colspan=\"18\">");
-						writer.println("                            <div class=\"log-sample\">");
+						writer.println("                            <div class=\"" + cssClass + "\">");
+						if (isTruncated) {
+							writer.println("                                <div class=\"truncated-warning\">⚠ Query was truncated in MongoDB logs</div>");
+						}
 						writer.println("                                <strong>Query:</strong><br>");
 						writer.println("                                " + escapeHtml(entry.getSanitizedQuery()));
 						writer.println("                                <br><br>");
-						writer.println("                                <strong>Slowest Query Log Message:</strong><br>");
-						writer.println("                                " + escapeHtml(processedLogMessage));
+						String contentId = "log-content-" + rowId;
+						String buttonId = "btn-" + rowId;
+						writer.println("                                <strong>Slowest Query Log Message" + querySource + ":</strong>");
+						writer.println("                                <button class=\"pretty-print-btn\" id=\"" + buttonId + "\" onclick=\"togglePrettyPrint('" + buttonId + "', '" + contentId + "')\">Pretty</button><br>");
+						writer.println("                                <div class=\"json-content\" id=\"" + contentId + "\">" + enhancedLogMessage + "</div>");
 						writer.println("                            </div>");
 						writer.println("                        </td>");
 						writer.println("                    </tr>");
@@ -802,11 +856,22 @@ public class HtmlReportGenerator {
 					// Add accordion content row for sample log message
 					if (entry.getSampleLogMessage() != null) {
 						String processedLogMessage = LogRedactionUtil.processLogMessage(entry.getSampleLogMessage(), redactQueries);
+						String enhancedLogMessage = LogRedactionUtil.enhanceLogMessageForHtml(processedLogMessage);
+						enhancedLogMessage = escapeHtml(enhancedLogMessage);
+						String querySource = LogRedactionUtil.detectQuerySource(entry.getSampleLogMessage());
+						boolean isTruncated = LogRedactionUtil.isLogMessageTruncated(entry.getSampleLogMessage());
+						String cssClass = isTruncated ? "log-sample truncated-query" : "log-sample";
 						writer.println("                    <tr id=\"" + rowId + "\" class=\"accordion-content\">");
-						writer.println("                        <td colspan=\"14\">");
-						writer.println("                            <div class=\"log-sample\">");
-						writer.println("                                <strong>Slowest Query Log Message:</strong><br>");
-						writer.println("                                " + escapeHtml(processedLogMessage));
+						writer.println("                        <td colspan=\"18\">");
+						writer.println("                            <div class=\"" + cssClass + "\">");
+						if (isTruncated) {
+							writer.println("                                <div class=\"truncated-warning\">⚠ Query was truncated in MongoDB logs</div>");
+						}
+						String contentId = "log-content-" + rowId;
+						String buttonId = "btn-" + rowId;
+						writer.println("                                <strong>Slowest Query Log Message" + querySource + ":</strong>");
+						writer.println("                                <button class=\"pretty-print-btn\" id=\"" + buttonId + "\" onclick=\"togglePrettyPrint('" + buttonId + "', '" + contentId + "')\">Pretty</button><br>");
+						writer.println("                                <div class=\"json-content\" id=\"" + contentId + "\">" + enhancedLogMessage + "</div>");
 						writer.println("                            </div>");
 						writer.println("                        </td>");
 						writer.println("                    </tr>");
@@ -1145,8 +1210,22 @@ public class HtmlReportGenerator {
 	    writer.println("            ");
 	    writer.println("            // Sort row pairs based on main row content");
 	    writer.println("            rowPairs.sort((a, b) => {");
-	    writer.println("                let aVal = a.mainRow.cells[column].textContent.trim();");
-	    writer.println("                let bVal = b.mainRow.cells[column].textContent.trim();");
+	    writer.println("                const aCell = a.mainRow.cells[column];");
+	    writer.println("                const bCell = b.mainRow.cells[column];");
+	    writer.println("                ");
+	    writer.println("                // Check for data-sort-value attribute first (for bytes sorting)");
+	    writer.println("                let aVal, bVal;");
+	    writer.println("                if (aCell.hasAttribute('data-sort-value') && bCell.hasAttribute('data-sort-value')) {");
+	    writer.println("                    aVal = parseFloat(aCell.getAttribute('data-sort-value'));");
+	    writer.println("                    bVal = parseFloat(bCell.getAttribute('data-sort-value'));");
+	    writer.println("                    const aValue = isNaN(aVal) ? 0 : aVal;");
+	    writer.println("                    const bValue = isNaN(bVal) ? 0 : bVal;");
+	    writer.println("                    return ascending ? aValue - bValue : bValue - aValue;");
+	    writer.println("                }");
+	    writer.println("                ");
+	    writer.println("                // Fall back to text content");
+	    writer.println("                aVal = aCell.textContent.trim();");
+	    writer.println("                bVal = bCell.textContent.trim();");
 	    writer.println("                ");
 	    writer.println("                if (type === 'number') {");
 	    writer.println("                    // Handle various number formats");
@@ -1303,6 +1382,55 @@ public class HtmlReportGenerator {
 	    writer.println("            accordionRows.forEach(row => row.classList.remove('open'));");
 	    writer.println("            accordionContents.forEach(content => content.classList.remove('open'));");
 	    writer.println("        }");
+	    writer.println("");
+	    writer.println("        // Pretty-print JSON toggle functionality with bolding preservation");
+	    writer.println("        function togglePrettyPrint(buttonId, contentId) {");
+	    writer.println("            const button = document.getElementById(buttonId);");
+	    writer.println("            const content = document.getElementById(contentId);");
+	    writer.println("            const isPretty = button.textContent === 'Compact';");
+	    writer.println("            ");
+	    writer.println("            if (isPretty) {");
+	    writer.println("                // Switch to compact mode");
+	    writer.println("                const prettyHtml = content.innerHTML;");
+	    writer.println("                try {");
+	    writer.println("                    // Remove pretty-print formatting while preserving <strong> tags");
+	    writer.println("                    const compactHtml = prettyHtml.replace(/\\n\\s*/g, '').replace(/\\s*{\\s*/g, '{').replace(/\\s*}\\s*/g, '}').replace(/\\s*,\\s*/g, ',').replace(/\":\\s+/g, '\":');");
+	    writer.println("                    content.innerHTML = compactHtml;");
+	    writer.println("                    button.textContent = 'Pretty';");
+	    writer.println("                } catch (e) {");
+	    writer.println("                    console.error('Error formatting JSON:', e);");
+	    writer.println("                    button.textContent = 'Pretty';");
+	    writer.println("                }");
+	    writer.println("            } else {");
+	    writer.println("                // Switch to pretty mode");
+	    writer.println("                const compactHtml = content.innerHTML;");
+	    writer.println("                try {");
+	    writer.println("                    // Add pretty-print formatting while preserving <strong> tags");
+	    writer.println("                    let prettyHtml = compactHtml;");
+	    writer.println("                    prettyHtml = prettyHtml.replace(/\\{/g, '{\\n  ');");
+	    writer.println("                    prettyHtml = prettyHtml.replace(/\\}/g, '\\n}');");
+	    writer.println("                    prettyHtml = prettyHtml.replace(/,/g, ',\\n  ');");
+	    writer.println("                    prettyHtml = prettyHtml.replace(/\":([^\\s])/g, '\": $1');");
+	    writer.println("                    ");
+	    writer.println("                    // Fix nested objects indentation");
+	    writer.println("                    const lines = prettyHtml.split('\\n');");
+	    writer.println("                    let indentLevel = 0;");
+	    writer.println("                    const indentedLines = lines.map(line => {");
+	    writer.println("                        const trimmed = line.trim();");
+	    writer.println("                        if (trimmed.includes('}')) indentLevel--;");
+	    writer.println("                        const indented = '  '.repeat(Math.max(0, indentLevel)) + trimmed;");
+	    writer.println("                        if (trimmed.includes('{')) indentLevel++;");
+	    writer.println("                        return indented;");
+	    writer.println("                    });");
+	    writer.println("                    ");
+	    writer.println("                    content.innerHTML = indentedLines.join('\\n');");
+	    writer.println("                    button.textContent = 'Compact';");
+	    writer.println("                } catch (e) {");
+	    writer.println("                    console.error('Error formatting JSON:', e);");
+	    writer.println("                    button.textContent = 'Compact';");
+	    writer.println("                }");
+	    writer.println("            }");
+	    writer.println("        }");
 	    writer.println("    </script>");
 	    writer.println("</body>");
 	    writer.println("</html>");
@@ -1311,8 +1439,14 @@ public class HtmlReportGenerator {
 	private static String escapeHtml(String text) {
 		if (text == null)
 			return "";
-		return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'",
-				"&#x27;");
+		
+		// First, escape all HTML characters
+		String escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&#x27;");
+		
+		// Then, restore the <strong> tags we added for bolding
+		escaped = escaped.replace("&lt;strong&gt;", "<strong>").replace("&lt;/strong&gt;", "</strong>");
+		
+		return escaped;
 	}
 
 	private static String truncate(String text, int maxLength) {
@@ -1328,56 +1462,84 @@ public class HtmlReportGenerator {
 			return planSummary;
 		}
 		
-		// Split by comma and look for repeated patterns
-		String[] parts = planSummary.split(", ");
+		// Split by comma, but handle braces properly
+		String[] parts = splitPlanSummary(planSummary);
 		if (parts.length < 3) {
 			return planSummary;
 		}
 		
+		// Count occurrences of each unique plan step
+		Map<String, Integer> planCounts = new java.util.LinkedHashMap<>();
+		for (String part : parts) {
+			String trimmedPart = part.trim();
+			planCounts.put(trimmedPart, planCounts.getOrDefault(trimmedPart, 0) + 1);
+		}
+		
+		// Build compressed representation
 		StringBuilder compressed = new StringBuilder();
-		String lastPart = null;
-		int repeatCount = 1;
 		boolean wasCompressed = false;
 		
-		for (int i = 0; i < parts.length; i++) {
-			String part = parts[i].trim();
+		for (Map.Entry<String, Integer> entry : planCounts.entrySet()) {
+			String planStep = entry.getKey();
+			int count = entry.getValue();
 			
-			if (part.equals(lastPart)) {
-				repeatCount++;
-				wasCompressed = true;
-			} else {
-				// Output the previous part with its count
-				if (lastPart != null) {
-					if (compressed.length() > 0) {
-						compressed.append(", ");
-					}
-					compressed.append(lastPart);
-					if (repeatCount > 1) {
-						compressed.append(" (x").append(repeatCount).append(")");
-					}
-				}
-				lastPart = part;
-				repeatCount = 1;
-			}
-		}
-		
-		// Don't forget the last part
-		if (lastPart != null) {
 			if (compressed.length() > 0) {
-				compressed.append(", ");
+				compressed.append(",<br>");
 			}
-			compressed.append(lastPart);
-			if (repeatCount > 1) {
-				compressed.append(" (x").append(repeatCount).append(")");
+			
+			compressed.append(planStep);
+			if (count > 1) {
+				compressed.append(" (x").append(count).append(")");
+				wasCompressed = true;
 			}
 		}
 		
-		// Add indicator if compressed
+		// Add compression indicator
 		if (wasCompressed) {
 			compressed.append(" ⚡");
 		}
 		
 		return compressed.toString();
+	}
+	
+	private static String[] splitPlanSummary(String planSummary) {
+		java.util.List<String> parts = new java.util.ArrayList<>();
+		StringBuilder current = new StringBuilder();
+		int braceCount = 0;
+		
+		for (int i = 0; i < planSummary.length(); i++) {
+			char c = planSummary.charAt(i);
+			
+			if (c == '{') {
+				braceCount++;
+				current.append(c);
+			} else if (c == '}') {
+				braceCount--;
+				current.append(c);
+			} else if (c == ',' && braceCount == 0) {
+				// We found a comma outside of braces - this is a separator
+				String part = current.toString().trim();
+				if (!part.isEmpty()) {
+					parts.add(part);
+				}
+				current = new StringBuilder();
+				
+				// Skip spaces after comma
+				while (i + 1 < planSummary.length() && planSummary.charAt(i + 1) == ' ') {
+					i++;
+				}
+			} else {
+				current.append(c);
+			}
+		}
+		
+		// Add the last part
+		String part = current.toString().trim();
+		if (!part.isEmpty()) {
+			parts.add(part);
+		}
+		
+		return parts.toArray(new String[0]);
 	}
 	
 	private static String formatTimestampRange(String earliestTimestamp, String latestTimestamp) {

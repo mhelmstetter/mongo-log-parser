@@ -10,6 +10,7 @@ public class SlowQuery {
 	public Long durationMillis = null;
 	public Long reslen = null;
 	public Long bytesRead = null;
+	public Long bytesWritten = null;
 	public String queryHash = null;
 	public String remote = null;
 	public String planCacheKey = null;

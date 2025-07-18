@@ -33,6 +33,7 @@ public class LogRedactionUtil {
         "keysExamined", "docsExamined", "nreturned", "nModified", "nDeleted", "nInserted",
         "executionTimeMillis", "totalTime", "cpuNanos", "reslen",
         "timeReadingMicros", "bytesRead", "limit", "skip",
+        "workingMillis", "maxTimeMS", "remoteOpWaitMillis",
         // Index and plan info
         "indexName", "direction", "stage", "inputStage", "rejectedPlans", "winningPlan",
         // Shard info
@@ -50,6 +51,8 @@ public class LogRedactionUtil {
         "mongos", "host", "client", "driver", "os", "platform",
         // Read concern info
         "readConcern", "provenance", "level",
+        // Write concern info
+        "writeConcern", "w", "j", "wtimeout", "fsync",
         // Storage metrics
         "storage", "data",
         // Sort and query structure  
@@ -63,7 +66,8 @@ public class LogRedactionUtil {
         "advanced", "bypassDocumentValidation", "databaseVersion", "flowControl", 
         "fromMultiPlanner", "let", "maxTimeMSOpOnly", "mayBypassWriteBlocking", 
         "multiKeyPaths", "needTime", "planningTimeMicros", "runtimeConstants",
-        "totalOplogSlotDurationMicros", "waitForWriteConcernDurationMillis", "works"
+        "totalOplogSlotDurationMicros", "waitForWriteConcernDurationMillis", "works",
+        "shardVersion"
     );
     
     // Fields that should preserve text content but may be truncated for trimming
@@ -114,7 +118,14 @@ public class LogRedactionUtil {
         "attr.command.mayBypassWriteBlocking", "attr.command.fromMongos", "attr.command.needsMerge",
         "attr.command.queryFramework", "attr.command.find", "attr.command.aggregate", 
         "attr.command.update", "attr.command.delete", "attr.command.insert", "attr.command.count",
-        "attr.command.collection",
+        "attr.command.collection", "attr.workingMillis", "attr.remoteOpWaitMillis",
+        
+        // Write concern fields
+        "attr.command.writeConcern", "attr.command.writeConcern.w", "attr.command.writeConcern.j", 
+        "attr.command.writeConcern.wtimeout", "attr.command.writeConcern.fsync",
+        "attr.originatingCommand.writeConcern", "attr.originatingCommand.writeConcern.w", 
+        "attr.originatingCommand.writeConcern.j", "attr.originatingCommand.writeConcern.wtimeout", 
+        "attr.originatingCommand.writeConcern.fsync",
         
         // $audit system fields
         "attr.command.$audit", "attr.command.$audit.$impersonatedUser", 
@@ -160,8 +171,8 @@ public class LogRedactionUtil {
         "attr.originatingCommand.$client.platform",
         "attr.originatingCommand.$client.application", "attr.originatingCommand.$client.application.name",
         
-        // Read preference
-        "attr.command.$readPreference", "attr.command.$readPreference.mode",
+        // Read preference - preserve tags field and mode
+        "attr.command.$readPreference", "attr.command.$readPreference.mode", "attr.command.$readPreference.tags",
         
         // Shard version structure
         "attr.command.shardVersion", "attr.command.shardVersion.t", 
@@ -172,8 +183,8 @@ public class LogRedactionUtil {
         // Client operation key structure (but not value)
         "attr.command.clientOperationKey",
         
-        // Originating command read preference
-        "attr.originatingCommand.$readPreference", "attr.originatingCommand.$readPreference.mode"
+        // Originating command read preference - preserve tags field and mode
+        "attr.originatingCommand.$readPreference", "attr.originatingCommand.$readPreference.mode", "attr.originatingCommand.$readPreference.tags"
     );
 
     /**
@@ -377,7 +388,8 @@ public class LogRedactionUtil {
             return "xxx";
         }
         
-        // For simple patterns, preserve regex special characters but redact alphanumeric content
+        // For simple patterns, preserve regex metacharacters but redact alphanumeric content
+        // Regex metacharacters: ^ $ . * + ? ( ) [ ] { } | \
         Pattern userDataPattern = Pattern.compile("[a-zA-Z0-9_\\-/]+");
         return userDataPattern.matcher(pattern).replaceAll("xxx");
     }
@@ -406,6 +418,153 @@ public class LogRedactionUtil {
             processed = redactLogMessage(processed, true);
         }
         return processed;
+    }
+    
+    /**
+     * Check if a log message indicates truncation
+     */
+    public static boolean isLogMessageTruncated(String logMessage) {
+        if (logMessage == null || logMessage.isEmpty()) {
+            return false;
+        }
+        
+        try {
+            JSONObject jo = new JSONObject(logMessage);
+            return hasNestedTruncationField(jo);
+        } catch (Exception e) {
+            // If parsing fails, check for simple string pattern
+            return logMessage.contains("\"truncated\"") && logMessage.contains("\"errMsg\"");
+        }
+    }
+    
+    /**
+     * Enhance log message for HTML display by bolding specific fields
+     */
+    public static String enhanceLogMessageForHtml(String logMessage) {
+        if (logMessage == null || logMessage.isEmpty()) {
+            return logMessage;
+        }
+        
+        // Bold important performance and diagnostic fields in the JSON output
+        String enhanced = logMessage;
+        enhanced = enhanced.replaceAll("\"nreturned\":(\\s*)(\\d+)", "<strong>\"nreturned\":</strong>$1<strong>$2</strong>");
+        enhanced = enhanced.replaceAll("\"durationMillis\":(\\s*)(\\d+)", "<strong>\"durationMillis\":</strong>$1<strong>$2</strong>");
+        enhanced = enhanced.replaceAll("\"keysExamined\":(\\s*)(\\d+)", "<strong>\"keysExamined\":</strong>$1<strong>$2</strong>");
+        enhanced = enhanced.replaceAll("\"docsExamined\":(\\s*)(\\d+)", "<strong>\"docsExamined\":</strong>$1<strong>$2</strong>");
+        enhanced = enhanced.replaceAll("\"hasSortStage\":(\\s*)(true|false)", "<strong>\"hasSortStage\":</strong>$1<strong>$2</strong>");
+        
+        // Also bold other important performance indicators
+        enhanced = enhanced.replaceAll("\"nModified\":(\\s*)(\\d+)", "<strong>\"nModified\":</strong>$1<strong>$2</strong>");
+        enhanced = enhanced.replaceAll("\"nDeleted\":(\\s*)(\\d+)", "<strong>\"nDeleted\":</strong>$1<strong>$2</strong>");
+        enhanced = enhanced.replaceAll("\"nInserted\":(\\s*)(\\d+)", "<strong>\"nInserted\":</strong>$1<strong>$2</strong>");
+        enhanced = enhanced.replaceAll("\"executionTimeMillis\":(\\s*)(\\d+)", "<strong>\"executionTimeMillis\":</strong>$1<strong>$2</strong>");
+        enhanced = enhanced.replaceAll("\"totalTime\":(\\s*)(\\d+)", "<strong>\"totalTime\":</strong>$1<strong>$2</strong>");
+        enhanced = enhanced.replaceAll("\"fromPlanCache\":(\\s*)(true|false)", "<strong>\"fromPlanCache\":</strong>$1<strong>$2</strong>");
+        enhanced = enhanced.replaceAll("\"usedDisk\":(\\s*)(true|false)", "<strong>\"usedDisk\":</strong>$1<strong>$2</strong>");
+        enhanced = enhanced.replaceAll("\"cursorExhausted\":(\\s*)(true|false)", "<strong>\"cursorExhausted\":</strong>$1<strong>$2</strong>");
+        enhanced = enhanced.replaceAll("\"numYields\":(\\s*)(\\d+)", "<strong>\"numYields\":</strong>$1<strong>$2</strong>");
+        
+        // Bold storage-related fields
+        enhanced = enhanced.replaceAll("\"bytesRead\":(\\s*)(\\d+)", "<strong>\"bytesRead\":</strong>$1<strong>$2</strong>");
+        enhanced = enhanced.replaceAll("\"timeReadingMicros\":(\\s*)(\\d+)", "<strong>\"timeReadingMicros\":</strong>$1<strong>$2</strong>");
+        
+        return enhanced;
+    }
+    
+    /**
+     * Detect if log message is from mongod or mongos
+     */
+    public static String detectQuerySource(String logMessage) {
+        if (logMessage == null || logMessage.isEmpty()) {
+            return "";
+        }
+        
+        try {
+            JSONObject jo = new JSONObject(logMessage);
+            // Check if there's a mongos field in the client information
+            if (hasNestedMongosField(jo)) {
+                return " (from mongos)";
+            }
+            // Check for other indicators of mongos vs mongod
+            if (logMessage.contains("\"mongos\"") || logMessage.contains("\"fromMongos\"")) {
+                return " (from mongos)";
+            }
+            // Default to mongod if no mongos indicators found
+            return " (from mongod)";
+        } catch (Exception e) {
+            // If parsing fails, try simple string matching
+            if (logMessage.contains("mongos") || logMessage.contains("fromMongos")) {
+                return " (from mongos)";
+            }
+            return " (from mongod)";
+        }
+    }
+    
+    /**
+     * Recursively check for mongos field in JSON object
+     */
+    private static boolean hasNestedMongosField(JSONObject obj) throws JSONException {
+        Iterator<String> keys = obj.keys();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            Object value = obj.get(key);
+            
+            if (key.equals("mongos") || key.equals("fromMongos")) {
+                return true;
+            }
+            
+            if (value instanceof JSONObject) {
+                if (hasNestedMongosField((JSONObject) value)) {
+                    return true;
+                }
+            } else if (value instanceof JSONArray) {
+                JSONArray arr = (JSONArray) value;
+                for (int i = 0; i < arr.length(); i++) {
+                    Object arrValue = arr.get(i);
+                    if (arrValue instanceof JSONObject) {
+                        if (hasNestedMongosField((JSONObject) arrValue)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    }
+    
+    /**
+     * Recursively check for truncation field in JSON object
+     */
+    private static boolean hasNestedTruncationField(JSONObject obj) throws JSONException {
+        Iterator<String> keys = obj.keys();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            Object value = obj.get(key);
+            
+            if (key.equals("truncated") && value instanceof JSONObject) {
+                JSONObject truncatedObj = (JSONObject) value;
+                if (truncatedObj.has("errMsg")) {
+                    return true;
+                }
+            }
+            
+            if (value instanceof JSONObject) {
+                if (hasNestedTruncationField((JSONObject) value)) {
+                    return true;
+                }
+            } else if (value instanceof JSONArray) {
+                JSONArray arr = (JSONArray) value;
+                for (int i = 0; i < arr.length(); i++) {
+                    Object arrValue = arr.get(i);
+                    if (arrValue instanceof JSONObject) {
+                        if (hasNestedTruncationField((JSONObject) arrValue)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        return false;
     }
     
     /**

@@ -92,6 +92,12 @@ public class LogParser implements Callable<Integer> {
     
     @Option(names = {"--redact"}, description = "Enable query redaction/sanitization (default: false)")
     private boolean redactQueries = false;
+    
+    @Option(names = {"--json"}, description = "JSON output file for structured report data")
+    private String jsonOutputFile;
+    
+    @Option(names = {"--json-only"}, description = "Generate only JSON output (skip HTML)")
+    private boolean jsonOnly = false;
 
     // Statistics tracking
     private AtomicLong totalParseErrors = new AtomicLong(0);
@@ -158,7 +164,12 @@ public class LogParser implements Callable<Integer> {
         }
 
         loadConfiguration();
-        read();
+        int successfulFiles = read();
+        
+        if (successfulFiles == 0) {
+            System.err.println("❌ No files were successfully processed. Exiting without generating reports.");
+            return 1;
+        }
 
         System.out.println("✅ Analysis complete!");
         
@@ -217,26 +228,52 @@ public class LogParser implements Callable<Integer> {
             transactionAccumulator.reportCsv(transactionCsvFile);
         }
         
-        // Always generate HTML report (now default)
-        try {
-            System.out.println("📝 Generating HTML report: " + htmlOutputFile);
-            HtmlReportGenerator.generateReport(
-                htmlOutputFile, 
-                accumulator, 
-                ttlAccumulator, 
-                planCacheAccumulator,
-                queryHashAccumulator,
-                errorCodeAccumulator,
-                transactionAccumulator,
-                indexStatsAccumulator,
-                operationTypeStats,
-                redactQueries,
-                earliestTimestamp,
-                latestTimestamp
-            );
-            System.out.println("🎉 HTML report completed: " + htmlOutputFile);
-        } catch (IOException e) {
-            System.err.println("❌ Failed to generate HTML report: " + e.getMessage());
+        // Generate HTML report (unless JSON-only mode)
+        if (!jsonOnly) {
+            try {
+                System.out.println("📝 Generating HTML report: " + htmlOutputFile);
+                HtmlReportGenerator.generateReport(
+                    htmlOutputFile, 
+                    accumulator, 
+                    ttlAccumulator, 
+                    planCacheAccumulator,
+                    queryHashAccumulator,
+                    errorCodeAccumulator,
+                    transactionAccumulator,
+                    indexStatsAccumulator,
+                    operationTypeStats,
+                    redactQueries,
+                    earliestTimestamp,
+                    latestTimestamp
+                );
+                System.out.println("🎉 HTML report completed: " + htmlOutputFile);
+            } catch (IOException e) {
+                System.err.println("❌ Failed to generate HTML report: " + e.getMessage());
+            }
+        }
+        
+        // Generate JSON report if requested
+        if (jsonOutputFile != null) {
+            try {
+                System.out.println("📊 Generating JSON report: " + jsonOutputFile);
+                JsonReportGenerator.generateReport(
+                    jsonOutputFile,
+                    accumulator,
+                    ttlAccumulator,
+                    planCacheAccumulator,
+                    queryHashAccumulator,
+                    errorCodeAccumulator,
+                    transactionAccumulator,
+                    indexStatsAccumulator,
+                    operationTypeStats,
+                    redactQueries,
+                    earliestTimestamp,
+                    latestTimestamp
+                );
+                System.out.println("🎉 JSON report completed: " + jsonOutputFile);
+            } catch (IOException e) {
+                System.err.println("❌ Failed to generate JSON report: " + e.getMessage());
+            }
         }
 
         return 0;
@@ -308,8 +345,9 @@ public class LogParser implements Callable<Integer> {
         return false;
     }
 
-    public void read() throws IOException, ExecutionException, InterruptedException {
+    public int read() throws IOException, ExecutionException, InterruptedException {
         int fileCount = 0;
+        int successfulFiles = 0;
         
         for (String fileName : fileNames) {
             File f = new File(fileName);
@@ -333,11 +371,14 @@ public class LogParser implements Callable<Integer> {
                 }
                 System.out.printf("📄 [%d/%d] %s (%s)\n", fileCount, fileNames.length, shortName, fileSize);
                 read(f);
+                successfulFiles++;
             } catch (Exception e) {
                 System.err.println("❌ Failed to process " + fileName + ": " + e.getMessage());
                 // Continue with next file
             }
         }
+        
+        return successfulFiles;
     }
     
     private String formatFileSize(long bytes) {

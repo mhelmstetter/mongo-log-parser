@@ -27,6 +27,14 @@ public class QueryHashAccumulatorEntry {
     private long bytesRead = 0;
     private long totalShards = 0;
     
+    // Storage bytes tracking with min/max
+    private long totalStorageBytesRead = 0;
+    private long minStorageBytesRead = Long.MAX_VALUE;
+    private long maxStorageBytesRead = Long.MIN_VALUE;
+    private long totalStorageBytesWritten = 0;
+    private long minStorageBytesWritten = Long.MAX_VALUE;
+    private long maxStorageBytesWritten = Long.MIN_VALUE;
+    
     // Planning time tracking
     private long totalPlanningTimeMicros = 0;
     private long planningTimeCount = 0;
@@ -107,6 +115,23 @@ public class QueryHashAccumulatorEntry {
         
         if (slowQuery.bytesRead != null) {
             bytesRead += slowQuery.bytesRead;
+            totalStorageBytesRead += slowQuery.bytesRead;
+            if (slowQuery.bytesRead > maxStorageBytesRead) {
+                maxStorageBytesRead = slowQuery.bytesRead;
+            }
+            if (slowQuery.bytesRead < minStorageBytesRead) {
+                minStorageBytesRead = slowQuery.bytesRead;
+            }
+        }
+        
+        if (slowQuery.bytesWritten != null) {
+            totalStorageBytesWritten += slowQuery.bytesWritten;
+            if (slowQuery.bytesWritten > maxStorageBytesWritten) {
+                maxStorageBytesWritten = slowQuery.bytesWritten;
+            }
+            if (slowQuery.bytesWritten < minStorageBytesWritten) {
+                minStorageBytesWritten = slowQuery.bytesWritten;
+            }
         }
         
         if (slowQuery.nShards != null) {
@@ -207,6 +232,89 @@ public class QueryHashAccumulatorEntry {
         return count > 0 ? totalShards / count : 0;
     }
     
+    public long getAvgBytesRead() {
+        return count > 0 ? totalStorageBytesRead / count : 0;
+    }
+    
+    public long getMaxBytesRead() {
+        return minStorageBytesRead != Long.MAX_VALUE ? maxStorageBytesRead : 0;
+    }
+    
+    public long getAvgBytesWritten() {
+        return count > 0 ? totalStorageBytesWritten / count : 0;
+    }
+    
+    public long getMaxBytesWritten() {
+        return minStorageBytesWritten != Long.MAX_VALUE ? maxStorageBytesWritten : 0;
+    }
+    
+    /**
+     * Returns the formatted average bytes read in human-readable format
+     */
+    public String getFormattedAvgBytesRead() {
+        return formatBytes(getAvgBytesRead());
+    }
+
+    /**
+     * Returns the formatted maximum bytes read in human-readable format
+     */
+    public String getFormattedMaxBytesRead() {
+        return formatBytes(getMaxBytesRead());
+    }
+
+    /**
+     * Returns the formatted average bytes written in human-readable format
+     */
+    public String getFormattedAvgBytesWritten() {
+        return formatBytes(getAvgBytesWritten());
+    }
+
+    /**
+     * Returns the formatted maximum bytes written in human-readable format
+     */
+    public String getFormattedMaxBytesWritten() {
+        return formatBytes(getMaxBytesWritten());
+    }
+
+    /**
+     * Returns HTML table cell with formatted bytes and sort value attribute
+     */
+    public String getFormattedAvgBytesReadCell() {
+        return "<td class=\"number\" data-sort-value=\"" + getAvgBytesRead() + "\">" + formatBytes(getAvgBytesRead()) + "</td>";
+    }
+
+    /**
+     * Returns HTML table cell with formatted bytes and sort value attribute
+     */
+    public String getFormattedMaxBytesReadCell() {
+        return "<td class=\"number\" data-sort-value=\"" + getMaxBytesRead() + "\">" + formatBytes(getMaxBytesRead()) + "</td>";
+    }
+
+    /**
+     * Returns HTML table cell with formatted bytes and sort value attribute
+     */
+    public String getFormattedAvgBytesWrittenCell() {
+        return "<td class=\"number\" data-sort-value=\"" + getAvgBytesWritten() + "\">" + formatBytes(getAvgBytesWritten()) + "</td>";
+    }
+
+    /**
+     * Returns HTML table cell with formatted bytes and sort value attribute
+     */
+    public String getFormattedMaxBytesWrittenCell() {
+        return "<td class=\"number\" data-sort-value=\"" + getMaxBytesWritten() + "\">" + formatBytes(getMaxBytesWritten()) + "</td>";
+    }
+
+    /**
+     * Helper method to format bytes in human-readable format
+     */
+    private String formatBytes(long bytes) {
+        if (bytes == 0) return "0";
+        if (bytes < 1024) return bytes + "B";
+        if (bytes < 1024 * 1024) return String.format("%.1fKB", bytes / 1024.0);
+        if (bytes < 1024 * 1024 * 1024) return String.format("%.1fMB", bytes / (1024.0 * 1024.0));
+        return String.format("%.1fGB", bytes / (1024.0 * 1024.0 * 1024.0));
+    }
+    
     public long getTotalKeysExamined() {
         return totalKeysExamined;
     }
@@ -254,10 +362,15 @@ public class QueryHashAccumulatorEntry {
                         return "default: " + value;
                     }
                     
-                    // Extract mode from JSON-like strings
+                    // Extract mode and node type from JSON-like strings
                     if (key.contains("\"mode\":")) {
-                        // Parse {"mode":"secondaryPreferred"} format
+                        // Parse {"mode":"secondaryPreferred","nodeType":"analytics"} format
                         String mode = key.replaceAll(".*\"mode\":\\s*\"([^\"]+)\".*", "$1");
+                        String nodeType = "";
+                        if (key.contains("\"nodeType\":")) {
+                            nodeType = key.replaceAll(".*\"nodeType\":\\s*\"([^\"]+)\".*", "$1");
+                            return mode + " (" + nodeType + "): " + value;
+                        }
                         return mode + ": " + value;
                     }
                     

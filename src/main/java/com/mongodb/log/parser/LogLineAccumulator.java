@@ -24,6 +24,14 @@ public class LogLineAccumulator {
     private long bytesRead = 0;
     private long totalShards = 0;
     
+    // Storage bytes tracking with min/max
+    private long totalStorageBytesRead = 0;
+    private long minStorageBytesRead = Long.MAX_VALUE;
+    private long maxStorageBytesRead = Long.MIN_VALUE;
+    private long totalStorageBytesWritten = 0;
+    private long minStorageBytesWritten = Long.MAX_VALUE;
+    private long maxStorageBytesWritten = Long.MIN_VALUE;
+    
     // Sample log message storage - store the log message for the slowest query
     private String sampleLogMessage = null;
     private long maxDurationForSample = 0;
@@ -95,6 +103,30 @@ public class LogLineAccumulator {
             this.totalShards += nShards;
         }
     }
+    
+    public void addStorageBytesRead(Long bytesRead) {
+        if (bytesRead != null) {
+            this.totalStorageBytesRead += bytesRead;
+            if (bytesRead > maxStorageBytesRead) {
+                maxStorageBytesRead = bytesRead;
+            }
+            if (bytesRead < minStorageBytesRead) {
+                minStorageBytesRead = bytesRead;
+            }
+        }
+    }
+    
+    public void addStorageBytesWritten(Long bytesWritten) {
+        if (bytesWritten != null) {
+            this.totalStorageBytesWritten += bytesWritten;
+            if (bytesWritten > maxStorageBytesWritten) {
+                maxStorageBytesWritten = bytesWritten;
+            }
+            if (bytesWritten < minStorageBytesWritten) {
+                minStorageBytesWritten = bytesWritten;
+            }
+        }
+    }
 
     // Getter methods
     public long getCount() {
@@ -125,6 +157,14 @@ public class LogLineAccumulator {
         return totalDocsExamined;
     }
     
+    public long getTotalKeysExamined() {
+        return totalKeysExamined;
+    }
+    
+    public long getAvgKeysExamined() {
+        return count > 0 ? totalKeysExamined / count : 0;
+    }
+    
     public long getScannedReturnRatio() {
         if (totalReturned > 0) {
             return totalDocsExamined / totalReturned;
@@ -146,6 +186,22 @@ public class LogLineAccumulator {
     
     public long getAvgShards() {
         return count > 0 ? totalShards / count : 0;
+    }
+    
+    public long getAvgBytesRead() {
+        return count > 0 ? totalStorageBytesRead / count : 0;
+    }
+    
+    public long getMaxBytesRead() {
+        return minStorageBytesRead != Long.MAX_VALUE ? maxStorageBytesRead : 0;
+    }
+    
+    public long getAvgBytesWritten() {
+        return count > 0 ? totalStorageBytesWritten / count : 0;
+    }
+    
+    public long getMaxBytesWritten() {
+        return minStorageBytesWritten != Long.MAX_VALUE ? maxStorageBytesWritten : 0;
     }
     
     public String toString() {

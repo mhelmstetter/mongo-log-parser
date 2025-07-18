@@ -62,10 +62,10 @@ public class LogFilter implements Callable<Integer> {
 
     // Default filtering keys
     private static List<String> defaultIgnoreKeys = List.of(
-        "writeConcern", "$audit", "$client", "$clusterTime", "$configTime", "$db", 
+        "$audit", "$client", "$clusterTime", "$configTime", "$db", 
         "$topologyTime", "advanced", "bypassDocumentValidation", "clientOperationKey",
         "clusterTime", "collation", "cpuNanos", "cursor", "cursorid", "cursorExhausted", 
-        "databaseVersion", "flowControl", "fromMongos", "fromMultiPlanner", "let", "locks", 
+        "databaseVersion", "fromMongos", "fromMultiPlanner", "let", "locks", 
         "lsid", "maxTimeMS", "maxTimeMSOpOnly", "mayBypassWriteBlocking", "multiKeyPaths", 
         "needsMerge", "needTime", "numYields", "protocol", 
         "queryFramework", "readConcern", "remote", "runtimeConstants", "shardVersion",
@@ -74,7 +74,7 @@ public class LogFilter implements Callable<Integer> {
 
     // Additional keys to ignore in aggressive mode (additive to default)
     private static List<String> additionalAggressiveKeys = List.of(
-        "planningTimeMicros"
+        "planningTimeMicros", "writeConcern", "flowControl"
     );
 
     private static List<String> preserveTextFields = List.of("ns", "planSummary");

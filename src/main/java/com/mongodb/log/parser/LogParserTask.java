@@ -7,6 +7,7 @@ import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicLong;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -150,7 +151,53 @@ class LogParserTask implements Callable<ProcessingStats> {
 			}
 
 			// Handle different log entry types
-			if (attr.has("command")) {
+			// Check for WRITE operations first (prioritize "type" field for c:"WRITE")
+			if (attr.has("type") && jo.has("c") && "WRITE".equals(jo.getString("c"))) {
+				// This is a WRITE operation log entry
+				if (processWriteOperation(attr, slowQuery)) {
+					// Apply namespace filtering
+					if (!matchesNamespaceFilter(slowQuery.ns)) {
+						localFilteredByNamespace++;
+						continue;
+					}
+
+					extractPlanCacheInfo(attr, slowQuery);
+					extractReadPreferenceAndFilter(attr, slowQuery);
+					extractReplanningInfo(attr, slowQuery);
+					processExecutionStats(attr, slowQuery);
+					processStorageMetrics(attr, slowQuery);
+
+					slowQuery.durationMillis = getMetric(attr, "durationMillis");
+
+					synchronized (accumulator) {
+						accumulator.accumulate(slowQuery, currentLine);
+					}
+
+					// Add to query hash accumulator
+					if (queryHashAccumulator != null) {
+						synchronized (queryHashAccumulator) {
+							queryHashAccumulator.accumulate(slowQuery, currentLine);
+						}
+					}
+
+					// Add to index stats accumulator
+					if (indexStatsAccumulator != null) {
+						synchronized (indexStatsAccumulator) {
+							indexStatsAccumulator.accumulate(slowQuery);
+						}
+					}
+
+					// Add to plan cache accumulator if enabled and has plan cache key
+					if (planCacheAccumulator != null && slowQuery.planCacheKey != null) {
+						synchronized (planCacheAccumulator) {
+							planCacheAccumulator.accumulate(slowQuery, currentLine);
+						}
+					}
+
+					localFoundOps++;
+				}
+
+			} else if (attr.has("command")) {
 				// This is a COMMAND type log entry
 				if (attr.has("ns")) {
 					ns = new Namespace(attr.getString("ns"));
@@ -201,51 +248,6 @@ class LogParserTask implements Callable<ProcessingStats> {
 					    synchronized (queryHashAccumulator) {
 					        queryHashAccumulator.accumulate(slowQuery, currentLine);
 					    }
-					}
-
-					// Add to index stats accumulator
-					if (indexStatsAccumulator != null) {
-						synchronized (indexStatsAccumulator) {
-							indexStatsAccumulator.accumulate(slowQuery);
-						}
-					}
-
-					// Add to plan cache accumulator if enabled and has plan cache key
-					if (planCacheAccumulator != null && slowQuery.planCacheKey != null) {
-						synchronized (planCacheAccumulator) {
-							planCacheAccumulator.accumulate(slowQuery, currentLine);
-						}
-					}
-
-					localFoundOps++;
-				}
-
-			} else if (attr.has("type")) {
-				// This is a WRITE operation log entry
-				if (processWriteOperation(attr, slowQuery)) {
-					// Apply namespace filtering
-					if (!matchesNamespaceFilter(slowQuery.ns)) {
-						localFilteredByNamespace++;
-						continue;
-					}
-
-					extractPlanCacheInfo(attr, slowQuery);
-					extractReadPreferenceAndFilter(attr, slowQuery);
-					extractReplanningInfo(attr, slowQuery);
-					processExecutionStats(attr, slowQuery);
-					processStorageMetrics(attr, slowQuery);
-
-					slowQuery.durationMillis = getMetric(attr, "durationMillis");
-
-					synchronized (accumulator) {
-						accumulator.accumulate(slowQuery, currentLine);
-					}
-
-					// Add to query hash accumulator
-					if (queryHashAccumulator != null) {
-						synchronized (queryHashAccumulator) {
-							queryHashAccumulator.accumulate(slowQuery, currentLine);
-						}
 					}
 
 					// Add to index stats accumulator
@@ -371,13 +373,12 @@ class LogParserTask implements Callable<ProcessingStats> {
 	        if (attr.has("command")) {
 	            JSONObject command = attr.getJSONObject("command");
 
-	            // Extract read preference - convert to string for storage
+	            // Extract read preference - convert to string for storage and analyze node type
 	            if (command.has("$readPreference")) {
 	                Object readPrefObj = command.get("$readPreference");
 	                if (readPrefObj instanceof JSONObject) {
 	                    JSONObject readPref = (JSONObject) readPrefObj;
-	                    // Convert the JSONObject to a string representation for storage
-	                    slowQuery.readPreference = readPref.toString();
+	                    slowQuery.readPreference = enhanceReadPreferenceWithNodeType(readPref);
 	                } else if (readPrefObj instanceof String) {
 	                    slowQuery.readPreference = (String) readPrefObj;
 	                }
@@ -465,6 +466,96 @@ class LogParserTask implements Callable<ProcessingStats> {
 	            LogParser.logger.debug("Error extracting read preference and filter: {}", e.getMessage());
 	        }
 	    }
+	}
+	
+	/**
+	 * Enhance read preference with node type analysis (analytics vs voting)
+	 */
+	private String enhanceReadPreferenceWithNodeType(JSONObject readPref) {
+	    try {
+	        // Clone the original read preference to avoid modifying it
+	        JSONObject enhanced = new JSONObject(readPref.toString());
+	        
+	        // Analyze tags to determine node type
+	        if (readPref.has("tags")) {
+	            Object tagsObj = readPref.get("tags");
+	            String nodeType = determineNodeTypeFromTags(tagsObj);
+	            if (!nodeType.isEmpty()) {
+	                enhanced.put("nodeType", nodeType);
+	            }
+	        }
+	        
+	        return enhanced.toString();
+	    } catch (Exception e) {
+	        // If enhancement fails, return original
+	        return readPref.toString();
+	    }
+	}
+	
+	/**
+	 * Determine node type from read preference tags
+	 */
+	private String determineNodeTypeFromTags(Object tagsObj) {
+	    try {
+	        if (tagsObj instanceof JSONArray) {
+	            JSONArray tagsArray = (JSONArray) tagsObj;
+	            for (int i = 0; i < tagsArray.length(); i++) {
+	                Object tagObj = tagsArray.get(i);
+	                if (tagObj instanceof JSONObject) {
+	                    JSONObject tag = (JSONObject) tagObj;
+	                    String nodeType = analyzeTag(tag);
+	                    if (!nodeType.isEmpty()) {
+	                        return nodeType;
+	                    }
+	                }
+	            }
+	        } else if (tagsObj instanceof JSONObject) {
+	            JSONObject tag = (JSONObject) tagsObj;
+	            return analyzeTag(tag);
+	        }
+	    } catch (Exception e) {
+	        // If analysis fails, return empty
+	    }
+	    return "";
+	}
+	
+	/**
+	 * Analyze individual tag to determine node type
+	 */
+	private String analyzeTag(JSONObject tag) {
+	    try {
+	        // Check for common analytics node indicators
+	        if (tag.has("nodeType") && "analytics".equals(tag.getString("nodeType"))) {
+	            return "analytics";
+	        }
+	        if (tag.has("workloadType") && "analytics".equals(tag.getString("workloadType"))) {
+	            return "analytics";
+	        }
+	        if (tag.has("role") && "analytics".equals(tag.getString("role"))) {
+	            return "analytics";
+	        }
+	        
+	        // Check for voting node indicators (usually primary/secondary without special tags)
+	        if (tag.has("nodeType") && "voting".equals(tag.getString("nodeType"))) {
+	            return "voting";
+	        }
+	        if (tag.has("workloadType") && "operational".equals(tag.getString("workloadType"))) {
+	            return "voting";
+	        }
+	        
+	        // Atlas-specific patterns
+	        if (tag.has("provider") && tag.has("region")) {
+	            // Likely an Atlas deployment - check for analytics nodes
+	            if (tag.has("nodeType") || tag.has("workloadType")) {
+	                // Already checked above
+	            }
+	            return "voting"; // Default for Atlas operational nodes
+	        }
+	        
+	    } catch (Exception e) {
+	        // If tag analysis fails, return empty
+	    }
+	    return "";
 	}
 
 	// Extract replanning information from the log attributes
@@ -768,6 +859,15 @@ class LogParserTask implements Callable<ProcessingStats> {
 					JSONObject data = storage.getJSONObject("data");
 					if (data.has("bytesRead")) {
 						slowQuery.bytesRead = getMetric(data, "bytesRead");
+					}
+				}
+				
+				if (storage.has("bytesWritten")) {
+					slowQuery.bytesWritten = getMetric(storage, "bytesWritten");
+				} else if (storage.has("data")) {
+					JSONObject data = storage.getJSONObject("data");
+					if (data.has("bytesWritten")) {
+						slowQuery.bytesWritten = getMetric(data, "bytesWritten");
 					}
 				}
 			}
