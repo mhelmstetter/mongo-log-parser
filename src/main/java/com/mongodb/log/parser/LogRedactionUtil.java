@@ -67,7 +67,7 @@ public class LogRedactionUtil {
         "fromMultiPlanner", "let", "maxTimeMSOpOnly", "mayBypassWriteBlocking", 
         "multiKeyPaths", "needTime", "planningTimeMicros", "runtimeConstants",
         "totalOplogSlotDurationMicros", "waitForWriteConcernDurationMillis", "works",
-        "shardVersion"
+        "shardVersion", "clientOperationKey", "lsid", "$clusterTime", "$configTime", "$topologyTime"
     );
     
     // Fields that should preserve text content but may be truncated for trimming
