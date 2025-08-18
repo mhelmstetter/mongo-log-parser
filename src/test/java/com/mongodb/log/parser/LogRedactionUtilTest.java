@@ -270,7 +270,7 @@ public class LogRedactionUtilTest {
         // Storage metrics should be preserved
         JSONObject data = result.getJSONObject("attr").getJSONObject("storage").getJSONObject("data");
         assertEquals(999999, data.getInt("timeReadingMicros"));
-        assertEquals(99999999, data.getInt("bytesRead"));
+        assertEquals(99999999, data.getLong("bytesRead"));
     }
 
     @Test
@@ -693,5 +693,103 @@ public class LogRedactionUtilTest {
         
         // Other client fields should still be preserved
         assertEquals("192.168.250.83:21031", command.getJSONObject("$client").getJSONObject("mongos").getString("client"));
+    }
+    
+    @Test
+    public void testFieldTrimming() {
+        String logMessage = """
+            {
+                "attr": {
+                    "command": {
+                        "find": "collection",
+                        "runtimeConstants": {"localNow": {"$date": "2025-07-30T17:19:37.259Z"}},
+                        "shardVersion": {"e": {"$oid": "00000000ffffffffffffffff"}},
+                        "lsid": {"id": {"$uuid": "f5f322d2-c403-46c5-9b04-00c4c230a027"}},
+                        "$clusterTime": {"clusterTime": {"$timestamp": {"t": 1753895977, "i": 11}}},
+                        "$configTime": {"$timestamp": {"t": 1753895976, "i": 1}},
+                        "$topologyTime": {"$timestamp": {"t": 1727374844, "i": 18}},
+                        "normalField": "should be kept"
+                    },
+                    "durationMillis": 1000
+                }
+            }
+            """;
+
+        String trimmed = LogRedactionUtil.trimLogMessage(logMessage);
+        JSONObject result = new JSONObject(trimmed);
+        
+        JSONObject command = result.getJSONObject("attr").getJSONObject("command");
+        
+        // These fields should be removed
+        assertFalse(command.has("runtimeConstants"), "runtimeConstants should be removed");
+        assertFalse(command.has("shardVersion"), "shardVersion should be removed");
+        assertFalse(command.has("lsid"), "lsid should be removed");
+        assertFalse(command.has("$clusterTime"), "$clusterTime should be removed");
+        assertFalse(command.has("$configTime"), "$configTime should be removed");
+        assertFalse(command.has("$topologyTime"), "$topologyTime should be removed");
+        
+        // These fields should be kept
+        assertTrue(command.has("find"), "find should be kept");
+        assertTrue(command.has("normalField"), "normalField should be kept");
+        assertEquals("should be kept", command.getString("normalField"));
+        
+        // Non-command fields should be preserved
+        assertTrue(result.getJSONObject("attr").has("durationMillis"), "durationMillis should be kept");
+        assertEquals(1000, result.getJSONObject("attr").getInt("durationMillis"));
+    }
+    
+    @Test
+    public void testMongosFieldTrimming() {
+        // Test case from user's actual log message showing fields that should be filtered
+        String logMessage = """
+            {
+                "t": {"$date": "2025-08-03T20:00:02.582+00:00"},
+                "s": "I",
+                "c": "COMMAND",
+                "id": 51803,
+                "ctx": "conn127293",
+                "msg": "Slow query",
+                "attr": {
+                    "type": "command",
+                    "ns": "m3_production.horsemen_instances",
+                    "command": {
+                        "find": "horsemen_instances",
+                        "filter": {"insanityInstanceId": "0000a49458165a1754250668"},
+                        "limit": 1,
+                        "shardVersion": {"e": {"$oid": "623a27c07cfa9bf85b4e2174"}},
+                        "clientOperationKey": {"$uuid": "a010d8d8-bbf3-4d3e-a605-f5ea1b9f8c47"},
+                        "lsid": {"id": {"$uuid": "f0c99002-f0d0-4838-a62a-f75b1224c90c"}},
+                        "$clusterTime": {"clusterTime": {"$timestamp": {"t": 1754251200, "i": 7125}}},
+                        "$configTime": {"$timestamp": {"t": 1754251200, "i": 5872}},
+                        "$topologyTime": {"$timestamp": {"t": 0, "i": 1}},
+                        "$db": "m3_production"
+                    },
+                    "durationMillis": 1857
+                }
+            }
+            """;
+
+        String trimmed = LogRedactionUtil.trimLogMessage(logMessage);
+        JSONObject result = new JSONObject(trimmed);
+        
+        JSONObject command = result.getJSONObject("attr").getJSONObject("command");
+        
+        // These fields should be removed from attr.command
+        assertFalse(command.has("shardVersion"), "shardVersion should be removed from mongos logs");
+        assertFalse(command.has("clientOperationKey"), "clientOperationKey should be removed");
+        assertFalse(command.has("lsid"), "lsid should be removed from mongos logs");
+        assertFalse(command.has("$clusterTime"), "$clusterTime should be removed from mongos logs");
+        assertFalse(command.has("$configTime"), "$configTime should be removed from mongos logs");
+        assertFalse(command.has("$topologyTime"), "$topologyTime should be removed from mongos logs");
+        
+        // These fields should be kept
+        assertTrue(command.has("find"), "find should be kept");
+        assertTrue(command.has("filter"), "filter should be kept");
+        assertTrue(command.has("limit"), "limit should be kept");
+        assertTrue(command.has("$db"), "$db should be kept");
+        
+        // Non-command fields should be preserved
+        assertTrue(result.getJSONObject("attr").has("durationMillis"), "durationMillis should be kept");
+        assertEquals(1857, result.getJSONObject("attr").getInt("durationMillis"));
     }
 }

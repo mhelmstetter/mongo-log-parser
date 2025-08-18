@@ -60,16 +60,13 @@ public class LogFilter implements Callable<Integer> {
     private String currentLine;
     private FilterConfig filterConfig;
 
-    // Default filtering keys
+    // Default filtering keys (conservative list - only truly verbose fields)
     private static List<String> defaultIgnoreKeys = List.of(
-        "$audit", "$client", "$clusterTime", "$configTime", "$db", 
-        "$topologyTime", "advanced", "bypassDocumentValidation", "clientOperationKey",
-        "clusterTime", "collation", "cpuNanos", "cursor", "cursorid", "cursorExhausted", 
-        "databaseVersion", "fromMongos", "fromMultiPlanner", "let", "locks", 
-        "lsid", "maxTimeMS", "maxTimeMSOpOnly", "mayBypassWriteBlocking", "multiKeyPaths", 
-        "needsMerge", "needTime", "numYields", "protocol", 
-        "queryFramework", "readConcern", "remote", "runtimeConstants", "shardVersion",
-        "totalOplogSlotDurationMicros", "waitForWriteConcernDurationMillis", "works"
+        "advanced", "bypassDocumentValidation", "databaseVersion", "flowControl", 
+        "fromMultiPlanner", "let", "maxTimeMSOpOnly", "mayBypassWriteBlocking", 
+        "multiKeyPaths", "needTime", "planningTimeMicros", "runtimeConstants",
+        "totalOplogSlotDurationMicros", "waitForWriteConcernDurationMillis", "works",
+        "shardVersion", "clientOperationKey", "lsid", "$clusterTime", "$configTime", "$topologyTime"
     );
 
     // Additional keys to ignore in aggressive mode (additive to default)
@@ -79,6 +76,32 @@ public class LogFilter implements Callable<Integer> {
 
     private static List<String> preserveTextFields = List.of("ns", "planSummary");
     private static List<String> preserveArrayFields = List.of("pipeline", "$and", "$or");
+    
+    // Static method to filter JSON using default settings (for use by other classes)
+    public static JsonNode filterJsonNode(JsonNode node) {
+        return filterJsonNode(node, defaultIgnoreKeys, preserveTextFields, preserveArrayFields);
+    }
+    
+    // Static method to filter JSON with custom settings
+    public static JsonNode filterJsonNode(JsonNode node, List<String> ignoreKeys, 
+                                         List<String> preserveText, List<String> preserveArrays) {
+        LogFilter filter = new LogFilter();
+        return filter.filterJsonInternal(node, ignoreKeys, preserveText, preserveArrays);
+    }
+    
+    // Static method to filter a JSON log message string (for use by other classes)
+    public static String filterLogMessage(String logMessage) {
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode rootNode = mapper.readTree(logMessage);
+            JsonNode filtered = filterJsonNode(rootNode);
+            return filtered.toString();
+        } catch (Exception e) {
+            // If filtering fails, return original message
+            return logMessage;
+        }
+    }
+    
 
     @Override
     public Integer call() throws Exception {
@@ -281,6 +304,16 @@ public class LogFilter implements Callable<Integer> {
     }
 
     private JsonNode filterJson(JsonNode node) {
+        return filterJsonInternal(node, getIgnoreKeys(), preserveTextFields, preserveArrayFields);
+    }
+    
+    private JsonNode filterJsonInternal(JsonNode node, List<String> ignoreKeys, 
+                                       List<String> preserveText, List<String> preserveArrays) {
+        return filterJsonInternal(node, ignoreKeys, preserveText, preserveArrays, "");
+    }
+    
+    private JsonNode filterJsonInternal(JsonNode node, List<String> ignoreKeys, 
+                                       List<String> preserveText, List<String> preserveArrays, String currentPath) {
         if (node.isObject()) {
             Iterator<String> fieldNames = node.fieldNames();
             List<String> keysToRemove = new ArrayList<>();
@@ -288,11 +321,32 @@ public class LogFilter implements Callable<Integer> {
             while (fieldNames.hasNext()) {
                 String fieldName = fieldNames.next();
                 JsonNode childNode = node.get(fieldName);
+                String fieldPath = currentPath.isEmpty() ? fieldName : currentPath + "." + fieldName;
 
-                if (getIgnoreKeys().contains(fieldName)) {
+                if (ignoreKeys.contains(fieldName)) {
                     keysToRemove.add(fieldName);
+                } else if (fieldName.equals("command") && currentPath.equals("attr") && childNode.isObject()) {
+                    // Special handling for attr.command - check nested fields
+                    Iterator<String> commandFields = childNode.fieldNames();
+                    List<String> commandKeysToRemove = new ArrayList<>();
+                    
+                    while (commandFields.hasNext()) {
+                        String commandField = commandFields.next();
+                        if (ignoreKeys.contains(commandField)) {
+                            commandKeysToRemove.add(commandField);
+                        }
+                    }
+                    
+                    // Remove ignored command fields
+                    for (String key : commandKeysToRemove) {
+                        ((ObjectNode) childNode).remove(key);
+                    }
+                    
+                    // Continue processing the rest of the command object
+                    filterJsonInternal(childNode, ignoreKeys, preserveText, preserveArrays, fieldPath);
                 } else {
-                    processJsonField(node, fieldName, childNode);
+                    processJsonFieldInternal(node, fieldName, childNode, ignoreKeys, preserveText, preserveArrays);
+                    filterJsonInternal(childNode, ignoreKeys, preserveText, preserveArrays, fieldPath);
                 }
             }
 
@@ -302,20 +356,25 @@ public class LogFilter implements Callable<Integer> {
             }
         } else if (node.isArray()) {
             for (JsonNode arrayElement : node) {
-                filterJson(arrayElement);
+                filterJsonInternal(arrayElement, ignoreKeys, preserveText, preserveArrays, currentPath);
             }
         }
         return node;
     }
 
     private void processJsonField(JsonNode parent, String fieldName, JsonNode childNode) {
+        processJsonFieldInternal(parent, fieldName, childNode, getIgnoreKeys(), preserveTextFields, preserveArrayFields);
+    }
+    
+    private void processJsonFieldInternal(JsonNode parent, String fieldName, JsonNode childNode,
+                                         List<String> ignoreKeys, List<String> preserveText, List<String> preserveArrays) {
         if (childNode.isTextual()) {
             String textValue = childNode.asText();
-            if (!preserveTextFields.contains(fieldName) && textValue.length() > 35) {
+            if (!preserveText.contains(fieldName) && textValue.length() > 35) {
                 ((ObjectNode) parent).set(fieldName, new TextNode(textValue.substring(0, 35) + "..."));
             }
         } else if (childNode.isArray() && childNode.size() > 3) {
-            if (!preserveArrayFields.contains(fieldName)) {
+            if (!preserveArrays.contains(fieldName)) {
                 ArrayNode arr = (ArrayNode) childNode;
                 JsonNode first = arr.get(0);
                 int size = arr.size();
@@ -325,13 +384,13 @@ public class LogFilter implements Callable<Integer> {
             }
             // Recursively filter array elements
             for (JsonNode arrayElement : childNode) {
-                filterJson(arrayElement);
+                filterJsonInternal(arrayElement, ignoreKeys, preserveText, preserveArrays);
             }
         } else if (childNode.isObject()) {
             if (childNode.isEmpty()) {
                 ((ObjectNode) parent).remove(fieldName);
             } else {
-                filterJson(childNode);
+                filterJsonInternal(childNode, ignoreKeys, preserveText, preserveArrays);
             }
         }
     }

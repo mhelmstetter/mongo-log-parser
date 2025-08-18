@@ -72,13 +72,14 @@ public class HtmlReportGenerator {
 		writer.println("    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">");
 		writer.println("    <title>MongoDB Log Analysis Report</title>");
 		writer.println("    <style>");
+		writer.println("        html { height: 100%; }");
 		writer.println(
-				"        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; background-color: #f8f9fa; }");
-		writer.println("        .container { max-width: 95%; margin: 0 auto; background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }");
+				"        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; background-color: #f8f9fa; height: 100%; }");
+		writer.println("        .container { max-width: 95%; margin: 0 auto; padding: 20px; }");
 		writer.println("        h1 { color: #001E2B; text-align: center; margin-bottom: 10px; }");
 		writer.println(
 				"        h2 { color: #001E2B; margin-top: 40px; margin-bottom: 20px; border-bottom: 2px solid #00684A; padding-bottom: 5px; scroll-margin-top: 70px; }");
-		writer.println("        .table-container { margin-bottom: 40px; overflow-x: auto; position: relative; }");
+		writer.println("        .table-container { margin-bottom: 40px; }");
 		writer.println("        .controls { margin-bottom: 15px; }");
 		writer.println(
 				"        .filter-input { padding: 8px; border: 1px solid #b8c4c2; border-radius: 4px; margin-right: 10px; width: 200px; }");
@@ -94,7 +95,9 @@ public class HtmlReportGenerator {
 		writer.println("        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; }");
 		writer.println("        th, td { border: 1px solid #b8c4c2; padding: 8px; text-align: left; }");
 		writer.println(
-				"        th { background-color: #00684A; color: white; font-weight: bold; cursor: pointer; user-select: none; position: sticky; top: 60px; z-index: 100; }");
+				"        thead { background-color: #00684A; color: white; }");
+		writer.println(
+				"        thead th { position: sticky; top: 0; background-color: #00684A; z-index: 10; cursor: pointer; user-select: none; font-weight: bold; }");
 		writer.println("        th:hover { background-color: #001E2B; }");
 		writer.println("        th.sortable::after { content: ' ↕'; font-size: 12px; opacity: 0.5; }");
 		writer.println("        th.sort-asc::after { content: ' ↑'; opacity: 1; }");
@@ -118,10 +121,12 @@ public class HtmlReportGenerator {
 		writer.println(
 				"        .truncated { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help; }");
 		writer.println(
+				"        .multiline { white-space: normal !important; }");
+		writer.println(
 				"        .wrapped { max-width: 400px; word-wrap: break-word; white-space: normal; cursor: help; }");
 		
 		// Navigation styles
-		writer.println("        .nav-header { background-color: #001E2B; color: white; padding: 15px 0; margin: -20px -20px 20px -20px; position: sticky; top: 0; z-index: 1000; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }");
+		writer.println("        .nav-header { background-color: #001E2B; color: white; padding: 15px; margin-bottom: 30px; border-radius: 8px; }");
 		writer.println("        .nav-content { max-width: 95%; margin: 0 auto; padding: 0 20px; }");
 		writer.println("        .nav-title { margin: 0 0 10px 0; font-size: 1.2em; font-weight: bold; }");
 		writer.println("        .nav-links { display: flex; flex-wrap: wrap; gap: 10px; }");
@@ -147,6 +152,7 @@ public class HtmlReportGenerator {
 		writer.println("        .pretty-print-btn:hover { background-color: #21313C; }");
 		writer.println("        .json-content { white-space: pre-wrap; }");
 		
+		
 		writer.println("    </style>");
 		writer.println("</head>");
 		writer.println("<body>");
@@ -160,10 +166,10 @@ public class HtmlReportGenerator {
 	        Map<String, java.util.concurrent.atomic.AtomicLong> operationTypeStats,
 	        String earliestTimestamp, String latestTimestamp) {
 	    
-	    writer.println("        <div class=\"nav-header\">");
-	    writer.println("            <div class=\"nav-content\">");
-	    writer.println("                <div class=\"nav-title\">MongoDB Log Analysis Report</div>");
-	    writer.println("                <div class=\"nav-links\">");
+	    writer.println("    <div class=\"nav-header\">");
+	    writer.println("        <div class=\"nav-content\">");
+	    writer.println("            <div class=\"nav-title\">MongoDB Log Analysis Report</div>");
+	    writer.println("            <div class=\"nav-links\">");
 	    
 	    // Main Operations (always present)
 	    if (!accumulator.getAccumulators().isEmpty()) {
@@ -217,8 +223,8 @@ public class HtmlReportGenerator {
 	    }
 	    
 	    writer.println("                <div class=\"report-info\" style=\"display: flex; justify-content: space-between;\"><span>" + logDataInfo + "</span><span>Generated on " + new java.util.Date() + "</span></div>");
-	    writer.println("            </div>");
 	    writer.println("        </div>");
+	    writer.println("    </div>");
 	}
 
 	private static void writeMainOperationsTable(PrintWriter writer, Accumulator accumulator, boolean redactQueries) {
@@ -362,7 +368,25 @@ public class HtmlReportGenerator {
 				}
 				String contentId = "log-content-" + rowId;
 				String buttonId = "btn-" + rowId;
-				writer.println("                                <strong>Slowest Query Log Message" + querySource + ":</strong>");
+				String formattedDuration = LogRedactionUtil.extractFormattedDuration(op.getSampleLogMessage());
+				String formattedBytesRead = LogRedactionUtil.extractFormattedBytesRead(op.getSampleLogMessage());
+				
+				StringBuilder headerText = new StringBuilder();
+				if (!formattedDuration.isEmpty()) {
+					headerText.append(" (").append(formattedDuration);
+				}
+				if (!formattedBytesRead.isEmpty()) {
+					if (headerText.length() > 0) {
+						headerText.append(", ").append(formattedBytesRead);
+					} else {
+						headerText.append(" (").append(formattedBytesRead);
+					}
+				}
+				if (headerText.length() > 0) {
+					headerText.append(")");
+				}
+				
+				writer.println("                                <strong>Slowest Query Log Message" + querySource + headerText.toString() + ":</strong>");
 				writer.println("                                <button class=\"pretty-print-btn\" id=\"" + buttonId + "\" onclick=\"togglePrettyPrint('" + buttonId + "', '" + contentId + "')\">Pretty</button><br>");
 				writer.println("                                <div class=\"json-content\" id=\"" + contentId + "\">" + enhancedLogMessage + "</div>");
 				writer.println("                            </div>");
@@ -600,7 +624,7 @@ public class HtmlReportGenerator {
 					writer.println(entry.getFormattedAvgBytesWrittenCell());
 					writer.print("                        ");
 					writer.println(entry.getFormattedMaxBytesWrittenCell());
-					writer.println("                        <td class=\"truncated\" title=\""
+					writer.println("                        <td class=\"truncated multiline\" title=\""
 					        + escapeHtml(entry.getReadPreferenceSummary().replace("<br>", ", ")) + "\">"
 					        + entry.getReadPreferenceSummaryTruncated(30) + "</td>");
 					String planSummary = entry.getPlanSummary();
@@ -622,7 +646,7 @@ public class HtmlReportGenerator {
 						boolean isTruncated = LogRedactionUtil.isLogMessageTruncated(entry.getSampleLogMessage());
 						String cssClass = isTruncated ? "log-sample truncated-query" : "log-sample";
 						writer.println("                    <tr id=\"" + rowId + "\" class=\"accordion-content\">");
-						writer.println("                        <td colspan=\"18\">");
+						writer.println("                        <td colspan=\"22\">");
 						writer.println("                            <div class=\"" + cssClass + "\">");
 						if (isTruncated) {
 							writer.println("                                <div class=\"truncated-warning\">⚠ Query was truncated in MongoDB logs</div>");
@@ -632,7 +656,25 @@ public class HtmlReportGenerator {
 						writer.println("                                <br><br>");
 						String contentId = "log-content-" + rowId;
 						String buttonId = "btn-" + rowId;
-						writer.println("                                <strong>Slowest Query Log Message" + querySource + ":</strong>");
+						String formattedDuration = LogRedactionUtil.extractFormattedDuration(entry.getSampleLogMessage());
+						String formattedBytesRead = LogRedactionUtil.extractFormattedBytesRead(entry.getSampleLogMessage());
+						
+						StringBuilder headerText = new StringBuilder();
+						if (!formattedDuration.isEmpty()) {
+							headerText.append(" (").append(formattedDuration);
+						}
+						if (!formattedBytesRead.isEmpty()) {
+							if (headerText.length() > 0) {
+								headerText.append(", ").append(formattedBytesRead);
+							} else {
+								headerText.append(" (").append(formattedBytesRead);
+							}
+						}
+						if (headerText.length() > 0) {
+							headerText.append(")");
+						}
+						
+						writer.println("                                <strong>Slowest Query Log Message" + querySource + headerText.toString() + ":</strong>");
 						writer.println("                                <button class=\"pretty-print-btn\" id=\"" + buttonId + "\" onclick=\"togglePrettyPrint('" + buttonId + "', '" + contentId + "')\">Pretty</button><br>");
 						writer.println("                                <div class=\"json-content\" id=\"" + contentId + "\">" + enhancedLogMessage + "</div>");
 						writer.println("                            </div>");
@@ -869,7 +911,25 @@ public class HtmlReportGenerator {
 						}
 						String contentId = "log-content-" + rowId;
 						String buttonId = "btn-" + rowId;
-						writer.println("                                <strong>Slowest Query Log Message" + querySource + ":</strong>");
+						String formattedDuration = LogRedactionUtil.extractFormattedDuration(entry.getSampleLogMessage());
+						String formattedBytesRead = LogRedactionUtil.extractFormattedBytesRead(entry.getSampleLogMessage());
+						
+						StringBuilder headerText = new StringBuilder();
+						if (!formattedDuration.isEmpty()) {
+							headerText.append(" (").append(formattedDuration);
+						}
+						if (!formattedBytesRead.isEmpty()) {
+							if (headerText.length() > 0) {
+								headerText.append(", ").append(formattedBytesRead);
+							} else {
+								headerText.append(" (").append(formattedBytesRead);
+							}
+						}
+						if (headerText.length() > 0) {
+							headerText.append(")");
+						}
+						
+						writer.println("                                <strong>Slowest Query Log Message" + querySource + headerText.toString() + ":</strong>");
 						writer.println("                                <button class=\"pretty-print-btn\" id=\"" + buttonId + "\" onclick=\"togglePrettyPrint('" + buttonId + "', '" + contentId + "')\">Pretty</button><br>");
 						writer.println("                                <div class=\"json-content\" id=\"" + contentId + "\">" + enhancedLogMessage + "</div>");
 						writer.println("                            </div>");
@@ -1270,9 +1330,6 @@ public class HtmlReportGenerator {
 	    writer.println("                if (text.includes(filter)) {");
 	    writer.println("                    row.style.display = '';");
 	    writer.println("                    row.classList.remove('highlight');");
-	    writer.println("                    if (filter && filter.length > 0) {");
-	    writer.println("                        row.classList.add('highlight');");
-	    writer.println("                    }");
 	    writer.println("                } else {");
 	    writer.println("                    row.style.display = 'none';");
 	    writer.println("                }");
@@ -1549,16 +1606,57 @@ public class HtmlReportGenerator {
 	        String earliestDisplay = earliestTimestamp.substring(0, Math.min(19, earliestTimestamp.length())).replace("T", " ");
 	        String latestDisplay = latestTimestamp.substring(0, Math.min(19, latestTimestamp.length())).replace("T", " ");
 	        
+	        // Calculate duration
+	        String durationText = "";
+	        try {
+	            // Parse timestamps to calculate duration
+	            java.time.Instant startTime = java.time.Instant.parse(earliestTimestamp);
+	            java.time.Instant endTime = java.time.Instant.parse(latestTimestamp);
+	            long durationMillis = java.time.Duration.between(startTime, endTime).toMillis();
+	            
+	            // Format duration using the same method we use for query durations
+	            String formattedDuration = formatDuration(durationMillis);
+	            durationText = " (" + formattedDuration + ")";
+	        } catch (Exception e) {
+	            // If we can't parse timestamps, skip duration
+	        }
+	        
 	        // If same date, show date once
 	        if (earliestDisplay.substring(0, 10).equals(latestDisplay.substring(0, 10))) {
 	            return earliestDisplay.substring(0, 10) + " " + 
-	                   earliestDisplay.substring(11) + " to " + latestDisplay.substring(11);
+	                   earliestDisplay.substring(11) + " to " + latestDisplay.substring(11) + durationText;
 	        } else {
-	            return earliestDisplay + " to " + latestDisplay;
+	            return earliestDisplay + " to " + latestDisplay + durationText;
 	        }
 	    } catch (Exception e) {
 	        // Fallback to simple format
 	        return earliestTimestamp + " to " + latestTimestamp;
+	    }
+	}
+	
+	/**
+	 * Format duration from milliseconds to human-readable format
+	 * (Same as in LogRedactionUtil but included here to avoid dependency)
+	 */
+	private static String formatDuration(long durationMs) {
+	    if (durationMs < 1000) {
+	        return durationMs + "ms";
+	    } else if (durationMs < 60000) {
+	        return String.format("%.1fs", durationMs / 1000.0);
+	    } else if (durationMs < 3600000) {
+	        long minutes = durationMs / 60000;
+	        long seconds = (durationMs % 60000) / 1000;
+	        return String.format("%dm %ds", minutes, seconds);
+	    } else if (durationMs < 86400000) {
+	        long hours = durationMs / 3600000;
+	        long minutes = (durationMs % 3600000) / 60000;
+	        long seconds = (durationMs % 60000) / 1000;
+	        return String.format("%dh %dm %ds", hours, minutes, seconds);
+	    } else {
+	        long days = durationMs / 86400000;
+	        long hours = (durationMs % 86400000) / 3600000;
+	        long minutes = (durationMs % 3600000) / 60000;
+	        return String.format("%dd %dh %dm", days, hours, minutes);
 	    }
 	}
 }

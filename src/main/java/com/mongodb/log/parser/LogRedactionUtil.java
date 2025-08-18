@@ -5,6 +5,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
 import java.util.regex.Pattern;
+import java.util.regex.Matcher;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -61,20 +62,6 @@ public class LogRedactionUtil {
         "i", "e", "v"
     );
     
-    // Fields that should be completely removed for log trimming (only truly verbose fields)
-    private static final Set<String> TRIM_FIELDS = Set.of(
-        "advanced", "bypassDocumentValidation", "databaseVersion", "flowControl", 
-        "fromMultiPlanner", "let", "maxTimeMSOpOnly", "mayBypassWriteBlocking", 
-        "multiKeyPaths", "needTime", "planningTimeMicros", "runtimeConstants",
-        "totalOplogSlotDurationMicros", "waitForWriteConcernDurationMillis", "works",
-        "shardVersion", "clientOperationKey", "lsid", "$clusterTime", "$configTime", "$topologyTime"
-    );
-    
-    // Fields that should preserve text content but may be truncated for trimming
-    private static final Set<String> PRESERVE_TEXT_FIELDS = Set.of("ns", "planSummary", "namespace");
-    
-    // Fields that should preserve array structure
-    private static final Set<String> PRESERVE_ARRAY_FIELDS = Set.of("pipeline", "$and", "$or");
     
     // Explicit paths that should NEVER be redacted (MongoDB system data)
     private static final Set<String> PRESERVE_PATHS = Set.of(
@@ -398,15 +385,7 @@ public class LogRedactionUtil {
      * Trims a log message by removing verbose fields while preserving key analysis data
      */
     public static String trimLogMessage(String logMessage) {
-        try {
-            ObjectMapper mapper = new ObjectMapper();
-            JsonNode rootNode = mapper.readTree(logMessage);
-            JsonNode trimmed = trimJsonNode(rootNode);
-            return trimmed.toString();
-        } catch (Exception e) {
-            // If trimming fails, return original message
-            return logMessage;
-        }
+        return com.mongodb.log.filter.LogFilter.filterLogMessage(logMessage);
     }
     
     /**
@@ -468,7 +447,131 @@ public class LogRedactionUtil {
         enhanced = enhanced.replaceAll("\"bytesRead\":(\\s*)(\\d+)", "<strong>\"bytesRead\":</strong>$1<strong>$2</strong>");
         enhanced = enhanced.replaceAll("\"timeReadingMicros\":(\\s*)(\\d+)", "<strong>\"timeReadingMicros\":</strong>$1<strong>$2</strong>");
         
+        // Bold the $audit.$impersonatedUser section
+        // This pattern looks for "$audit": { ... "$impersonatedUser": { "user": "...", "db": "..." } ... }
+        enhanced = enhanced.replaceAll(
+            "(\"\\$audit\":\\s*\\{[^{}]*\"\\$impersonatedUser\":\\s*\\{[^{}]*\"user\":\\s*\"[^\"]+\"[^{}]*\"db\":\\s*\"[^\"]+\"[^{}]*\\})",
+            "<strong>$1</strong>"
+        );
+        
+        // Bold planSummary values like COLLSCAN and IXSCAN {...}
+        enhanced = enhanced.replaceAll("\"planSummary\":(\\s*)\"(COLLSCAN)\"", "<strong>\"planSummary\":</strong>$1<strong>\"$2\"</strong>");
+        enhanced = enhanced.replaceAll("\"planSummary\":(\\s*)\"(IXSCAN[^\"]+)\"", "<strong>\"planSummary\":</strong>$1<strong>\"$2\"</strong>");
+        
         return enhanced;
+    }
+    
+    /**
+     * Extract bytesRead from log message and format it in human-readable format
+     */
+    public static String extractFormattedBytesRead(String logMessage) {
+        if (logMessage == null || logMessage.isEmpty()) {
+            return "";
+        }
+        
+        try {
+            JSONObject jo = new JSONObject(logMessage);
+            if (jo.has("attr")) {
+                JSONObject attr = jo.getJSONObject("attr");
+                // Check for bytesRead in storage.data
+                if (attr.has("storage")) {
+                    JSONObject storage = attr.getJSONObject("storage");
+                    if (storage.has("data")) {
+                        JSONObject data = storage.getJSONObject("data");
+                        if (data.has("bytesRead")) {
+                            long bytesRead = data.getLong("bytesRead");
+                            return formatBytes(bytesRead);
+                        }
+                    }
+                }
+                // Also check for direct bytesRead field
+                if (attr.has("bytesRead")) {
+                    long bytesRead = attr.getLong("bytesRead");
+                    return formatBytes(bytesRead);
+                }
+            }
+        } catch (Exception e) {
+            // Fall back to regex if JSON parsing fails
+            Pattern pattern = Pattern.compile("\"bytesRead\"\\s*:\\s*(\\d+)");
+            Matcher matcher = pattern.matcher(logMessage);
+            if (matcher.find()) {
+                try {
+                    long bytesRead = Long.parseLong(matcher.group(1));
+                    return formatBytes(bytesRead);
+                } catch (NumberFormatException nfe) {
+                    // Ignore
+                }
+            }
+        }
+        return "";
+    }
+    
+    /**
+     * Format bytes in human-readable format
+     */
+    private static String formatBytes(long bytes) {
+        if (bytes < 1024) {
+            return bytes + " bytes";
+        } else if (bytes < 1024 * 1024) {
+            return String.format("%.1f KB", bytes / 1024.0);
+        } else if (bytes < 1024 * 1024 * 1024) {
+            return String.format("%.1f MB", bytes / (1024.0 * 1024.0));
+        } else {
+            return String.format("%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0));
+        }
+    }
+    
+    /**
+     * Extract durationMillis from log message and format it
+     */
+    public static String extractFormattedDuration(String logMessage) {
+        if (logMessage == null || logMessage.isEmpty()) {
+            return "";
+        }
+        
+        try {
+            JSONObject jo = new JSONObject(logMessage);
+            if (jo.has("attr")) {
+                JSONObject attr = jo.getJSONObject("attr");
+                if (attr.has("durationMillis")) {
+                    long durationMs = attr.getLong("durationMillis");
+                    return formatDuration(durationMs);
+                }
+            }
+        } catch (Exception e) {
+            // Fall back to regex if JSON parsing fails
+            Pattern pattern = Pattern.compile("\"durationMillis\"\\s*:\\s*(\\d+)");
+            Matcher matcher = pattern.matcher(logMessage);
+            if (matcher.find()) {
+                try {
+                    long durationMs = Long.parseLong(matcher.group(1));
+                    return formatDuration(durationMs);
+                } catch (NumberFormatException nfe) {
+                    // Ignore
+                }
+            }
+        }
+        return "";
+    }
+    
+    /**
+     * Format duration from milliseconds to human-readable format
+     */
+    private static String formatDuration(long durationMs) {
+        if (durationMs < 1000) {
+            return durationMs + "ms";
+        } else if (durationMs < 60000) {
+            return String.format("%.1fs", durationMs / 1000.0);
+        } else if (durationMs < 3600000) {
+            long minutes = durationMs / 60000;
+            long seconds = (durationMs % 60000) / 1000;
+            return String.format("%dm %ds", minutes, seconds);
+        } else {
+            long hours = durationMs / 3600000;
+            long minutes = (durationMs % 3600000) / 60000;
+            long seconds = (durationMs % 60000) / 1000;
+            return String.format("%dh %dm %ds", hours, minutes, seconds);
+        }
     }
     
     /**
@@ -865,62 +968,6 @@ public class LogRedactionUtil {
         return DIGITS_PATTERN.matcher(numStr).replaceAll("9");
     }
     
-    // Private helper methods for trimming
-    private static JsonNode trimJsonNode(JsonNode node) {
-        if (node.isObject()) {
-            Iterator<String> fieldNames = node.fieldNames();
-            List<String> keysToRemove = new ArrayList<>();
-            
-            while (fieldNames.hasNext()) {
-                String fieldName = fieldNames.next();
-                JsonNode childNode = node.get(fieldName);
-                
-                if (TRIM_FIELDS.contains(fieldName)) {
-                    keysToRemove.add(fieldName);
-                } else {
-                    processTrimField(node, fieldName, childNode);
-                }
-            }
-            
-            // Remove trimmed keys
-            for (String key : keysToRemove) {
-                ((ObjectNode) node).remove(key);
-            }
-        } else if (node.isArray()) {
-            for (JsonNode arrayElement : node) {
-                trimJsonNode(arrayElement);
-            }
-        }
-        return node;
-    }
-    
-    private static void processTrimField(JsonNode parent, String fieldName, JsonNode childNode) {
-        if (childNode.isTextual()) {
-            String textValue = childNode.asText();
-            if (!PRESERVE_TEXT_FIELDS.contains(fieldName) && textValue.length() > 35) {
-                ((ObjectNode) parent).set(fieldName, new TextNode(textValue.substring(0, 35) + "..."));
-            }
-        } else if (childNode.isArray() && childNode.size() > 3) {
-            if (!PRESERVE_ARRAY_FIELDS.contains(fieldName)) {
-                ArrayNode arr = (ArrayNode) childNode;
-                JsonNode first = arr.get(0);
-                int size = arr.size();
-                arr.removeAll();
-                arr.add(first);
-                arr.add(new TextNode("<truncated " + (size - 1) + " elements>"));
-            }
-            // Recursively trim array elements
-            for (JsonNode arrayElement : childNode) {
-                trimJsonNode(arrayElement);
-            }
-        } else if (childNode.isObject()) {
-            if (childNode.isEmpty()) {
-                ((ObjectNode) parent).remove(fieldName);
-            } else {
-                trimJsonNode(childNode);
-            }
-        }
-    }
     
     // Legacy method for backward compatibility with existing QuerySanitizer usage
     private static JSONObject sanitizeObject(JSONObject obj) throws JSONException {

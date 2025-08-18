@@ -134,7 +134,7 @@ public class LogLineAccumulator {
     }
     
     public long getMax() {
-        return max;
+        return count > 0 && max != Long.MIN_VALUE ? max : 0;
     }
     
     public long getMin() {

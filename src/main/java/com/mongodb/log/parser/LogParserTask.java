@@ -473,23 +473,77 @@ class LogParserTask implements Callable<ProcessingStats> {
 	 */
 	private String enhanceReadPreferenceWithNodeType(JSONObject readPref) {
 	    try {
-	        // Clone the original read preference to avoid modifying it
-	        JSONObject enhanced = new JSONObject(readPref.toString());
+	        // Format read preference for display: mode first, then tags on separate lines
+	        StringBuilder formatted = new StringBuilder();
 	        
-	        // Analyze tags to determine node type
+	        // Add mode first
+	        if (readPref.has("mode")) {
+	            formatted.append("mode: ").append(readPref.getString("mode"));
+	        }
+	        
+	        // Add tags on separate lines
 	        if (readPref.has("tags")) {
 	            Object tagsObj = readPref.get("tags");
-	            String nodeType = determineNodeTypeFromTags(tagsObj);
-	            if (!nodeType.isEmpty()) {
-	                enhanced.put("nodeType", nodeType);
+	            String tagsFormatted = formatReadPreferenceTags(tagsObj);
+	            if (!tagsFormatted.isEmpty()) {
+	                if (formatted.length() > 0) {
+	                    formatted.append("<br>");
+	                }
+	                formatted.append(tagsFormatted);
 	            }
 	        }
 	        
-	        return enhanced.toString();
+	        return formatted.length() > 0 ? formatted.toString() : readPref.toString();
 	    } catch (Exception e) {
 	        // If enhancement fails, return original
 	        return readPref.toString();
 	    }
+	}
+	
+	/**
+	 * Format read preference tags for display
+	 */
+	private String formatReadPreferenceTags(Object tagsObj) {
+	    StringBuilder result = new StringBuilder();
+	    
+	    try {
+	        if (tagsObj instanceof JSONArray) {
+	            JSONArray tagsArray = (JSONArray) tagsObj;
+	            for (int i = 0; i < tagsArray.length(); i++) {
+	                if (i > 0) {
+	                    result.append("<br>");
+	                }
+	                Object tagObj = tagsArray.get(i);
+	                if (tagObj instanceof JSONObject) {
+	                    JSONObject tag = (JSONObject) tagObj;
+	                    result.append(formatSingleTag(tag));
+	                }
+	            }
+	        } else if (tagsObj instanceof JSONObject) {
+	            JSONObject tag = (JSONObject) tagsObj;
+	            result.append(formatSingleTag(tag));
+	        }
+	    } catch (Exception e) {
+	        // If formatting fails, return empty
+	    }
+	    
+	    return result.toString();
+	}
+	
+	/**
+	 * Format a single tag object for display
+	 */
+	private String formatSingleTag(JSONObject tag) {
+	    StringBuilder tagFormatted = new StringBuilder();
+	    
+	    for (String key : tag.keySet()) {
+	        if (tagFormatted.length() > 0) {
+	            tagFormatted.append(", ");
+	        }
+	        tagFormatted.append(key).append(": ").append(tag.getString(key));
+	    }
+	    
+	    return tagFormatted.toString();
 	}
 	
 	/**
@@ -998,7 +1052,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 
 	private static Long getMetric(JSONObject attr, String key) {
 		if (attr.has(key)) {
-			return Long.valueOf(attr.getInt(key));
+			return Long.valueOf(attr.getLong(key));
 		}
 		return null;
 	}
