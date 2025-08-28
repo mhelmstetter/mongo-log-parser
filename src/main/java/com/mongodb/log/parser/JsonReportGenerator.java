@@ -10,6 +10,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.mongodb.log.parser.accumulator.Accumulator;
+import com.mongodb.log.parser.accumulator.TwoPassDriverStatsAccumulator;
+import com.mongodb.log.parser.accumulator.DriverStatsEntry;
 import com.mongodb.log.parser.accumulator.ErrorCodeAccumulator;
 import com.mongodb.log.parser.accumulator.IndexStatsAccumulator;
 import com.mongodb.log.parser.accumulator.PlanCacheAccumulator;
@@ -30,6 +32,7 @@ public class JsonReportGenerator {
             ErrorCodeAccumulator errorCodeAccumulator,
             TransactionAccumulator transactionAccumulator,
             IndexStatsAccumulator indexStatsAccumulator,
+            TwoPassDriverStatsAccumulator driverStatsAccumulator,
             Map<String, java.util.concurrent.atomic.AtomicLong> operationTypeStats, boolean redactQueries,
             String earliestTimestamp, String latestTimestamp) throws IOException {
 
@@ -74,6 +77,11 @@ public class JsonReportGenerator {
             report.set("indexStats", generateIndexStatsJson(indexStatsAccumulator, redactQueries));
         }
 
+        // Driver statistics
+        if (driverStatsAccumulator != null && driverStatsAccumulator.hasDriverStats()) {
+            report.set("driverStats", generateDriverStatsJson(driverStatsAccumulator));
+        }
+
         // Write to file
         try (FileWriter writer = new FileWriter(fileName)) {
             mapper.writerWithDefaultPrettyPrinter().writeValue(writer, report);
@@ -106,15 +114,24 @@ public class JsonReportGenerator {
                     LogLineAccumulator acc = entry.getValue();
                     ObjectNode op = mapper.createObjectNode();
                     
-                    op.put("namespace", entry.getKey().toString());
+                    op.put("namespace", entry.getKey().getNamespace());
+                    op.put("operation", acc.getOperation());
                     op.put("count", acc.getCount());
-                    op.put("avgDurationMs", acc.getAvg());
+                    op.put("minDurationMs", acc.getMin());
                     op.put("maxDurationMs", acc.getMax());
+                    op.put("avgDurationMs", acc.getAvg());
+                    op.put("p95DurationMs", Math.round(acc.getPercentile95()));
+                    op.put("totalDurationSec", acc.getCount() * acc.getAvg() / 1000);
+                    op.put("avgKeysExamined", acc.getAvgKeysExamined());
                     op.put("avgDocsExamined", acc.getAvgDocsExamined());
                     op.put("avgDocsReturned", acc.getAvgReturned());
-                    op.put("avgKeysExamined", acc.getAvgDocsExamined()); // Use the same method as it's available
-                    op.put("examineToReturnRatio", acc.getAvgDocsExamined() > 0 ? (double)acc.getAvgReturned() / acc.getAvgDocsExamined() : 0.0);
+                    op.put("examineToReturnRatio", acc.getScannedReturnRatio());
                     op.put("avgShards", acc.getAvgShards());
+                    op.put("avgBytesRead", acc.getAvgBytesRead());
+                    op.put("maxBytesRead", acc.getMaxBytesRead());
+                    op.put("avgBytesWritten", acc.getAvgBytesWritten());
+                    op.put("maxBytesWritten", acc.getMaxBytesWritten());
+                    op.put("avgWriteConflicts", acc.getAvgWriteConflicts());
                     
                     // Add sample log message if available
                     if (acc.getSampleLogMessage() != null) {
@@ -153,7 +170,7 @@ public class JsonReportGenerator {
                     LogLineAccumulator acc = entry.getValue();
                     ObjectNode op = mapper.createObjectNode();
                     
-                    op.put("namespace", entry.getKey().toString());
+                    op.put("namespace", entry.getKey().getNamespace());
                     op.put("count", acc.getCount());
                     op.put("avgDurationMs", acc.getAvg());
                     op.put("maxDurationMs", acc.getMax());
@@ -193,7 +210,8 @@ public class JsonReportGenerator {
         
         // Summary
         ObjectNode summary = mapper.createObjectNode();
-        summary.put("totalErrors", errorCodeAccumulator.getTotalErrorCount());
+        long totalErrors = errorCodeAccumulator.getTotalErrorCount();
+        summary.put("totalErrors", totalErrors);
         summary.put("uniqueErrorCodes", errorCodeAccumulator.getErrorCodeEntries().size());
         errors.set("summary", summary);
 
@@ -206,6 +224,8 @@ public class JsonReportGenerator {
                     error.put("errorCode", entry.getErrorCode() != null ? entry.getErrorCode().toString() : "unknown");
                     error.put("codeName", entry.getCodeName());
                     error.put("count", entry.getCount());
+                    double percentage = totalErrors > 0 ? (entry.getCount() * 100.0 / totalErrors) : 0.0;
+                    error.put("percentage", Math.round(percentage * 10.0) / 10.0); // Round to 1 decimal place
                     error.put("sampleErrorMessage", entry.getSampleErrorMessage());
                     errorList.add(error);
                 });
@@ -235,11 +255,25 @@ public class JsonReportGenerator {
                     query.put("namespace", entry.getKey().getNamespace().toString());
                     query.put("operation", entry.getKey().getOperation());
                     query.put("count", entry.getCount());
-                    query.put("avgDurationMs", entry.getAvg());
+                    query.put("minDurationMs", entry.getMin());
                     query.put("maxDurationMs", entry.getMax());
+                    query.put("avgDurationMs", entry.getAvg());
+                    query.put("p95DurationMs", Math.round(entry.getPercentile95()));
+                    query.put("totalDurationSec", entry.getCount() * entry.getAvg() / 1000);
+                    query.put("avgKeysExamined", entry.getAvgKeysExamined());
                     query.put("avgDocsExamined", entry.getAvgDocsExamined());
                     query.put("avgDocsReturned", entry.getAvgReturned());
+                    query.put("examinedReturnedRatio", entry.getScannedReturnRatio());
+                    query.put("avgShards", entry.getAvgShards());
+                    query.put("avgBytesRead", entry.getAvgBytesRead());
+                    query.put("maxBytesRead", entry.getMaxBytesRead());
+                    query.put("avgBytesWritten", entry.getAvgBytesWritten());
+                    query.put("maxBytesWritten", entry.getMaxBytesWritten());
                     query.put("readPreference", entry.getReadPreferenceSummary());
+                    query.put("readPreferenceTags", entry.getReadPreferenceTagsSummary());
+                    query.put("planSummary", entry.getPlanSummary());
+                    query.put("avgPlanningTimeMs", entry.getAvgPlanningTimeMs());
+                    query.put("replannedPercentage", entry.getReplannedPercentage());
                     query.put("sanitizedQuery", entry.getSanitizedQuery());
                     
                     if (entry.getSampleLogMessage() != null) {
@@ -269,12 +303,73 @@ public class JsonReportGenerator {
     private static JsonNode generateIndexStatsJson(IndexStatsAccumulator indexStatsAccumulator, boolean redactQueries) {
         ObjectNode indexStats = mapper.createObjectNode();
         
-        // Summary - simplified to avoid missing method issues
+        // Summary with actual statistics
         ObjectNode summary = mapper.createObjectNode();
-        summary.put("hasIndexStats", true);
+        long totalOps = indexStatsAccumulator.getTotalOperations();
+        long collScans = indexStatsAccumulator.getCollectionScanOperations();
+        double collScanPercentage = totalOps > 0 ? (collScans * 100.0 / totalOps) : 0.0;
+        
+        summary.put("totalOperations", totalOps);
+        summary.put("uniqueIndexUsagePatterns", indexStatsAccumulator.getUniqueIndexUsagePatterns());
+        summary.put("collectionScans", collScans);
+        summary.put("collectionScanPercentage", Math.round(collScanPercentage * 10.0) / 10.0);
         indexStats.set("summary", summary);
 
-        // Individual index usage would be added here if needed
+        // Individual index usage patterns
+        ArrayNode indexUsageList = mapper.createArrayNode();
+        indexStatsAccumulator.getIndexStatsEntries().values().stream()
+                .sorted((a, b) -> Long.compare(b.getCount(), a.getCount()))
+                .forEach(entry -> {
+                    ObjectNode indexUsage = mapper.createObjectNode();
+                    indexUsage.put("namespace", entry.getNamespace().toString());
+                    indexUsage.put("planSummary", entry.getPlanSummary());
+                    indexUsage.put("count", entry.getCount());
+                    indexUsage.put("minDurationMs", entry.getMinDurationMs());
+                    indexUsage.put("maxDurationMs", entry.getMaxDurationMs());
+                    indexUsage.put("avgDurationMs", entry.getAvgDurationMs());
+                    indexUsage.put("p95DurationMs", Math.round(entry.getPercentile95()));
+                    indexUsage.put("totalDurationSec", entry.getTotalDurationSec());
+                    indexUsage.put("avgKeysExamined", entry.getAvgKeysExamined());
+                    indexUsage.put("avgDocsExamined", entry.getAvgDocsExamined());
+                    indexUsage.put("avgReturned", entry.getAvgReturned());
+                    indexUsage.put("examinedReturnedRatio", entry.getExaminedToReturnedRatio());
+                    indexUsage.put("isCollectionScan", entry.isCollectionScan());
+                    indexUsageList.add(indexUsage);
+                });
+        
+        indexStats.set("indexUsage", indexUsageList);
         return indexStats;
+    }
+
+    private static JsonNode generateDriverStatsJson(TwoPassDriverStatsAccumulator driverStatsAccumulator) {
+        ObjectNode driverStats = mapper.createObjectNode();
+        
+        // Summary with actual statistics
+        ObjectNode summary = mapper.createObjectNode();
+        summary.put("totalConnections", driverStatsAccumulator.getTotalConnections());
+        summary.put("uniqueDriverVersionCombinations", driverStatsAccumulator.getUniqueDriverVersionCombinations());
+        summary.put("uniqueDrivers", driverStatsAccumulator.getUniqueDrivers());
+        driverStats.set("summary", summary);
+
+        // Individual driver statistics
+        ArrayNode driverList = mapper.createArrayNode();
+        driverStatsAccumulator.getDriverStatsEntries().values().stream()
+                .sorted((a, b) -> Long.compare(b.getConnectionCount(), a.getConnectionCount()))
+                .forEach(entry -> {
+                    ObjectNode driver = mapper.createObjectNode();
+                    driver.put("driverName", entry.getDriverName());
+                    driver.put("driverVersion", entry.getDriverVersion());
+                    driver.put("compressors", entry.getCompressorsString());
+                    driver.put("osType", entry.getOsType());
+                    driver.put("osName", entry.getOsName());
+                    driver.put("platform", entry.getPlatform());
+                    driver.put("serverVersion", entry.getServerVersion());
+                    driver.put("connectionCount", entry.getConnectionCount());
+                    driver.put("uniqueHosts", entry.getUniqueHosts());
+                    driverList.add(driver);
+                });
+        
+        driverStats.set("drivers", driverList);
+        return driverStats;
     }
 }

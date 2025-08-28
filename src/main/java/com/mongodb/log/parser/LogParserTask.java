@@ -1,5 +1,6 @@
 package com.mongodb.log.parser;
 
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -12,6 +13,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import com.mongodb.log.parser.accumulator.Accumulator;
+import com.mongodb.log.parser.accumulator.TwoPassDriverStatsAccumulator;
 import com.mongodb.log.parser.accumulator.ErrorCodeAccumulator;
 import com.mongodb.log.parser.accumulator.IndexStatsAccumulator;
 import com.mongodb.log.parser.accumulator.PlanCacheAccumulator;
@@ -19,6 +21,7 @@ import com.mongodb.log.parser.accumulator.QueryHashAccumulator;
 import com.mongodb.log.parser.accumulator.TransactionAccumulator;
 
 class LogParserTask implements Callable<ProcessingStats> {
+	private static int connectionDebugCount = 0;
 	private List<String> linesChunk;
 	private final Accumulator accumulator;
 	private final PlanCacheAccumulator planCacheAccumulator;
@@ -26,6 +29,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 	private final ErrorCodeAccumulator errorCodeAccumulator;
 	private final TransactionAccumulator transactionAccumulator;
 	private final IndexStatsAccumulator indexStatsAccumulator;
+	private final TwoPassDriverStatsAccumulator driverStatsAccumulator;
 	private final Map<String, AtomicLong> operationTypeStats;
 	private final boolean debug;
 	private final Set<String> namespaceFilters;
@@ -38,6 +42,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 			ErrorCodeAccumulator errorCodeAccumulator,
 			TransactionAccumulator transactionAccumulator,
 			IndexStatsAccumulator indexStatsAccumulator,
+			TwoPassDriverStatsAccumulator driverStatsAccumulator,
 			Map<String, AtomicLong> operationTypeStats, boolean debug,
 			Set<String> namespaceFilters, AtomicLong totalFilteredByNamespace, boolean redactQueries, LogParser logParser) {
 		this.linesChunk = linesChunk;
@@ -47,6 +52,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 		this.errorCodeAccumulator = errorCodeAccumulator;
 		this.transactionAccumulator = transactionAccumulator;
 		this.indexStatsAccumulator = indexStatsAccumulator;
+		this.driverStatsAccumulator = driverStatsAccumulator;
 		this.operationTypeStats = operationTypeStats;
 		this.debug = debug;
 		this.namespaceFilters = namespaceFilters;
@@ -66,9 +72,12 @@ class LogParserTask implements Callable<ProcessingStats> {
 
 		for (String currentLine : linesChunk) {
 			
+			// Connection lifecycle debugging disabled - working correctly
+			
 			JSONObject jo = null;
 			try {
 				jo = new JSONObject(currentLine);
+				
 				
 				// Extract timestamp for tracking
 				if (jo.has("t") && logParser != null) {
@@ -89,6 +98,14 @@ class LogParserTask implements Callable<ProcessingStats> {
 	                JSONObject attr = jo.getJSONObject("attr");
 	                processErrorCode(jo, attr);
 	                processTransaction(jo, attr);
+	                // Process ACCESS messages for authentication info
+	                processAccessMessage(jo, attr, currentLine);
+	                // Process connection lifecycle messages
+	                processConnectionLifecycle(jo, attr, currentLine);
+	                // If this is a client metadata message, process it and skip the rest
+	                if (processClientMetadata(jo, attr, currentLine)) {
+	                    continue;
+	                }
 	            }
 				
 			} catch (JSONException jse) {
@@ -275,6 +292,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 			totalFilteredByNamespace.addAndGet(localFilteredByNamespace);
 		}
 
+		// Clear all references to prevent memory leaks
 		this.linesChunk = null;
 		
 		return new ProcessingStats(localParseErrors, localNoAttr, localNoCommand, localNoNs, localFoundOps);
@@ -373,12 +391,19 @@ class LogParserTask implements Callable<ProcessingStats> {
 	        if (attr.has("command")) {
 	            JSONObject command = attr.getJSONObject("command");
 
-	            // Extract read preference - convert to string for storage and analyze node type
+	            // Extract read preference mode and tags separately
 	            if (command.has("$readPreference")) {
 	                Object readPrefObj = command.get("$readPreference");
 	                if (readPrefObj instanceof JSONObject) {
 	                    JSONObject readPref = (JSONObject) readPrefObj;
-	                    slowQuery.readPreference = enhanceReadPreferenceWithNodeType(readPref);
+	                    // Store mode
+	                    if (readPref.has("mode")) {
+	                        slowQuery.readPreference = readPref.getString("mode");
+	                    }
+	                    // Store tags separately
+	                    if (readPref.has("tags")) {
+	                        slowQuery.readPreferenceTags = formatAllReadPreferenceTags(readPref.get("tags"));
+	                    }
 	                } else if (readPrefObj instanceof String) {
 	                    slowQuery.readPreference = (String) readPrefObj;
 	                }
@@ -450,7 +475,14 @@ class LogParserTask implements Callable<ProcessingStats> {
 	                    Object readPrefObj = originatingCommand.get("$readPreference");
 	                    if (readPrefObj instanceof JSONObject) {
 	                        JSONObject readPref = (JSONObject) readPrefObj;
-	                        slowQuery.readPreference = readPref.toString();
+	                        // Store mode
+	                        if (readPref.has("mode")) {
+	                            slowQuery.readPreference = readPref.getString("mode");
+	                        }
+	                        // Store tags separately if not already set
+	                        if (slowQuery.readPreferenceTags == null && readPref.has("tags")) {
+	                            slowQuery.readPreferenceTags = formatAllReadPreferenceTags(readPref.get("tags"));
+	                        }
 	                    } else if (readPrefObj instanceof String) {
 	                        slowQuery.readPreference = (String) readPrefObj;
 	                    }
@@ -469,41 +501,10 @@ class LogParserTask implements Callable<ProcessingStats> {
 	}
 	
 	/**
-	 * Enhance read preference with node type analysis (analytics vs voting)
+	 * Format all read preference tags as a string with each tag on a new line
+	 * Format: "key1:value1,key2:value2<br>key3:value3" for multiple tag objects
 	 */
-	private String enhanceReadPreferenceWithNodeType(JSONObject readPref) {
-	    try {
-	        // Format read preference for display: mode first, then tags on separate lines
-	        StringBuilder formatted = new StringBuilder();
-	        
-	        // Add mode first
-	        if (readPref.has("mode")) {
-	            formatted.append("mode: ").append(readPref.getString("mode"));
-	        }
-	        
-	        // Add tags on separate lines
-	        if (readPref.has("tags")) {
-	            Object tagsObj = readPref.get("tags");
-	            String tagsFormatted = formatReadPreferenceTags(tagsObj);
-	            if (!tagsFormatted.isEmpty()) {
-	                if (formatted.length() > 0) {
-	                    formatted.append("<br>");
-	                }
-	                formatted.append(tagsFormatted);
-	            }
-	        }
-	        
-	        return formatted.length() > 0 ? formatted.toString() : readPref.toString();
-	    } catch (Exception e) {
-	        // If enhancement fails, return original
-	        return readPref.toString();
-	    }
-	}
-	
-	/**
-	 * Format read preference tags for display
-	 */
-	private String formatReadPreferenceTags(Object tagsObj) {
+	private String formatAllReadPreferenceTags(Object tagsObj) {
 	    StringBuilder result = new StringBuilder();
 	    
 	    try {
@@ -529,6 +530,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 	    
 	    return result.toString();
 	}
+	
 	
 	/**
 	 * Format a single tag object for display
@@ -901,6 +903,9 @@ class LogParserTask implements Callable<ProcessingStats> {
 		if (attr.has("ninserted")) {
 			slowQuery.nreturned = getMetric(attr, "ninserted");
 		}
+
+		// Extract write conflicts
+		slowQuery.writeConflicts = getMetric(attr, "writeConflicts");
 	}
 
 	private void processStorageMetrics(JSONObject attr, SlowQuery slowQuery) {
@@ -1042,6 +1047,203 @@ class LogParserTask implements Callable<ProcessingStats> {
 	            LogParser.logger.debug("Error processing transaction: {}", e.getMessage());
 	        }
 	    }
+	}
+	
+	private void processAccessMessage(JSONObject jo, JSONObject attr, String originalLine) {
+	    try {
+	        // Check if this is an ACCESS message with successful authentication
+	        if (jo.has("c") && "ACCESS".equals(jo.getString("c")) && 
+	            jo.has("msg") && "Successfully authenticated".equals(jo.getString("msg"))) {
+	            
+	            String ctx = null;
+	            String username = null;
+	            String database = null;
+	            String mechanism = null;
+	            
+	            // Extract ctx
+	            if (jo.has("ctx")) {
+	                ctx = jo.getString("ctx");
+	            }
+	            
+	            // Extract authentication details from attr
+	            if (attr != null) {
+	                if (attr.has("user")) {
+	                    username = attr.getString("user");
+	                }
+	                if (attr.has("db")) {
+	                    database = attr.getString("db");
+	                }
+	                if (attr.has("mechanism")) {
+	                    mechanism = attr.getString("mechanism");
+	                }
+	            }
+	            
+	            // Record the authentication info for later joining with metadata
+	            if (ctx != null && username != null) {
+	                synchronized (driverStatsAccumulator) {
+	                    driverStatsAccumulator.recordAuthentication(ctx, username, database, mechanism);
+	                }
+	            }
+	        }
+	    } catch (Exception e) {
+	        if (debug) {
+	            LogParser.logger.debug("Error processing ACCESS message: {}", e.getMessage());
+	        }
+	    }
+	}
+	
+	private boolean processClientMetadata(JSONObject jo, JSONObject attr, String originalLine) {
+	    try {
+	        // Check if this is a client metadata message
+	        if (jo.has("c") && "NETWORK".equals(jo.getString("c")) && 
+	            jo.has("msg") && "client metadata".equals(jo.getString("msg"))) {
+	            
+	            String ctx = null;
+	            String remote = null;
+	            String driverName = null;
+	            String driverVersion = null;
+	            Set<String> compressors = new HashSet<>();
+	            String osType = null;
+	            String osName = null;
+	            String platform = null;
+	            String serverVersion = null;
+	            
+	            // Extract ctx
+	            if (jo.has("ctx")) {
+	                ctx = jo.getString("ctx");
+	            }
+	            
+	            // Extract remote host
+	            if (attr.has("remote")) {
+	                remote = attr.getString("remote");
+	            }
+	            
+	            // Extract negotiated compressors
+	            if (attr.has("negotiatedCompressors")) {
+	                JSONArray compressorsArray = attr.getJSONArray("negotiatedCompressors");
+	                for (int i = 0; i < compressorsArray.length(); i++) {
+	                    compressors.add(compressorsArray.getString(i));
+	                }
+	            }
+	            
+	            // Extract driver info from doc field
+	            if (attr.has("doc")) {
+	                JSONObject doc = attr.getJSONObject("doc");
+	                
+	                // Driver information
+	                if (doc.has("driver")) {
+	                    JSONObject driver = doc.getJSONObject("driver");
+	                    if (driver.has("name")) {
+	                        driverName = driver.getString("name");
+	                    }
+	                    if (driver.has("version")) {
+	                        driverVersion = driver.getString("version");
+	                    }
+	                }
+	                
+	                // OS information
+	                if (doc.has("os")) {
+	                    JSONObject os = doc.getJSONObject("os");
+	                    if (os.has("type")) {
+	                        osType = os.getString("type");
+	                    }
+	                    if (os.has("name")) {
+	                        osName = os.getString("name");
+	                    }
+	                }
+	                
+	                // Platform information
+	                if (doc.has("platform")) {
+	                    platform = doc.getString("platform");
+	                }
+	                
+	                // MongoDB server version from mongos field
+	                if (doc.has("mongos")) {
+	                    JSONObject mongos = doc.getJSONObject("mongos");
+	                    if (mongos.has("version")) {
+	                        serverVersion = mongos.getString("version");
+	                    }
+	                }
+	            }
+	            
+	            // Only accumulate if we have meaningful driver information
+	            if (driverName != null || driverVersion != null) {
+	                synchronized (driverStatsAccumulator) {
+	                    driverStatsAccumulator.accumulate(driverName, driverVersion, compressors,
+	                        osType, osName, platform, serverVersion, remote, ctx);
+	                }
+	            }
+	            
+	            return true; // Successfully processed client metadata
+	        }
+	    } catch (Exception e) {
+	        if (debug) {
+	            LogParser.logger.debug("Error processing client metadata: {}", e.getMessage());
+	        }
+	    }
+	    
+	    return false; // Not a client metadata message
+	}
+	
+	private void processConnectionLifecycle(JSONObject jo, JSONObject attr, String originalLine) {
+	    if (!jo.has("msg") || driverStatsAccumulator == null) {
+	        return;
+	    }
+	    
+	    try {
+	        String msg = jo.getString("msg");
+	        
+	        // Debug logging disabled - connection lifecycle tracking working correctly
+	        
+	        // Handle connection accepted (start)
+	        if ("Connection accepted".equals(msg) && attr.has("connectionId")) {
+	            long connectionId = attr.getLong("connectionId");
+	            String ctx = "conn" + connectionId;
+	            
+	            // Extract timestamp
+	            long timestamp = extractTimestamp(originalLine);
+	            if (timestamp > 0) {
+	                synchronized (driverStatsAccumulator) {
+	                    driverStatsAccumulator.trackConnectionStart(ctx, timestamp);
+	                }
+	            }
+	        }
+	        // Handle connection ended (end)
+	        else if ("Connection ended".equals(msg) && jo.has("ctx")) {
+	            String ctx = jo.getString("ctx");
+	            if (ctx.startsWith("conn")) {
+	                // Extract timestamp
+	                long timestamp = extractTimestamp(originalLine);
+	                if (timestamp > 0) {
+	                    synchronized (driverStatsAccumulator) {
+	                        driverStatsAccumulator.trackConnectionEnd(ctx, timestamp);
+	                    }
+	                }
+	            }
+	        }
+	    } catch (Exception e) {
+	        if (debug) {
+	            LogParser.logger.debug("Error processing connection lifecycle: {}", e.getMessage());
+	        }
+	    }
+	}
+	
+	// Helper method to extract timestamp
+	private long extractTimestamp(String logLine) {
+	    if (logLine != null && logLine.contains("\"$date\":\"")) {
+	        try {
+	            int dateIndex = logLine.indexOf("\"$date\":\"") + 9;
+	            int endIndex = logLine.indexOf("\"", dateIndex);
+	            if (endIndex > dateIndex) {
+	                String dateStr = logLine.substring(dateIndex, endIndex);
+	                java.time.Instant instant = java.time.Instant.parse(dateStr);
+	                return instant.toEpochMilli();
+	            }
+	        } catch (Exception e) {
+	            // Ignore parsing errors
+	        }
+	    }
+	    return 0;
 	}
 
 	private void incrementOperationStat(String operationType) {

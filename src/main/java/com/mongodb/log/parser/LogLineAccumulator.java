@@ -32,6 +32,9 @@ public class LogLineAccumulator {
     private long minStorageBytesWritten = Long.MAX_VALUE;
     private long maxStorageBytesWritten = Long.MIN_VALUE;
     
+    // Write conflicts tracking
+    private long totalWriteConflicts = 0;
+    
     // Sample log message storage - store the log message for the slowest query
     private String sampleLogMessage = null;
     private long maxDurationForSample = 0;
@@ -128,6 +131,12 @@ public class LogLineAccumulator {
         }
     }
 
+    public void addWriteConflicts(Long writeConflicts) {
+        if (writeConflicts != null) {
+            this.totalWriteConflicts += writeConflicts;
+        }
+    }
+
     // Getter methods
     public long getCount() {
         return count;
@@ -202,6 +211,10 @@ public class LogLineAccumulator {
     
     public long getMaxBytesWritten() {
         return minStorageBytesWritten != Long.MAX_VALUE ? maxStorageBytesWritten : 0;
+    }
+    
+    public long getAvgWriteConflicts() {
+        return count > 0 ? totalWriteConflicts / count : 0;
     }
     
     public String toString() {

@@ -1,5 +1,8 @@
 package com.mongodb.log.parser.model;
 
+import java.text.NumberFormat;
+import java.util.Locale;
+
 import com.mongodb.log.parser.LogLineAccumulator;
 
 /**
@@ -28,6 +31,7 @@ public class MainOperationEntry {
     private long maxBytesRead;
     private long avgBytesWritten;
     private long maxBytesWritten;
+    private long avgWriteConflicts;
     private String sampleLogMessage;
     private boolean hasCollScan;
     
@@ -60,6 +64,7 @@ public class MainOperationEntry {
         this.maxBytesRead = accumulator.getMaxBytesRead();
         this.avgBytesWritten = accumulator.getAvgBytesWritten();
         this.maxBytesWritten = accumulator.getMaxBytesWritten();
+        this.avgWriteConflicts = accumulator.getAvgWriteConflicts();
         this.sampleLogMessage = accumulator.getSampleLogMessage();
         this.hasCollScan = (accumulator.getSampleLogMessage() != null && 
                            accumulator.getSampleLogMessage().contains("COLLSCAN"));
@@ -234,6 +239,14 @@ public class MainOperationEntry {
         this.maxBytesWritten = maxBytesWritten;
     }
 
+    public long getAvgWriteConflicts() {
+        return avgWriteConflicts;
+    }
+
+    public void setAvgWriteConflicts(long avgWriteConflicts) {
+        this.avgWriteConflicts = avgWriteConflicts;
+    }
+
     public String getSampleLogMessage() {
         return sampleLogMessage;
     }
@@ -268,35 +281,40 @@ public class MainOperationEntry {
      * Returns the formatted P95 with one decimal place
      */
     public String getFormattedP95Ms() {
-        return String.format("%.1f", p95Ms);
+        NumberFormat numberFormat = NumberFormat.getNumberInstance(Locale.US);
+        return numberFormat.format(Math.round(p95Ms));
     }
 
     /**
      * Returns the formatted keys P95 with one decimal place
      */
     public String getFormattedKeysP95() {
-        return String.format("%.1f", keysP95);
+        NumberFormat numberFormat = NumberFormat.getNumberInstance(Locale.US);
+        return numberFormat.format(Math.round(keysP95));
     }
 
     /**
      * Returns the formatted docs P95 with one decimal place
      */
     public String getFormattedDocsP95() {
-        return String.format("%.1f", docsP95);
+        NumberFormat numberFormat = NumberFormat.getNumberInstance(Locale.US);
+        return numberFormat.format(Math.round(docsP95));
     }
 
     /**
      * Returns the formatted total keys in thousands with one decimal place
      */
     public String getFormattedTotalKeysK() {
-        return String.format("%.1f", totalKeysK);
+        NumberFormat numberFormat = NumberFormat.getNumberInstance(Locale.US);
+        return numberFormat.format(Math.round(totalKeysK));
     }
 
     /**
      * Returns the formatted total docs in thousands with one decimal place
      */
     public String getFormattedTotalDocsK() {
-        return String.format("%.1f", totalDocsK);
+        NumberFormat numberFormat = NumberFormat.getNumberInstance(Locale.US);
+        return numberFormat.format(Math.round(totalDocsK));
     }
 
     /**
@@ -381,6 +399,13 @@ public class MainOperationEntry {
      */
     public String getFormattedMaxBytesWrittenCell() {
         return "<td class=\"number\" data-sort-value=\"" + maxBytesWritten + "\">" + formatBytes(maxBytesWritten) + "</td>";
+    }
+
+    /**
+     * Returns the formatted average write conflicts with thousands separator
+     */
+    public String getFormattedAvgWriteConflicts() {
+        return String.format("%,d", avgWriteConflicts);
     }
 
     /**

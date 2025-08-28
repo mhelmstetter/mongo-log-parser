@@ -7,8 +7,12 @@ import java.text.NumberFormat;
 import java.util.Comparator;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import com.mongodb.log.parser.accumulator.Accumulator;
+import com.mongodb.log.parser.accumulator.TwoPassDriverStatsAccumulator;
+import com.mongodb.log.parser.accumulator.DriverStatsEntry;
 import com.mongodb.log.parser.accumulator.ErrorCodeAccumulator;
 import com.mongodb.log.parser.accumulator.IndexStatsAccumulator;
 import com.mongodb.log.parser.accumulator.IndexStatsEntry;
@@ -35,6 +39,7 @@ public class HtmlReportGenerator {
 	        ErrorCodeAccumulator errorCodeAccumulator,
 	        TransactionAccumulator transactionAccumulator,
 	        IndexStatsAccumulator indexStatsAccumulator,
+	        TwoPassDriverStatsAccumulator driverStatsAccumulator,
 	        Map<String, java.util.concurrent.atomic.AtomicLong> operationTypeStats, boolean redactQueries,
 	        String earliestTimestamp, String latestTimestamp) throws IOException {
 
@@ -42,7 +47,7 @@ public class HtmlReportGenerator {
 	        writeHtmlHeader(writer);
 	        writeNavigationHeader(writer, accumulator, ttlAccumulator, planCacheAccumulator, 
 	                             queryHashAccumulator, errorCodeAccumulator, transactionAccumulator, 
-	                             indexStatsAccumulator, operationTypeStats, earliestTimestamp, latestTimestamp);
+	                             indexStatsAccumulator, driverStatsAccumulator, operationTypeStats, earliestTimestamp, latestTimestamp);
 	        writeMainOperationsTable(writer, accumulator, redactQueries);
 	        writeTtlOperationsTable(writer, ttlAccumulator);
 	        writeOperationStatsTable(writer, operationTypeStats);
@@ -58,6 +63,10 @@ public class HtmlReportGenerator {
 
 	        if (indexStatsAccumulator != null && indexStatsAccumulator.hasIndexStats()) {
 	            writeIndexStatsTable(writer, indexStatsAccumulator, redactQueries);
+	        }
+
+	        if (driverStatsAccumulator != null && driverStatsAccumulator.hasDriverStats()) {
+	            writeDriverStatsTable(writer, driverStatsAccumulator);
 	        }
 
 	        writeHtmlFooter(writer);
@@ -163,6 +172,7 @@ public class HtmlReportGenerator {
 	        Accumulator ttlAccumulator, PlanCacheAccumulator planCacheAccumulator,
 	        QueryHashAccumulator queryHashAccumulator, ErrorCodeAccumulator errorCodeAccumulator,
 	        TransactionAccumulator transactionAccumulator, IndexStatsAccumulator indexStatsAccumulator,
+	        TwoPassDriverStatsAccumulator driverStatsAccumulator,
 	        Map<String, java.util.concurrent.atomic.AtomicLong> operationTypeStats,
 	        String earliestTimestamp, String latestTimestamp) {
 	    
@@ -201,9 +211,14 @@ public class HtmlReportGenerator {
 	        writer.println("                    <a href=\"#transactions\" class=\"nav-link\">Transaction Analysis</a>");
 	    }
 	    
-	    // Index Usage Statistics (last)
+	    // Index Usage Statistics
 	    if (indexStatsAccumulator != null && indexStatsAccumulator.hasIndexStats()) {
 	        writer.println("                    <a href=\"#index-stats\" class=\"nav-link\">Index Usage Statistics</a>");
+	    }
+	    
+	    // Driver Statistics (last)
+	    if (driverStatsAccumulator != null && driverStatsAccumulator.hasDriverStats()) {
+	        writer.println("                    <a href=\"#driver-stats\" class=\"nav-link\">Driver Statistics</a>");
 	    }
 	    
 	    writer.println("                </div>");
@@ -316,6 +331,8 @@ public class HtmlReportGenerator {
 				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 15, 'number')\">Avg Write</th>");
 		writer.println(
 				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 16, 'number')\">Max Write</th>");
+		writer.println(
+				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 17, 'number')\">Avg Write Conflicts</th>");
 		writer.println("                    </tr>");
 		writer.println("                </thead>");
 		writer.println("                <tbody>");
@@ -350,6 +367,7 @@ public class HtmlReportGenerator {
 			writer.println(op.getFormattedAvgBytesWrittenCell());
 			writer.print("                        ");
 			writer.println(op.getFormattedMaxBytesWrittenCell());
+			writer.println("                        <td class=\"number\">" + op.getFormattedAvgWriteConflicts() + "</td>");
 			writer.println("                    </tr>");
 			
 			// Add accordion content row for sample log message
@@ -571,11 +589,13 @@ public class HtmlReportGenerator {
 		writer.println(
 				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 18, 'string')\">Read Preference</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 19, 'string')\">Plan Summary</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 19, 'string')\">Read Preference Tags</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 20, 'number')\">Avg Plan (ms)</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 20, 'string')\">Plan Summary</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 21, 'number')\">Replan %</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 21, 'number')\">Avg Plan (ms)</th>");
+		writer.println(
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 22, 'number')\">Replan %</th>");
 		writer.println("                    </tr>");
 		writer.println("                </thead>");
 		writer.println("                <tbody>");
@@ -603,7 +623,7 @@ public class HtmlReportGenerator {
 					writer.println("                        <td class=\"number\">"
 							+ NUMBER_FORMAT.format(entry.getAvg()) + "</td>");
 					writer.println("                        <td class=\"number\">"
-							+ String.format("%.0f", entry.getPercentile95()) + "</td>");
+							+ NUMBER_FORMAT.format(Math.round(entry.getPercentile95())) + "</td>");
 					writer.println("                        <td class=\"number\">"
 							+ NUMBER_FORMAT.format((entry.getCount() * entry.getAvg()) / 1000) + "</td>");
 					writer.println("                        <td class=\"number\">"
@@ -627,6 +647,14 @@ public class HtmlReportGenerator {
 					writer.println("                        <td class=\"truncated multiline\" title=\""
 					        + escapeHtml(entry.getReadPreferenceSummary().replace("<br>", ", ")) + "\">"
 					        + entry.getReadPreferenceSummaryTruncated(30) + "</td>");
+					String readPrefTagsSummary = entry.getReadPreferenceTagsSummary();
+					if (readPrefTagsSummary != null && !readPrefTagsSummary.isEmpty()) {
+						writer.println("                        <td class=\"truncated multiline\" title=\""
+						        + escapeHtml(readPrefTagsSummary.replace("<br>", ", ")) + "\">"
+						        + entry.getReadPreferenceTagsSummaryTruncated(30) + "</td>");
+					} else {
+						writer.println("                        <td></td>");
+					}
 					String planSummary = entry.getPlanSummary();
 					String compressedPlanSummary = compressPlanSummary(planSummary);
 					writer.println("                        <td class=\"wrapped\" title=\""
@@ -882,7 +910,7 @@ public class HtmlReportGenerator {
 					writer.println("                        <td class=\"number\">"
 							+ NUMBER_FORMAT.format(entry.getAvg()) + "</td>");
 					writer.println("                        <td class=\"number\">"
-							+ String.format("%.0f", entry.getPercentile95()) + "</td>");
+							+ NUMBER_FORMAT.format(Math.round(entry.getPercentile95())) + "</td>");
 					writer.println("                        <td class=\"number\">"
 							+ NUMBER_FORMAT.format(entry.getAvgKeysExamined()) + "</td>");
 					writer.println("                        <td class=\"number\">"
@@ -1099,7 +1127,7 @@ public class HtmlReportGenerator {
 	                writer.println("                        <td class=\"number\">"
 	                        + NUMBER_FORMAT.format(entry.getAvgDurationMs()) + "</td>");
 	                writer.println("                        <td class=\"number\">"
-	                        + String.format("%.0f", entry.getPercentile95()) + "</td>");
+	                        + NUMBER_FORMAT.format(Math.round(entry.getPercentile95())) + "</td>");
 	                writer.println("                        <td class=\"number\">"
 	                        + NUMBER_FORMAT.format(entry.getTotalDurationSec()) + "</td>");
 	                writer.println("                        <td class=\"number\">"
@@ -1219,6 +1247,143 @@ public class HtmlReportGenerator {
 	    writer.println("        </div>");
 	}
 
+	private static void writeDriverStatsTable(PrintWriter writer, TwoPassDriverStatsAccumulator driverStatsAccumulator) {
+	    if (driverStatsAccumulator == null || !driverStatsAccumulator.hasDriverStats()) {
+	        return;
+	    }
+
+	    writer.println("        <h2 id=\"driver-stats\">Driver Statistics</h2>");
+	    var entries = driverStatsAccumulator.getDriverStatsEntries().values();
+	    long totalConnections = driverStatsAccumulator.getTotalConnections();
+	    long uniqueDrivers = driverStatsAccumulator.getUniqueDrivers();
+
+	    // Summary
+	    writer.println("        <div class=\"summary\">");
+	    writer.println("            <h3>Driver Summary</h3>");
+	    writer.println("            <div class=\"summary-grid\">");
+	    writer.println("                <div class=\"summary-item\">");
+	    writer.println("                    <div class=\"summary-label\">Total Connections</div>");
+	    writer.println("                    <div class=\"summary-value\">" + NUMBER_FORMAT.format(totalConnections) + "</div>");
+	    writer.println("                </div>");
+	    writer.println("                <div class=\"summary-item\">");
+	    writer.println("                    <div class=\"summary-label\">Unique Driver/Version Combinations</div>");
+	    writer.println("                    <div class=\"summary-value\">" + NUMBER_FORMAT.format(driverStatsAccumulator.getUniqueDriverVersionCombinations()) + "</div>");
+	    writer.println("                </div>");
+	    writer.println("                <div class=\"summary-item\">");
+	    writer.println("                    <div class=\"summary-label\">Unique Drivers</div>");
+	    writer.println("                    <div class=\"summary-value\">" + NUMBER_FORMAT.format(uniqueDrivers) + "</div>");
+	    writer.println("                </div>");
+	    writer.println("            </div>");
+	    writer.println("        </div>");
+
+	    // Table
+	    writer.println("        <div class=\"table-container\">");
+	    writer.println("            <div class=\"controls\">");
+	    writer.println("                <input type=\"text\" id=\"driverStatsFilter\" class=\"filter-input\" placeholder=\"Filter by driver name, version, OS...\">");
+	    writer.println("                <select id=\"driverStatsColumnFilter\" class=\"column-filter\" style=\"margin-left: 10px; padding: 5px 10px; border: 1px solid #ddd; border-radius: 4px;\">");
+	    writer.println("                    <option value=\"all\">All Columns</option>");
+	    writer.println("                    <option value=\"0\">Driver Name</option>");
+	    writer.println("                    <option value=\"1\">Version</option>");
+	    writer.println("                    <option value=\"2\">Compressors</option>");
+	    writer.println("                    <option value=\"3\">OS Type</option>");
+	    writer.println("                    <option value=\"4\">Platform</option>");
+	    writer.println("                    <option value=\"5\">Username</option>");
+	    writer.println("                    <option value=\"6\"># Connections</option>");
+	    writer.println("                    <option value=\"7\">Avg Conn Lifetime</option>");
+	    writer.println("                    <option value=\"8\">Max Conn Lifetime</option>");
+	    writer.println("                </select>");
+	    writer.println("                <button class=\"clear-btn\" onclick=\"clearDriverStatsFilter()\" style=\"margin-left: 10px;\">Clear Filter</button>");
+	    writer.println("            </div>");
+	    writer.println("            <table id=\"driverStatsTable\">");
+	    writer.println("                <thead>");
+	    writer.println("                    <tr>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('driverStatsTable', 0, 'string')\">Driver Name</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('driverStatsTable', 1, 'string')\">Version</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('driverStatsTable', 2, 'string')\">Compressors</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('driverStatsTable', 3, 'string')\">OS Type</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('driverStatsTable', 4, 'string')\">Platform</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('driverStatsTable', 5, 'string')\">Username</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('driverStatsTable', 6, 'number')\"># Connections</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('driverStatsTable', 7, 'string')\">Avg Conn Lifetime</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('driverStatsTable', 8, 'string')\">Max Conn Lifetime</th>");
+	    writer.println("                    </tr>");
+	    writer.println("                </thead>");
+	    writer.println("                <tbody>");
+
+	    java.util.concurrent.atomic.AtomicInteger entryCounter = new java.util.concurrent.atomic.AtomicInteger(0);
+	    entries.stream()
+	            .sorted((a, b) -> Long.compare(b.getConnectionCount(), a.getConnectionCount()))
+	            .forEach(entry -> {
+	                String entryId = "driver-" + entryCounter.getAndIncrement();
+	                
+	                // Each entry now represents a unique driver+version+OS+platform+compressor+username combination
+	                String compressorsDisplay = entry.getCompressorsString();
+	                String usernameDisplay = entry.getUsernamesString();
+	                
+	                writer.println("                    <tr class=\"accordion-row\" onclick=\"toggleAccordion('" + entryId + "')\">");
+	                writer.println("                        <td class=\"truncated\" title=\"" + escapeHtml(entry.getDriverName()) + "\"><span class=\"accordion-toggle\"></span>" + escapeHtml(entry.getDriverName()) + "</td>");
+	                writer.println("                        <td>" + escapeHtml(entry.getDriverVersion()) + "</td>");
+	                writer.println("                        <td>" + escapeHtml(compressorsDisplay) + "</td>");
+	                writer.println("                        <td>" + escapeHtml(entry.getOsType()) + "</td>");
+	                writer.println("                        <td title=\"" + escapeHtml(entry.getPlatform()) + "\">" + escapeHtml(entry.getPlatform()) + "</td>");
+	                writer.println("                        <td>" + (usernameDisplay.equals("none") ? "<span style=\"color: #999;\">none</span>" : escapeHtml(usernameDisplay)) + "</td>");
+	                writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(entry.getConnectionCount()) + "</td>");
+	                writer.println("                        <td>" + escapeHtml(entry.getFormattedAverageConnectionLifetime()) + "</td>");
+	                writer.println("                        <td>" + escapeHtml(entry.getFormattedMaxConnectionLifetime()) + "</td>");
+	                writer.println("                    </tr>");
+	                
+	                // Add accordion content
+	                addDriverAccordionContent(writer, entryId, entry);
+	            });
+
+	    writer.println("                </tbody>");
+	    writer.println("            </table>");
+	    writer.println("        </div>");
+	}
+
+	private static void addDriverAccordionContent(PrintWriter writer, String entryId, DriverStatsEntry entry) {
+	    writer.println("                    <tr id=\"" + entryId + "\" class=\"accordion-content\">");
+	    writer.println("                        <td colspan=\"9\">"    );
+	    
+	    // Display sample metadata message
+	    java.util.List<String> metadataMessages = entry.getSampleMetadataMessages();
+	    if (!metadataMessages.isEmpty()) {
+	        String message = metadataMessages.get(0);
+	        String enhancedMessage = LogRedactionUtil.enhanceLogMessageForHtml(message);
+	        enhancedMessage = escapeHtml(enhancedMessage);
+	        writer.println("                            <div class=\"log-sample\">");
+	        writer.println("                                <h4>Sample Metadata Message</h4>");
+	        writer.println("                                <div style=\"margin-bottom: 10px; padding: 8px; background: #f8f9fa; border-left: 3px solid #00684A;\">");
+	        writer.println("                                    " + enhancedMessage);
+	        writer.println("                                </div>");
+	        writer.println("                            </div>");
+	    }
+	    
+	    // Display sample auth message
+	    java.util.List<String> authMessages = entry.getSampleAuthMessages();
+	    if (!authMessages.isEmpty()) {
+	        String message = authMessages.get(0);
+	        String enhancedMessage = LogRedactionUtil.enhanceLogMessageForHtml(message);
+	        enhancedMessage = escapeHtml(enhancedMessage);
+	        writer.println("                            <div class=\"log-sample\" style=\"margin-top: 15px;\">");
+	        writer.println("                                <h4>Sample Authentication Message</h4>");
+	        writer.println("                                <div style=\"margin-bottom: 10px; padding: 8px; background: #f8f9fa; border-left: 3px solid #0066CC;\">");
+	        writer.println("                                    " + enhancedMessage);
+	        writer.println("                                </div>");
+	        writer.println("                            </div>");
+	    }
+	    
+	    // If no sample messages available
+	    if (metadataMessages.isEmpty() && authMessages.isEmpty()) {
+	        writer.println("                            <div class=\"log-sample\" style=\"color: #666; font-style: italic;\">");
+	        writer.println("                                No sample log messages available for this driver.");
+	        writer.println("                            </div>");
+	    }
+	    
+	    writer.println("                        </td>");
+	    writer.println("                    </tr>");
+	}
+
 	private static void writeHtmlFooter(PrintWriter writer) {
 	    writer.println("    </div>");
 	    writer.println("    <script>");
@@ -1325,13 +1490,51 @@ public class HtmlReportGenerator {
 	    writer.println("            const table = document.getElementById(tableId);");
 	    writer.println("            const rows = table.querySelectorAll('tbody tr');");
 	    writer.println("            ");
+	    writer.println("            // Check if this is the driver stats table and we have column filter");
+	    writer.println("            let columnFilter = null;");
+	    writer.println("            if (tableId === 'driverStatsTable') {");
+	    writer.println("                const columnSelect = document.getElementById('driverStatsColumnFilter');");
+	    writer.println("                if (columnSelect) {");
+	    writer.println("                    columnFilter = columnSelect.value;");
+	    writer.println("                }");
+	    writer.println("            }");
+	    writer.println("            ");
 	    writer.println("            rows.forEach(row => {");
-	    writer.println("                const text = row.textContent.toLowerCase();");
-	    writer.println("                if (text.includes(filter)) {");
+	    writer.println("                // Skip accordion content rows");
+	    writer.println("                if (row.classList.contains('accordion-content')) {");
+	    writer.println("                    return;");
+	    writer.println("                }");
+	    writer.println("                ");
+	    writer.println("                let text = '';");
+	    writer.println("                if (columnFilter && columnFilter !== 'all') {");
+	    writer.println("                    // Filter by specific column");
+	    writer.println("                    const cell = row.cells[parseInt(columnFilter)];");
+	    writer.println("                    text = cell ? cell.textContent.toLowerCase() : '';");
+	    writer.println("                } else {");
+	    writer.println("                    // Filter by all columns (default behavior)");
+	    writer.println("                    text = row.textContent.toLowerCase();");
+	    writer.println("                }");
+	    writer.println("                ");
+	    writer.println("                const matches = text.includes(filter);");
+	    writer.println("                ");
+	    writer.println("                // Show/hide main row");
+	    writer.println("                if (matches) {");
 	    writer.println("                    row.style.display = '';");
 	    writer.println("                    row.classList.remove('highlight');");
 	    writer.println("                } else {");
 	    writer.println("                    row.style.display = 'none';");
+	    writer.println("                }");
+	    writer.println("                ");
+	    writer.println("                // Also hide/show corresponding accordion content if it exists");
+	    writer.println("                const accordionId = row.getAttribute('onclick');");
+	    writer.println("                if (accordionId) {");
+	    writer.println("                    const match = accordionId.match(/toggleAccordion\\('([^']+)'\\)/);");
+	    writer.println("                    if (match) {");
+	    writer.println("                        const accordionRow = document.getElementById(match[1]);");
+	    writer.println("                        if (accordionRow) {");
+	    writer.println("                            accordionRow.style.display = matches ? '' : 'none';");
+	    writer.println("                        }");
+	    writer.println("                    }");
 	    writer.println("                }");
 	    writer.println("            });");
 	    writer.println("        }");
@@ -1339,6 +1542,12 @@ public class HtmlReportGenerator {
 	    writer.println("        function clearFilter(inputId, tableId) {");
 	    writer.println("            document.getElementById(inputId).value = '';");
 	    writer.println("            filterTable(inputId, tableId);");
+	    writer.println("        }");
+	    writer.println("");
+	    writer.println("        function clearDriverStatsFilter() {");
+	    writer.println("            document.getElementById('driverStatsFilter').value = '';");
+	    writer.println("            document.getElementById('driverStatsColumnFilter').value = 'all';");
+	    writer.println("            filterTable('driverStatsFilter', 'driverStatsTable');");
 	    writer.println("        }");
 	    writer.println("");
 	    writer.println("        // Add event listeners for live filtering");
@@ -1360,6 +1569,13 @@ public class HtmlReportGenerator {
 	    writer.println("                    input.addEventListener('input', () => filterTable('errorCodesFilter', 'errorCodesTable'));");
 	    writer.println("                } else if (tableId === 'transactionTable') {");
 	    writer.println("                    input.addEventListener('input', () => filterTable('transactionFilter', 'transactionTable'));");
+	    writer.println("                } else if (tableId === 'driverStatsTable') {");
+	    writer.println("                    input.addEventListener('input', () => filterTable('driverStatsFilter', 'driverStatsTable'));");
+	    writer.println("                    // Also add listener for column filter dropdown");
+	    writer.println("                    const columnFilter = document.getElementById('driverStatsColumnFilter');");
+	    writer.println("                    if (columnFilter) {");
+	    writer.println("                        columnFilter.addEventListener('change', () => filterTable('driverStatsFilter', 'driverStatsTable'));");
+	    writer.println("                    }");
 	    writer.println("                }");
 	    writer.println("            });");
 	    writer.println("            ");

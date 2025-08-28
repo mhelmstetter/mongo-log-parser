@@ -20,6 +20,8 @@ public class SlowQuery {
 	public String replanReason = null;
 	public Boolean fromMultiPlanner = null;
 	public String readPreference = null;
+	public String readPreferenceTags = null;
 	public String sanitizedFilter = null;
 	public Long nShards = null;
+	public Long writeConflicts = null;
 }
