@@ -34,37 +34,43 @@ public class Accumulator {
     }
 
     protected void accumulate(File file, String command, Namespace namespace, Long execTime) {
-        accumulate(file, command, namespace, execTime, null, null, null, null, null, null, null);
+        accumulate(file, command, namespace, execTime, null, null, null, null, null, null, null, null, null);
     }
     
     public void accumulate(File file, String command, Namespace namespace, Long execTime, Long keysExamined,
             Long docsExamined, Long nReturned, Long reslen, Long bytesRead) {
-        accumulate(file, command, namespace, execTime, keysExamined, docsExamined, nReturned, reslen, bytesRead, null, null);
+        accumulate(file, command, namespace, execTime, keysExamined, docsExamined, nReturned, reslen, bytesRead, null, null, null, null);
     }
 
     int count = 0;
     public synchronized void accumulate(SlowQuery slowQuery) {
+        if (slowQuery.opType == null) {
+            return;
+        }
         accumulate(null, slowQuery.opType.getType(), slowQuery.ns, slowQuery.durationMillis, slowQuery.keysExamined,
-                slowQuery.docsExamined, slowQuery.nreturned, slowQuery.reslen, slowQuery.bytesRead, slowQuery.bytesWritten, slowQuery.nShards);
+                slowQuery.docsExamined, slowQuery.nreturned, slowQuery.reslen, slowQuery.bytesRead, slowQuery.bytesWritten, slowQuery.writeConflicts, slowQuery.nShards, null);
     }
     
     public synchronized void accumulate(SlowQuery slowQuery, String logMessage) {
+        if (slowQuery.opType == null) {
+            return;
+        }
         accumulate(null, slowQuery.opType.getType(), slowQuery.ns, slowQuery.durationMillis, slowQuery.keysExamined,
-                slowQuery.docsExamined, slowQuery.nreturned, slowQuery.reslen, slowQuery.bytesRead, slowQuery.bytesWritten, slowQuery.nShards, logMessage);
+                slowQuery.docsExamined, slowQuery.nreturned, slowQuery.reslen, slowQuery.bytesRead, slowQuery.bytesWritten, slowQuery.writeConflicts, slowQuery.nShards, logMessage);
     }
 
     public void accumulate(File file, String command, Namespace namespace, Long execTime, Long keysExamined,
             Long docsExamined, Long nReturned, Long reslen, Long bytesRead, Long nShards) {
-        accumulate(file, command, namespace, execTime, keysExamined, docsExamined, nReturned, reslen, bytesRead, null, nShards, null);
+        accumulate(file, command, namespace, execTime, keysExamined, docsExamined, nReturned, reslen, bytesRead, null, null, nShards, null);
     }
 
     public void accumulate(File file, String command, Namespace namespace, Long execTime, Long keysExamined,
             Long docsExamined, Long nReturned, Long reslen, Long bytesRead, Long bytesWritten, Long nShards) {
-        accumulate(file, command, namespace, execTime, keysExamined, docsExamined, nReturned, reslen, bytesRead, bytesWritten, nShards, null);
+        accumulate(file, command, namespace, execTime, keysExamined, docsExamined, nReturned, reslen, bytesRead, bytesWritten, null, nShards, null);
     }
 
     public void accumulate(File file, String command, Namespace namespace, Long execTime, Long keysExamined,
-            Long docsExamined, Long nReturned, Long reslen, Long bytesRead, Long bytesWritten, Long nShards, String logMessage) {
+            Long docsExamined, Long nReturned, Long reslen, Long bytesRead, Long bytesWritten, Long writeConflicts, Long nShards, String logMessage) {
         // TODO add an option to accumulate per file, for now glob all files
         // together
         AccumulatorKey key = new AccumulatorKey(null, namespace, command);
@@ -92,6 +98,10 @@ public class Accumulator {
 
         if (bytesWritten != null) {
             accum.addStorageBytesWritten(bytesWritten);
+        }
+
+        if (writeConflicts != null) {
+            accum.addWriteConflicts(writeConflicts);
         }
 
         if (keysExamined != null) {
@@ -138,5 +148,9 @@ public class Accumulator {
 
     public Map<AccumulatorKey, LogLineAccumulator> getAccumulators() {
         return accumulators;
+    }
+    
+    public int getAccumulatorSize() {
+        return accumulators.size();
     }
 }

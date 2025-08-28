@@ -1,6 +1,8 @@
 package com.mongodb.log.parser.accumulator;
 
+import java.text.NumberFormat;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -57,6 +59,9 @@ public class QueryHashAccumulatorEntry {
     
     // Read preference tracking - store detailed breakdown
     private Map<String, Long> readPreferenceCounts = new HashMap<>();
+    
+    // Read preference tags tracking - store separate counts for each unique tag combination
+    private Map<String, Long> readPreferenceTagsCounts = new HashMap<>();
     
     // Store one example of the sanitized query
     private String sanitizedQuery = null;
@@ -175,12 +180,19 @@ public class QueryHashAccumulatorEntry {
             planSummary = slowQuery.planSummary;
         }
         
-        // Track read preferences with detailed breakdown
+        // Track read preferences (mode)
         if (slowQuery.readPreference != null && !slowQuery.readPreference.isEmpty()) {
             readPreferenceCounts.merge(slowQuery.readPreference, 1L, Long::sum);
         } else {
             // Track when no read preference is specified
-            readPreferenceCounts.merge("none", 1L, Long::sum);
+            readPreferenceCounts.merge("default", 1L, Long::sum);
+        }
+        
+        // Track read preference tags separately
+        if (slowQuery.readPreferenceTags != null && !slowQuery.readPreferenceTags.isEmpty()) {
+            // Tags are already formatted as "key1:value1,key2:value2<br>key3:value3"
+            // We want to count each unique tag combination
+            readPreferenceTagsCounts.merge(slowQuery.readPreferenceTags, 1L, Long::sum);
         }
         
         // Store sanitized query if we don't have one yet
@@ -343,43 +355,34 @@ public class QueryHashAccumulatorEntry {
     }
     
     /**
-     * Get a detailed breakdown of read preferences with counts
-     * Format: "mode:primary(150),mode:secondary(50),tags:region(25)"
+     * Get a detailed breakdown of read preference modes with counts
+     * Format: "primary: 1,150<br>secondary: 50"
      */
     public String getReadPreferenceSummary() {
+        NumberFormat numberFormat = NumberFormat.getNumberInstance(Locale.US);
         if (readPreferenceCounts.isEmpty()) {
-            return "default: " + count;
+            return "default: " + numberFormat.format(count);
         }
         
         return readPreferenceCounts.entrySet().stream()
                 .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
-                .map(entry -> {
-                    String key = entry.getKey();
-                    Long value = entry.getValue();
-                    
-                    // Handle special cases
-                    if ("none".equals(key)) {
-                        return "default: " + value;
-                    }
-                    
-                    // Extract mode and node type from JSON-like strings
-                    if (key.contains("\"mode\":")) {
-                        // Parse {"mode":"secondaryPreferred","nodeType":"analytics"} format
-                        String mode = key.replaceAll(".*\"mode\":\\s*\"([^\"]+)\".*", "$1");
-                        String nodeType = "";
-                        if (key.contains("\"nodeType\":")) {
-                            nodeType = key.replaceAll(".*\"nodeType\":\\s*\"([^\"]+)\".*", "$1");
-                            return mode + " (" + nodeType + "): " + value;
-                        }
-                        return mode + ": " + value;
-                    }
-                    
-                    // Handle other formats - remove JSON brackets and quotes
-                    String cleanKey = key.replaceAll("[{}\"\\s]", "")
-                                        .replaceAll("mode:", "");
-                    
-                    return cleanKey + ": " + value;
-                })
+                .map(entry -> entry.getKey() + ": " + numberFormat.format(entry.getValue()))
+                .collect(Collectors.joining("<br>"));
+    }
+    
+    /**
+     * Get a detailed breakdown of read preference tags with counts
+     * Format: "nodeType: ANALYTICS: 1,150<br>region: us-east: 50"
+     */
+    public String getReadPreferenceTagsSummary() {
+        if (readPreferenceTagsCounts.isEmpty()) {
+            return "";
+        }
+        
+        NumberFormat numberFormat = NumberFormat.getNumberInstance(Locale.US);
+        return readPreferenceTagsCounts.entrySet().stream()
+                .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
+                .map(entry -> entry.getKey() + ": " + numberFormat.format(entry.getValue()))
                 .collect(Collectors.joining("<br>"));
     }
 
@@ -388,6 +391,35 @@ public class QueryHashAccumulatorEntry {
      */
     public String getReadPreferenceSummaryTruncated(int maxLineLength) {
         String fullSummary = getReadPreferenceSummary();
+        
+        if (!fullSummary.contains("<br>")) {
+            // Single line - use normal truncation
+            return truncateString(fullSummary, maxLineLength);
+        }
+        
+        // Multi-line - truncate each line individually
+        String[] lines = fullSummary.split("<br>");
+        StringBuilder result = new StringBuilder();
+        
+        for (int i = 0; i < lines.length; i++) {
+            if (i > 0) {
+                result.append("<br>");
+            }
+            result.append(truncateString(lines[i], maxLineLength));
+        }
+        
+        return result.toString();
+    }
+    
+    /**
+     * Get read preference tags summary with per-line truncation for HTML display
+     */
+    public String getReadPreferenceTagsSummaryTruncated(int maxLineLength) {
+        String fullSummary = getReadPreferenceTagsSummary();
+        
+        if (fullSummary.isEmpty()) {
+            return "";
+        }
         
         if (!fullSummary.contains("<br>")) {
             // Single line - use normal truncation
@@ -523,7 +555,7 @@ public class QueryHashAccumulatorEntry {
     }
     
     public String toCsvString() {
-        return String.format("%s,%s,%s,%d,%d,%d,%d,%.0f,%d,%d,%d,%.0f,%.0f,%.1f,%.1f,%d,%d,%s,%s",
+        return String.format("%s,%s,%s,%d,%d,%d,%d,%.0f,%d,%d,%d,%.0f,%.0f,%.1f,%.1f,%d,%d,%s,%s,%s",
                 escapeCsv(key.getQueryHash()),
                 escapeCsv(key.getNamespace().toString()),
                 escapeCsv(key.getOperation()),
@@ -542,6 +574,7 @@ public class QueryHashAccumulatorEntry {
                 getAvgReturned(),
                 getScannedReturnRatio(),
                 escapeCsv(getReadPreferenceSummary()),
+                escapeCsv(getReadPreferenceTagsSummary()),
                 escapeCsv(getSanitizedQuery()));
     }
     

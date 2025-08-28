@@ -72,4 +72,8 @@ public class IndexStatsAccumulator {
         sb.append(String.format("Collection Scan Operations: %d\n", getCollectionScanOperations()));
         return sb.toString();
     }
+    
+    public int getSize() {
+        return indexStatsEntries.size();
+    }
 }

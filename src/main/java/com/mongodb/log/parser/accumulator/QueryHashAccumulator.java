@@ -19,7 +19,7 @@ public class QueryHashAccumulator {
     	    "QueryHash", "Namespace", "Operation", "Count", "MinMs", "MaxMs", 
     	    "AvgMs", "P95Ms", "TotalSec", "AvgKeysEx", "AvgDocsEx", "KeysP95", 
     	    "DocsP95", "TotalKeysK", "TotalDocsK", "AvgReturn", "ExRetRatio",
-    	    "ReadPreference", "SanitizedQuery"
+    	    "ReadPreference", "ReadPreferenceTags", "SanitizedQuery"
     	};
 
     public void accumulate(SlowQuery slowQuery) {
@@ -53,19 +53,19 @@ public class QueryHashAccumulator {
         ColumnWidths widths = calculateColumnWidths();
         
         // Create dynamic format strings
-        String headerFormat = String.format("%%-%ds %%-%ds %%-%ds %%8s %%8s %%8s %%8s %%8s %%10s %%10s %%10s %%8s %%8s %%8s %%8s %%8s %%8s %%-%ds %%-%ds", 
+        String headerFormat = String.format("%%-%ds %%-%ds %%-%ds %%8s %%8s %%8s %%8s %%8s %%10s %%10s %%10s %%8s %%8s %%8s %%8s %%8s %%8s %%-%ds %%-%ds %%-%ds", 
                 widths.queryHashWidth, widths.namespaceWidth, widths.operationWidth,
-                widths.readPreferenceWidth, widths.sanitizedQueryWidth);
+                widths.readPreferenceWidth, widths.readPreferenceTagsWidth, widths.sanitizedQueryWidth);
         
         // Print header
         System.out.println(String.format(headerFormat,
                 "QueryHash", "Namespace", "Operation", "Count", "MinMs", "MaxMs", "AvgMs", "P95Ms", 
                 "TotalSec", "AvgKeysEx", "AvgDocsEx", "KeysP95", "DocsP95", "TotalKeysK", "TotalDocsK", 
-                "AvgReturn", "ExRetRatio", "ReadPreference", "SanitizedQuery"));
+                "AvgReturn", "ExRetRatio", "ReadPreference", "ReadPreferenceTags", "SanitizedQuery"));
         
         // Calculate separator length dynamically
         int separatorLength = widths.queryHashWidth + widths.namespaceWidth + widths.operationWidth + 
-                             (8 * 15) + widths.readPreferenceWidth + widths.sanitizedQueryWidth + 18; // spaces
+                             (8 * 15) + widths.readPreferenceWidth + widths.readPreferenceTagsWidth + widths.sanitizedQueryWidth + 19; // spaces
         System.out.println("=".repeat(separatorLength));
         
         queryHashEntries.values().stream()
@@ -75,11 +75,12 @@ public class QueryHashAccumulator {
                 String truncatedNamespace = truncateToWidth(entry.getKey().getNamespace().toString(), widths.namespaceWidth);
                 String truncatedOperation = truncateToWidth(entry.getKey().getOperation(), widths.operationWidth);
                 String truncatedReadPref = truncateToWidth(entry.getReadPreferenceSummary(), widths.readPreferenceWidth);
+                String truncatedReadPrefTags = truncateToWidth(entry.getReadPreferenceTagsSummary(), widths.readPreferenceTagsWidth);
                 String truncatedQuery = truncateToWidth(entry.getSanitizedQuery(), widths.sanitizedQueryWidth);
                 
-                String dataFormat = String.format("%%-%ds %%-%ds %%-%ds %%8d %%8d %%8d %%8d %%8.0f %%10d %%10d %%10d %%8.0f %%8.0f %%8.1f %%8.1f %%8d %%8d %%-%ds %%-%ds", 
+                String dataFormat = String.format("%%-%ds %%-%ds %%-%ds %%8d %%8d %%8d %%8d %%8.0f %%10d %%10d %%10d %%8.0f %%8.0f %%8.1f %%8.1f %%8d %%8d %%-%ds %%-%ds %%-%ds", 
                         widths.queryHashWidth, widths.namespaceWidth, widths.operationWidth,
-                        widths.readPreferenceWidth, widths.sanitizedQueryWidth);
+                        widths.readPreferenceWidth, widths.readPreferenceTagsWidth, widths.sanitizedQueryWidth);
                 
                 System.out.println(String.format(dataFormat,
                         truncatedQueryHash,
@@ -100,6 +101,7 @@ public class QueryHashAccumulator {
                         entry.getAvgReturned(),
                         entry.getScannedReturnRatio(),
                         truncatedReadPref,
+                        truncatedReadPrefTags,
                         truncatedQuery));
             });
         
@@ -125,6 +127,7 @@ public class QueryHashAccumulator {
         int maxNamespaceWidth = "Namespace".length();
         int maxOperationWidth = "Operation".length();
         int maxReadPreferenceWidth = "ReadPreference".length();
+        int maxReadPreferenceTagsWidth = "ReadPreferenceTags".length();
         int maxSanitizedQueryWidth = "SanitizedQuery".length();
         
         for (QueryHashAccumulatorEntry entry : queryHashEntries.values()) {
@@ -151,6 +154,12 @@ public class QueryHashAccumulator {
                     Math.min(readPrefSummary.length(), 30));
             }
             
+            String readPrefTagsSummary = entry.getReadPreferenceTagsSummary();
+            if (readPrefTagsSummary != null && !readPrefTagsSummary.isEmpty()) {
+                maxReadPreferenceTagsWidth = Math.max(maxReadPreferenceTagsWidth, 
+                    Math.min(readPrefTagsSummary.length(), 30));
+            }
+            
             String sanitizedQuery = entry.getSanitizedQuery();
             if (sanitizedQuery != null) {
                 maxSanitizedQueryWidth = Math.max(maxSanitizedQueryWidth, 
@@ -159,7 +168,7 @@ public class QueryHashAccumulator {
         }
         
         return new ColumnWidths(maxQueryHashWidth, maxNamespaceWidth, maxOperationWidth, 
-                               maxReadPreferenceWidth, maxSanitizedQueryWidth);
+                               maxReadPreferenceWidth, maxReadPreferenceTagsWidth, maxSanitizedQueryWidth);
     }
     
     public void reportCsv(String fileName) throws FileNotFoundException {
@@ -201,15 +210,21 @@ public class QueryHashAccumulator {
         final int namespaceWidth;
         final int operationWidth;
         final int readPreferenceWidth;
+        final int readPreferenceTagsWidth;
         final int sanitizedQueryWidth;
         
         ColumnWidths(int queryHashWidth, int namespaceWidth, int operationWidth, 
-                    int readPreferenceWidth, int sanitizedQueryWidth) {
+                    int readPreferenceWidth, int readPreferenceTagsWidth, int sanitizedQueryWidth) {
             this.queryHashWidth = queryHashWidth;
             this.namespaceWidth = namespaceWidth;
             this.operationWidth = operationWidth;
             this.readPreferenceWidth = readPreferenceWidth;
+            this.readPreferenceTagsWidth = readPreferenceTagsWidth;
             this.sanitizedQueryWidth = sanitizedQueryWidth;
         }
+    }
+    
+    public int getSize() {
+        return queryHashEntries.size();
     }
 }

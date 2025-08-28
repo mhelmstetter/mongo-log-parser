@@ -31,6 +31,16 @@ public class AccumulatorKey {
         return hashCode()+"";
     }
     
+    public String getNamespace() {
+        if (dbName != null && collName != null) {
+            return dbName + "." + collName;
+        } else if (dbName != null) {
+            return dbName;
+        } else {
+            return "unknown";
+        }
+    }
+    
 
     @Override
     public int hashCode() {

@@ -341,4 +341,8 @@ public class PlanCacheAccumulator {
             this.queryHashWidth = 10; // Default for query hash display
         }
     }
+    
+    public int getSize() {
+        return planCacheEntries.size();
+    }
 }
