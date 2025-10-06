@@ -47,16 +47,24 @@ public class Accumulator {
         if (slowQuery.opType == null) {
             return;
         }
-        accumulate(null, slowQuery.opType.getType(), slowQuery.ns, slowQuery.durationMillis, slowQuery.keysExamined,
-                slowQuery.docsExamined, slowQuery.nreturned, slowQuery.reslen, slowQuery.bytesRead, slowQuery.bytesWritten, slowQuery.writeConflicts, slowQuery.nShards, null);
+        String operation = slowQuery.opType.getType();
+        if (slowQuery.isChangeStream != null && slowQuery.isChangeStream && "getMore".equals(operation)) {
+            operation = "getMore (change stream)";
+        }
+        accumulate(null, operation, slowQuery.ns, slowQuery.durationMillis, slowQuery.keysExamined,
+                slowQuery.docsExamined, slowQuery.nreturned, slowQuery.reslen, slowQuery.bytesRead, slowQuery.bytesWritten, slowQuery.writeConflicts, slowQuery.nShards, null, false, slowQuery.isChangeStream != null && slowQuery.isChangeStream);
     }
-    
+
     public synchronized void accumulate(SlowQuery slowQuery, String logMessage) {
         if (slowQuery.opType == null) {
             return;
         }
-        accumulate(null, slowQuery.opType.getType(), slowQuery.ns, slowQuery.durationMillis, slowQuery.keysExamined,
-                slowQuery.docsExamined, slowQuery.nreturned, slowQuery.reslen, slowQuery.bytesRead, slowQuery.bytesWritten, slowQuery.writeConflicts, slowQuery.nShards, logMessage);
+        String operation = slowQuery.opType.getType();
+        if (slowQuery.isChangeStream != null && slowQuery.isChangeStream && "getMore".equals(operation)) {
+            operation = "getMore (change stream)";
+        }
+        accumulate(null, operation, slowQuery.ns, slowQuery.durationMillis, slowQuery.keysExamined,
+                slowQuery.docsExamined, slowQuery.nreturned, slowQuery.reslen, slowQuery.bytesRead, slowQuery.bytesWritten, slowQuery.writeConflicts, slowQuery.nShards, logMessage, false, slowQuery.isChangeStream != null && slowQuery.isChangeStream);
     }
 
     public void accumulate(File file, String command, Namespace namespace, Long execTime, Long keysExamined,
@@ -71,6 +79,11 @@ public class Accumulator {
 
     public void accumulate(File file, String command, Namespace namespace, Long execTime, Long keysExamined,
             Long docsExamined, Long nReturned, Long reslen, Long bytesRead, Long bytesWritten, Long writeConflicts, Long nShards, String logMessage) {
+        accumulate(file, command, namespace, execTime, keysExamined, docsExamined, nReturned, reslen, bytesRead, bytesWritten, writeConflicts, nShards, logMessage, false, false);
+    }
+
+    public void accumulate(File file, String command, Namespace namespace, Long execTime, Long keysExamined,
+            Long docsExamined, Long nReturned, Long reslen, Long bytesRead, Long bytesWritten, Long writeConflicts, Long nShards, String logMessage, boolean isError, boolean isChangeStream) {
         // TODO add an option to accumulate per file, for now glob all files
         // together
         AccumulatorKey key = new AccumulatorKey(null, namespace, command);
@@ -78,6 +91,10 @@ public class Accumulator {
         if (accum == null) {
             accum = new LogLineAccumulator(null, command, namespace);
             accumulators.put(key, accum);
+        }
+
+        if (isChangeStream) {
+            accum.setChangeStream(true);
         }
 
         if (execTime != null) {
@@ -120,6 +137,10 @@ public class Accumulator {
             accum.addSampleLogMessage(logMessage, execTime);
         } else if (logMessage != null) {
             accum.addSampleLogMessage(logMessage);
+        }
+        
+        if (isError) {
+            accum.addError();
         }
     }
 

@@ -4,15 +4,18 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.text.NumberFormat;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.stream.Collectors;
 
 import com.mongodb.log.parser.accumulator.Accumulator;
 import com.mongodb.log.parser.accumulator.TwoPassDriverStatsAccumulator;
 import com.mongodb.log.parser.accumulator.DriverStatsEntry;
+import com.mongodb.log.parser.LogRedactionUtil;
 import com.mongodb.log.parser.accumulator.ErrorCodeAccumulator;
 import com.mongodb.log.parser.accumulator.IndexStatsAccumulator;
 import com.mongodb.log.parser.accumulator.IndexStatsEntry;
@@ -22,6 +25,7 @@ import com.mongodb.log.parser.accumulator.PlanCacheKey;
 import com.mongodb.log.parser.accumulator.QueryHashAccumulator;
 import com.mongodb.log.parser.accumulator.QueryHashAccumulatorEntry;
 import com.mongodb.log.parser.accumulator.QueryHashKey;
+import com.mongodb.log.parser.accumulator.SlowPlanningAccumulator;
 import com.mongodb.log.parser.accumulator.TransactionAccumulator;
 import com.mongodb.log.parser.model.MainOperationEntry;
 import com.mongodb.log.parser.service.MainOperationService;
@@ -33,9 +37,88 @@ public class HtmlReportGenerator {
 
 	private static final NumberFormat NUMBER_FORMAT = NumberFormat.getNumberInstance(Locale.US);
 
+	// New overloaded method with shard tracking support
 	public static void generateReport(String fileName, Accumulator accumulator, Accumulator ttlAccumulator,
 	        PlanCacheAccumulator planCacheAccumulator,
 	        QueryHashAccumulator queryHashAccumulator,
+	        SlowPlanningAccumulator slowPlanningAccumulator,
+	        ErrorCodeAccumulator errorCodeAccumulator,
+	        TransactionAccumulator transactionAccumulator,
+	        IndexStatsAccumulator indexStatsAccumulator,
+	        TwoPassDriverStatsAccumulator driverStatsAccumulator,
+	        Map<String, java.util.concurrent.atomic.AtomicLong> operationTypeStats, boolean redactQueries,
+	        String earliestTimestamp, String latestTimestamp,
+	        boolean enableShardTracking,
+	        Map<ShardInfo, Accumulator> shardAccumulators,
+	        Map<ShardInfo, Accumulator> shardTtlAccumulators,
+	        Map<ShardInfo, PlanCacheAccumulator> shardPlanCacheAccumulators,
+	        Map<ShardInfo, QueryHashAccumulator> shardQueryHashAccumulators,
+	        Map<ShardInfo, ErrorCodeAccumulator> shardErrorCodeAccumulators,
+	        Map<ShardInfo, TransactionAccumulator> shardTransactionAccumulators,
+	        Map<ShardInfo, IndexStatsAccumulator> shardIndexStatsAccumulators) throws IOException {
+	        
+	    try (PrintWriter writer = new PrintWriter(new FileWriter(fileName))) {
+	        writeHtmlHeader(writer);
+	        writeNavigationHeader(writer, accumulator, ttlAccumulator, planCacheAccumulator,
+	                             queryHashAccumulator, slowPlanningAccumulator, errorCodeAccumulator, transactionAccumulator,
+	                             indexStatsAccumulator, driverStatsAccumulator, operationTypeStats, earliestTimestamp, latestTimestamp);
+	        
+	        // Write tables with shard column if shard tracking is enabled
+	        if (enableShardTracking && !shardAccumulators.isEmpty()) {
+	            writeMainOperationsTableWithShards(writer, shardAccumulators, redactQueries);
+	            writeTtlOperationsTableWithShards(writer, shardTtlAccumulators);
+	            writeOperationStatsTable(writer, operationTypeStats);
+	            writeErrorCodesTableWithShards(writer, shardErrorCodeAccumulators, redactQueries);
+
+	            if (!shardQueryHashAccumulators.isEmpty()) {
+	                writeQueryHashTableWithShards(writer, shardQueryHashAccumulators, redactQueries);
+	            }
+	            
+	            if (!shardTransactionAccumulators.isEmpty()) {
+	                writeTransactionTableWithShards(writer, shardTransactionAccumulators);
+	            }
+
+	            if (!shardIndexStatsAccumulators.isEmpty()) {
+	                writeIndexStatsTableWithShards(writer, shardIndexStatsAccumulators, redactQueries);
+	            }
+	        } else {
+	            // Write regular tables (aggregated across all files)
+	            writeMainOperationsTable(writer, accumulator, redactQueries);
+	            writeTtlOperationsTable(writer, ttlAccumulator);
+	            writeOperationStatsTable(writer, operationTypeStats);
+	            writeErrorCodesTable(writer, errorCodeAccumulator, redactQueries);
+
+	            if (queryHashAccumulator != null) {
+	                writeQueryHashTable(writer, queryHashAccumulator, redactQueries);
+	            }
+
+	            if (slowPlanningAccumulator != null) {
+	                writeSlowPlanningTable(writer, slowPlanningAccumulator, redactQueries);
+	            }
+
+	            if (transactionAccumulator != null && transactionAccumulator.hasTransactions()) {
+	                writeTransactionTable(writer, transactionAccumulator);
+	            }
+
+	            if (indexStatsAccumulator != null && indexStatsAccumulator.hasIndexStats()) {
+	                writeIndexStatsTable(writer, indexStatsAccumulator, redactQueries);
+	            }
+	        }
+
+	        // Driver stats table is not sharded
+	        if (driverStatsAccumulator != null && driverStatsAccumulator.hasDriverStats()) {
+	            writeDriverStatsTable(writer, driverStatsAccumulator);
+	        }
+
+	        writeHtmlFooter(writer);
+	    }
+	}
+
+	// Original method for backwards compatibility
+	public static void generateReport(String fileName, Accumulator accumulator, Accumulator ttlAccumulator,
+	        PlanCacheAccumulator planCacheAccumulator,
+	        QueryHashAccumulator queryHashAccumulator,
+	        SlowPlanningAccumulator slowPlanningAccumulator,
 	        ErrorCodeAccumulator errorCodeAccumulator,
 	        TransactionAccumulator transactionAccumulator,
 	        IndexStatsAccumulator indexStatsAccumulator,
@@ -45,8 +128,8 @@ public class HtmlReportGenerator {
 
 	    try (PrintWriter writer = new PrintWriter(new FileWriter(fileName))) {
 	        writeHtmlHeader(writer);
-	        writeNavigationHeader(writer, accumulator, ttlAccumulator, planCacheAccumulator, 
-	                             queryHashAccumulator, errorCodeAccumulator, transactionAccumulator, 
+	        writeNavigationHeader(writer, accumulator, ttlAccumulator, planCacheAccumulator,
+	                             queryHashAccumulator, slowPlanningAccumulator, errorCodeAccumulator, transactionAccumulator,
 	                             indexStatsAccumulator, driverStatsAccumulator, operationTypeStats, earliestTimestamp, latestTimestamp);
 	        writeMainOperationsTable(writer, accumulator, redactQueries);
 	        writeTtlOperationsTable(writer, ttlAccumulator);
@@ -56,7 +139,11 @@ public class HtmlReportGenerator {
 	        if (queryHashAccumulator != null) {
 	            writeQueryHashTable(writer, queryHashAccumulator, redactQueries);
 	        }
-	        
+
+	        if (slowPlanningAccumulator != null) {
+	            writeSlowPlanningTable(writer, slowPlanningAccumulator, redactQueries);
+	        }
+
 	        if (transactionAccumulator != null && transactionAccumulator.hasTransactions()) {
 	            writeTransactionTable(writer, transactionAccumulator);
 	        }
@@ -101,12 +188,12 @@ public class HtmlReportGenerator {
 		writer.println(
 				"        .collapse-btn { padding: 8px 12px; background-color: #00684A; color: white; border: none; border-radius: 4px; cursor: pointer; margin-left: 5px; }");
 		writer.println("        .collapse-btn:hover { background-color: #006CFA; }");
-		writer.println("        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; }");
+		writer.println("        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; table-layout: auto; }");
 		writer.println("        th, td { border: 1px solid #b8c4c2; padding: 8px; text-align: left; }");
 		writer.println(
 				"        thead { background-color: #00684A; color: white; }");
 		writer.println(
-				"        thead th { position: sticky; top: 0; background-color: #00684A; z-index: 10; cursor: pointer; user-select: none; font-weight: bold; }");
+				"        thead th { position: sticky; top: 0; background-color: #00684A; z-index: 10; cursor: pointer; user-select: none; font-weight: bold; white-space: normal; word-wrap: break-word; min-width: 80px; }");
 		writer.println("        th:hover { background-color: #001E2B; }");
 		writer.println("        th.sortable::after { content: ' ↕'; font-size: 12px; opacity: 0.5; }");
 		writer.println("        th.sort-asc::after { content: ' ↑'; opacity: 1; }");
@@ -117,6 +204,12 @@ public class HtmlReportGenerator {
 		writer.println("        tr:hover { background-color: #E9FF99; }");
 		writer.println("        .number { text-align: right; }");
 		writer.println("        .highlight { background-color: #E9FF99 !important; }");
+		writer.println("        .namespace-cell { max-width: 250px; word-wrap: break-word; white-space: normal; }");
+		writer.println("        .shard-cell { text-align: center; font-weight: bold; min-width: 60px; }");
+		writer.println("        .operation-cell { min-width: 80px; }");
+		writer.println("        .count-cell { text-align: right; min-width: 70px; }");
+		writer.println("        .time-cell { text-align: right; min-width: 60px; }");
+		writer.println("        .bytes-cell { text-align: right; min-width: 80px; }");
 		writer.println(
 				"        .summary { background-color: #f0f7f4; padding: 15px; border-radius: 5px; margin-bottom: 20px; border-left: 4px solid #00684A; }");
 		writer.println("        .summary h3 { margin-top: 0; color: #00684A; }");
@@ -160,17 +253,37 @@ public class HtmlReportGenerator {
 		writer.println("        .pretty-print-btn { background-color: #5d6c74; color: white; border: none; border-radius: 3px; padding: 4px 8px; font-size: 11px; cursor: pointer; margin-left: 10px; }");
 		writer.println("        .pretty-print-btn:hover { background-color: #21313C; }");
 		writer.println("        .json-content { white-space: pre-wrap; }");
-		
-		
+
+		// Column management styles
+		writer.println("        .manage-cols-btn { padding: 8px 12px; background-color: #00684A; color: white; border: none; border-radius: 4px; cursor: pointer; margin-left: 10px; }");
+		writer.println("        .manage-cols-btn:hover { background-color: #006CFA; }");
+		writer.println("        .col-hide-btn { margin-left: 8px; cursor: pointer; color: #ff6b6b; font-weight: bold; opacity: 0; transition: opacity 0.2s; }");
+		writer.println("        th:hover .col-hide-btn { opacity: 1; }");
+		writer.println("        .col-hide-btn:hover { color: #ff0000; }");
+		writer.println("        .hidden-col { display: none; }");
+
+		// Modal styles
+		writer.println("        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0, 0, 0, 0.4); }");
+		writer.println("        .modal-content { background-color: #fefefe; margin: 10% auto; padding: 20px; border: 1px solid #888; border-radius: 8px; width: 400px; max-width: 80%; }");
+		writer.println("        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 2px solid #00684A; padding-bottom: 10px; }");
+		writer.println("        .modal-header h3 { margin: 0; color: #001E2B; }");
+		writer.println("        .close { color: #aaa; font-size: 28px; font-weight: bold; cursor: pointer; }");
+		writer.println("        .close:hover, .close:focus { color: #000; }");
+		writer.println("        .modal-body { max-height: 400px; overflow-y: auto; }");
+		writer.println("        .column-item { padding: 8px; margin: 4px 0; background-color: #f0f7f4; border-radius: 4px; cursor: pointer; transition: background-color 0.2s; }");
+		writer.println("        .column-item:hover { background-color: #E9FF99; }");
+		writer.println("        .column-item.hidden { background-color: #ffebee; }");
+
 		writer.println("    </style>");
 		writer.println("</head>");
 		writer.println("<body>");
 		writer.println("    <div class=\"container\">");
 	}
 
-	private static void writeNavigationHeader(PrintWriter writer, Accumulator accumulator, 
+	private static void writeNavigationHeader(PrintWriter writer, Accumulator accumulator,
 	        Accumulator ttlAccumulator, PlanCacheAccumulator planCacheAccumulator,
-	        QueryHashAccumulator queryHashAccumulator, ErrorCodeAccumulator errorCodeAccumulator,
+	        QueryHashAccumulator queryHashAccumulator, SlowPlanningAccumulator slowPlanningAccumulator,
+	        ErrorCodeAccumulator errorCodeAccumulator,
 	        TransactionAccumulator transactionAccumulator, IndexStatsAccumulator indexStatsAccumulator,
 	        TwoPassDriverStatsAccumulator driverStatsAccumulator,
 	        Map<String, java.util.concurrent.atomic.AtomicLong> operationTypeStats,
@@ -205,7 +318,12 @@ public class HtmlReportGenerator {
 	    if (queryHashAccumulator != null && !queryHashAccumulator.getQueryHashEntries().isEmpty()) {
 	        writer.println("                    <a href=\"#query-hash\" class=\"nav-link\">Query Hash Analysis</a>");
 	    }
-	    
+
+	    // Slow Planning Analysis
+	    if (slowPlanningAccumulator != null && slowPlanningAccumulator.getSize() > 0) {
+	        writer.println("                    <a href=\"#slow-planning\" class=\"nav-link\">Slow Planning</a>");
+	    }
+
 	    // Transaction Analysis
 	    if (transactionAccumulator != null && transactionAccumulator.hasTransactions()) {
 	        writer.println("                    <a href=\"#transactions\" class=\"nav-link\">Transaction Analysis</a>");
@@ -240,6 +358,532 @@ public class HtmlReportGenerator {
 	    writer.println("                <div class=\"report-info\" style=\"display: flex; justify-content: space-between;\"><span>" + logDataInfo + "</span><span>Generated on " + new java.util.Date() + "</span></div>");
 	    writer.println("        </div>");
 	    writer.println("    </div>");
+	}
+	
+	private static void writeMainOperationsTableWithShards(PrintWriter writer, 
+	        Map<ShardInfo, Accumulator> shardAccumulators, boolean redactQueries) {
+	    
+	    
+	    writer.println("        <h2 id=\"main-operations\">Main Operations Analysis (By Shard)</h2>");
+	    
+	    // Combine all operations from all shards
+	    java.util.List<ShardedMainOperationEntry> allOperations = new ArrayList<>();
+	    
+	    for (Map.Entry<ShardInfo, Accumulator> entry : shardAccumulators.entrySet()) {
+	        ShardInfo shardInfo = entry.getKey();
+	        Accumulator accumulator = entry.getValue();
+	        
+	        
+	        // Get operations for this shard
+	        java.util.List<MainOperationEntry> shardOps = MainOperationService.getMainOperationEntries(accumulator);
+	        
+	        
+	        // Wrap each operation with shard info
+	        for (MainOperationEntry op : shardOps) {
+	            allOperations.add(new ShardedMainOperationEntry(shardInfo, op));
+	        }
+	    }
+	    
+	    // Calculate appropriate unit scales for byte columns based on averages
+	    double avgTotalReslen = allOperations.isEmpty() ? 0 : 
+	        allOperations.stream().mapToLong(e -> e.getOperation().getTotalReslen()).average().orElse(0);
+	    double avgAvgReslen = allOperations.isEmpty() ? 0 : 
+	        allOperations.stream().mapToLong(e -> e.getOperation().getAvgReslen()).average().orElse(0);
+	    double avgTotalBytesRead = allOperations.isEmpty() ? 0 : 
+	        allOperations.stream().mapToLong(e -> e.getOperation().getTotalStorageBytesRead()).average().orElse(0);
+	    double avgAvgBytesRead = allOperations.isEmpty() ? 0 : 
+	        allOperations.stream().mapToLong(e -> e.getOperation().getAvgStorageBytesRead()).average().orElse(0);
+	    
+	    MainOperationEntry.ByteUnit totalReslenUnit = MainOperationEntry.determineByteUnit(avgTotalReslen);
+	    MainOperationEntry.ByteUnit avgReslenUnit = MainOperationEntry.determineByteUnit(avgAvgReslen);
+	    MainOperationEntry.ByteUnit totalBytesReadUnit = MainOperationEntry.determineByteUnit(avgTotalBytesRead);
+	    MainOperationEntry.ByteUnit avgBytesReadUnit = MainOperationEntry.determineByteUnit(avgAvgBytesRead);
+	    
+	    // Sort by shard, then by count
+	    allOperations.sort((a, b) -> {
+	        int shardCompare = a.getShardInfo().toString().compareTo(b.getShardInfo().toString());
+	        if (shardCompare != 0) return shardCompare;
+	        return Long.compare(b.getOperation().getCount(), a.getOperation().getCount());
+	    });
+	    
+	    // Calculate summary statistics
+	    long totalOperations = allOperations.stream().mapToLong(e -> e.getOperation().getCount()).sum();
+	    long totalTimeMs = allOperations.stream().mapToLong(e -> e.getOperation().getCount() * e.getOperation().getAvgMs()).sum();
+	    int uniqueShards = (int) allOperations.stream().map(ShardedMainOperationEntry::getShardInfo).distinct().count();
+	    
+	    writer.println("        <div class=\"summary\">");
+	    writer.println("            <h3>Summary</h3>");
+	    writer.println("            <div class=\"summary-grid\">");
+	    writer.println("                <div class=\"summary-item\">");
+	    writer.println("                    <div class=\"summary-label\">Total Shards</div>");
+	    writer.println("                    <div class=\"summary-value\">" + uniqueShards + "</div>");
+	    writer.println("                </div>");
+	    writer.println("                <div class=\"summary-item\">");
+	    writer.println("                    <div class=\"summary-label\">Total Operations</div>");
+	    writer.println("                    <div class=\"summary-value\">" + NUMBER_FORMAT.format(totalOperations) + "</div>");
+	    writer.println("                </div>");
+	    writer.println("                <div class=\"summary-item\">");
+	    writer.println("                    <div class=\"summary-label\">Total Time (seconds)</div>");
+	    writer.println("                    <div class=\"summary-value\">" + NUMBER_FORMAT.format(totalTimeMs / 1000) + "</div>");
+	    writer.println("                </div>");
+	    writer.println("                <div class=\"summary-item\">");
+	    writer.println("                    <div class=\"summary-label\">Unique Operations</div>");
+	    writer.println("                    <div class=\"summary-value\">" + allOperations.size() + "</div>");
+	    writer.println("                </div>");
+	    writer.println("            </div>");
+	    writer.println("        </div>");
+	    
+	    writer.println("        <div class=\"table-container\">");
+	    writer.println("            <div class=\"controls\">");
+	    writer.println("                <input type=\"text\" id=\"mainOpsFilter\" class=\"filter-input\" placeholder=\"Filter by shard, namespace or operation...\">");
+	    writer.println("                <button class=\"clear-btn\" onclick=\"clearFilter('mainOpsFilter', 'mainOpsTable')\">Clear Filter</button>");
+	    writer.println("                <button class=\"expand-btn\" onclick=\"expandAllAccordions('mainOpsTable')\">Expand All</button>");
+	    writer.println("                <button class=\"collapse-btn\" onclick=\"collapseAllAccordions('mainOpsTable')\">Collapse All</button>");
+	    writer.println("                <button class=\"manage-cols-btn\" onclick=\"openColumnModal('mainOpsTable')\">Manage Columns</button>");
+	    writer.println("            </div>");
+	    writer.println("            <table id=\"mainOpsTable\">");
+	    writer.println("                <thead>");
+	    writer.println("                    <tr>");
+	    writer.println("                        " + generateTableHeader("mainOpsTable", 0, "Shard", "string"));
+	    writer.println("                        " + generateTableHeader("mainOpsTable", 1, "Namespace", "string"));
+	    writer.println("                        " + generateTableHeader("mainOpsTable", 2, "Operation", "string"));
+	    writer.println("                        " + generateTableHeader("mainOpsTable", 3, "Count", "number"));
+	    writer.println("                        " + generateTableHeader("mainOpsTable", 4, "Min (ms)", "number"));
+	    writer.println("                        " + generateTableHeader("mainOpsTable", 5, "Max (ms)", "number"));
+	    writer.println("                        " + generateTableHeader("mainOpsTable", 6, "Avg (ms)", "number"));
+	    writer.println("                        " + generateTableHeader("mainOpsTable", 7, "P95 (ms)", "number"));
+	    writer.println("                        " + generateTableHeader("mainOpsTable", 8, "Total (sec)", "number"));
+	    writer.println("                        " + generateTableHeader("mainOpsTable", 9, "Avg Keys Ex", "number"));
+	    writer.println("                        " + generateTableHeader("mainOpsTable", 10, "Avg Docs Ex", "number"));
+	    writer.println("                        " + generateTableHeader("mainOpsTable", 11, "Errors", "number"));
+	    writer.println("                        " + generateTableHeader("mainOpsTable", 12, "Total Reslen (" + totalReslenUnit.getSuffix() + ")", "number"));
+	    writer.println("                        " + generateTableHeader("mainOpsTable", 13, "Avg Reslen (" + avgReslenUnit.getSuffix() + ")", "number"));
+	    writer.println("                        " + generateTableHeader("mainOpsTable", 14, "Total Returned", "number"));
+	    writer.println("                        " + generateTableHeader("mainOpsTable", 15, "Avg Returned", "number"));
+	    writer.println("                        " + generateTableHeader("mainOpsTable", 16, "Total Bytes Read (" + totalBytesReadUnit.getSuffix() + ")", "number"));
+	    writer.println("                        " + generateTableHeader("mainOpsTable", 17, "Avg Bytes Read (" + avgBytesReadUnit.getSuffix() + ")", "number"));
+	    writer.println("                    </tr>");
+	    writer.println("                </thead>");
+	    writer.println("                <tbody>");
+	    
+	    for (ShardedMainOperationEntry entry : allOperations) {
+	        MainOperationEntry op = entry.getOperation();
+	        String shardDisplay = entry.getShardInfo().getShard() + "-" + entry.getShardInfo().getNode();
+	        String cssClass = "accordion-row " + op.getCssClass();
+	        String rowId = "mo-shard-" + Math.abs((entry.getShardInfo().toString() + op.getNamespace() + op.getOperation()).hashCode());
+	        
+	        // Main row with accordion functionality
+	        writer.println("                    <tr class=\"" + cssClass + "\" onclick=\"toggleAccordion('" + rowId + "')\">");
+	        writer.println("                        <td class=\"shard-cell\"><span class=\"accordion-toggle\"></span>" + shardDisplay + "</td>");
+	        writer.println("                        <td class=\"namespace-cell\">" + escapeHtml(op.getNamespace()) + "</td>");
+	        writer.println("                        <td class=\"operation-cell\">" + escapeHtml(op.getOperation()) + "</td>");
+	        writer.println("                        <td class=\"count-cell\">" + op.getFormattedCount() + "</td>");
+	        writer.println("                        <td class=\"time-cell\">" + NUMBER_FORMAT.format(op.getMinMs()) + "</td>");
+	        writer.println("                        <td class=\"time-cell\">" + NUMBER_FORMAT.format(op.getMaxMs()) + "</td>");
+	        writer.println("                        <td class=\"time-cell\">" + NUMBER_FORMAT.format(op.getAvgMs()) + "</td>");
+	        writer.println("                        <td class=\"time-cell\">" + op.getFormattedP95Ms() + "</td>");
+	        writer.println("                        <td class=\"time-cell\">" + NUMBER_FORMAT.format(op.getTotalSec()) + "</td>");
+	        writer.println("                        <td class=\"count-cell\">" + op.getFormattedAvgKeysExamined() + "</td>");
+	        writer.println("                        <td class=\"count-cell\">" + op.getFormattedAvgDocsExamined() + "</td>");
+	        writer.println("                        <td class=\"count-cell\">" + NUMBER_FORMAT.format(op.getErrorCount()) + "</td>");
+	        writer.println("                        <td class=\"bytes-cell\">" + MainOperationEntry.formatBytesWithUnit(op.getTotalReslen(), totalReslenUnit) + "</td>");
+	        writer.println("                        <td class=\"bytes-cell\">" + MainOperationEntry.formatBytesWithUnit(op.getAvgReslen(), avgReslenUnit) + "</td>");
+	        writer.println("                        <td class=\"count-cell\">" + op.getFormattedTotalReturned() + "</td>");
+	        writer.println("                        <td class=\"count-cell\">" + op.getFormattedAvgReturned() + "</td>");
+	        writer.println("                        <td class=\"bytes-cell\">" + MainOperationEntry.formatBytesWithUnit(op.getTotalStorageBytesRead(), totalBytesReadUnit) + "</td>");
+	        writer.println("                        <td class=\"bytes-cell\">" + MainOperationEntry.formatBytesWithUnit(op.getAvgStorageBytesRead(), avgBytesReadUnit) + "</td>");
+	        writer.println("                    </tr>");
+	        
+	        // Accordion content row
+	        if (op.getSampleLogMessage() != null && !op.getSampleLogMessage().isEmpty()) {
+	            boolean isTruncated = LogRedactionUtil.isLogMessageTruncated(op.getSampleLogMessage());
+	            String logCssClass = isTruncated ? "log-sample truncated-query" : "log-sample";
+	            
+	            writer.println("                    <tr id=\"" + rowId + "\" class=\"accordion-content\">");
+	            writer.println("                        <td colspan=\"18\">");
+	            writer.println("                            <div class=\"" + logCssClass + "\">");
+	            if (isTruncated) {
+	                writer.println("                                <div class=\"truncated-warning\">⚠ Query was truncated in MongoDB logs</div>");
+	            }
+	            
+	            String contentId = "log-content-" + rowId;
+	            String buttonId = "btn-" + rowId;
+	            String formattedDuration = LogRedactionUtil.extractFormattedDuration(op.getSampleLogMessage());
+	            String formattedBytesRead = LogRedactionUtil.extractFormattedBytesRead(op.getSampleLogMessage());
+	            
+	            writer.println("                                <strong>Query Sample:</strong>");
+	            if (formattedDuration != null && !formattedDuration.isEmpty()) {
+	                writer.println(" <em>(Duration: " + formattedDuration + ")</em>");
+	            }
+	            if (formattedBytesRead != null && !formattedBytesRead.isEmpty()) {
+	                writer.println(" <em>(Bytes Read: " + formattedBytesRead + ")</em>");
+	            }
+	            writer.println("<button id=\"" + buttonId + "\" class=\"pretty-print-btn\" onclick=\"togglePrettyPrint('" + buttonId + "', '" + contentId + "')\">Pretty Print</button>");
+	            writer.println("                                <div id=\"" + contentId + "\" class=\"json-content\">");
+	            
+	            String logMessage = LogRedactionUtil.redactLogMessage(op.getSampleLogMessage(), redactQueries);
+	            writer.println("                                    " + escapeHtml(logMessage));
+	            
+	            writer.println("                                </div>");
+	            writer.println("                            </div>");
+	            writer.println("                        </td>");
+	            writer.println("                    </tr>");
+	        }
+	    }
+	    
+	    writer.println("                </tbody>");
+	    writer.println("            </table>");
+	    writer.println("        </div>");
+	}
+	
+	// Helper class to pair shard info with operation entry
+	private static class ShardedMainOperationEntry {
+	    private final ShardInfo shardInfo;
+	    private final MainOperationEntry operation;
+	    
+	    public ShardedMainOperationEntry(ShardInfo shardInfo, MainOperationEntry operation) {
+	        this.shardInfo = shardInfo;
+	        this.operation = operation;
+	    }
+	    
+	    public ShardInfo getShardInfo() { return shardInfo; }
+	    public MainOperationEntry getOperation() { return operation; }
+	}
+	
+	// Helper method to write operations table content without the wrapper and controls
+	private static void writeOperationsTableContent(PrintWriter writer, Accumulator accumulator, boolean redactQueries, String tableId) {
+	    if (accumulator.getAccumulators().isEmpty()) {
+	        writer.println("            <p>No operations found.</p>");
+	        return;
+	    }
+	    
+	    // Use MVC pattern: Convert to model objects via service
+	    java.util.List<MainOperationEntry> operations = MainOperationService.getMainOperationEntries(accumulator);
+	    
+	    writer.println("            <table id=\"" + tableId + "\">");
+	    writer.println("                <thead>");
+	    writer.println("                    <tr>");
+	    writer.println("                        <th>Namespace</th>");
+	    writer.println("                        <th>Operation</th>");
+	    writer.println("                        <th>Count</th>");
+	    writer.println("                        <th>Min (ms)</th>");
+	    writer.println("                        <th>Max (ms)</th>");
+	    writer.println("                        <th>Avg (ms)</th>");
+	    writer.println("                        <th>P95 (ms)</th>");
+	    writer.println("                        <th>Total (sec)</th>");
+	    writer.println("                        <th>Avg Keys Ex</th>");
+	    writer.println("                        <th>Avg Docs Ex</th>");
+	    writer.println("                    </tr>");
+	    writer.println("                </thead>");
+	    writer.println("                <tbody>");
+	    
+	    operations.forEach(op -> {
+	        String cssClass = op.getCssClass();
+	        writer.println("                    <tr class=\"" + cssClass + "\">");
+	        writer.println("                        <td>" + op.getNamespace() + "</td>");
+	        writer.println("                        <td>" + op.getOperation() + "</td>");
+	        writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(op.getCount()) + "</td>");
+	        writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(op.getMinMs()) + "</td>");
+	        writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(op.getMaxMs()) + "</td>");
+	        writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(op.getAvgMs()) + "</td>");
+	        writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(op.getP95Ms()) + "</td>");
+	        writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(op.getTotalSec()) + "</td>");
+	        writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(op.getAvgKeysExamined()) + "</td>");
+	        writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(op.getAvgDocsExamined()) + "</td>");
+	        writer.println("                    </tr>");
+	    });
+	    
+	    writer.println("                </tbody>");
+	    writer.println("            </table>");
+	}
+	
+	// Helper method to write TTL table content
+	private static void writeTtlTableContent(PrintWriter writer, Accumulator ttlAccumulator, String tableId) {
+	    if (ttlAccumulator.getAccumulators().isEmpty()) {
+	        writer.println("            <p>No TTL operations found.</p>");
+	        return;
+	    }
+	    
+	    writer.println("            <table id=\"" + tableId + "\">");
+	    writer.println("                <thead>");
+	    writer.println("                    <tr>");
+	    writer.println("                        <th>Namespace</th>");
+	    writer.println("                        <th>Count</th>");
+	    writer.println("                        <th>Total Deleted</th>");
+	    writer.println("                        <th>Avg Deleted</th>");
+	    writer.println("                        <th>Min (ms)</th>");
+	    writer.println("                        <th>Max (ms)</th>");
+	    writer.println("                        <th>Avg (ms)</th>");
+	    writer.println("                    </tr>");
+	    writer.println("                </thead>");
+	    writer.println("                <tbody>");
+	    
+	    ttlAccumulator.getAccumulators().values().stream()
+	        .sorted((a, b) -> Long.compare(b.getCount(), a.getCount()))
+	        .forEach(acc -> {
+	            String namespace = acc.toString().split(" ")[0];
+	            long totalDeleted = acc.getAvgReturned() * acc.getCount();
+	            
+	            writer.println("                    <tr>");
+	            writer.println("                        <td>" + namespace + "</td>");
+	            writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(acc.getCount()) + "</td>");
+	            writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(totalDeleted) + "</td>");
+	            writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(acc.getAvgReturned()) + "</td>");
+	            writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(acc.getMin()) + "</td>");
+	            writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(acc.getMax()) + "</td>");
+	            writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(acc.getAvg()) + "</td>");
+	            writer.println("                    </tr>");
+	        });
+	    
+	    writer.println("                </tbody>");
+	    writer.println("            </table>");
+	}
+	
+	private static void writeTtlOperationsTableWithShards(PrintWriter writer, 
+	        Map<ShardInfo, Accumulator> shardTtlAccumulators) {
+	    
+	    writer.println("        <h2 id=\"ttl-operations\">TTL Operations (By Shard)</h2>");
+	    
+	    writer.println("        <div class=\"table-container\">");
+	    writer.println("            <table id=\"ttlTable\">");
+	    writer.println("                <thead>");
+	    writer.println("                    <tr>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('ttlTable', 0, 'string')\">Shard</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('ttlTable', 1, 'string')\">Namespace</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('ttlTable', 2, 'number')\">Count</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('ttlTable', 3, 'number')\">Total Deleted</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('ttlTable', 4, 'number')\">Avg Deleted</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('ttlTable', 5, 'number')\">Min (ms)</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('ttlTable', 6, 'number')\">Max (ms)</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('ttlTable', 7, 'number')\">Avg (ms)</th>");
+	    writer.println("                    </tr>");
+	    writer.println("                </thead>");
+	    writer.println("                <tbody>");
+	    
+	    for (Map.Entry<ShardInfo, Accumulator> shardEntry : shardTtlAccumulators.entrySet()) {
+	        ShardInfo shardInfo = shardEntry.getKey();
+	        Accumulator ttlAccumulator = shardEntry.getValue();
+	        String shardDisplay = shardInfo.getShard() + "-" + shardInfo.getNode();
+	        
+	        if (ttlAccumulator.getAccumulators().isEmpty()) {
+	            continue;
+	        }
+	        
+	        ttlAccumulator.getAccumulators().values().stream()
+	            .sorted((a, b) -> Long.compare(b.getCount(), a.getCount()))
+	            .forEach(acc -> {
+	                String namespace = acc.toString().split(" ")[0];
+	                long totalDeleted = acc.getAvgReturned() * acc.getCount();
+	                
+	                writer.println("                    <tr>");
+	                writer.println("                        <td>" + shardDisplay + "</td>");
+	                writer.println("                        <td>" + namespace + "</td>");
+	                writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(acc.getCount()) + "</td>");
+	                writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(totalDeleted) + "</td>");
+	                writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(acc.getAvgReturned()) + "</td>");
+	                writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(acc.getMin()) + "</td>");
+	                writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(acc.getMax()) + "</td>");
+	                writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(acc.getAvg()) + "</td>");
+	                writer.println("                    </tr>");
+	            });
+	    }
+	    
+	    writer.println("                </tbody>");
+	    writer.println("            </table>");
+	    writer.println("        </div>");
+	}
+	
+	// Stub methods for other shard tables (to be implemented)
+	private static void writeErrorCodesTableWithShards(PrintWriter writer, 
+	        Map<ShardInfo, ErrorCodeAccumulator> shardErrorCodeAccumulators, boolean redactQueries) {
+	    
+	    
+	    // Check if we have any error data across all shards
+	    boolean hasAnyErrors = shardErrorCodeAccumulators.values().stream()
+	        .anyMatch(acc -> acc != null && acc.hasErrors());
+	    
+	    if (!hasAnyErrors) {
+	        return;
+	    }
+	    
+	    writer.println("        <h2 id=\"error-codes\">Error Codes Analysis (By Shard)</h2>");
+	    
+	    // Helper class to combine shard info with error entries
+	    class ShardedErrorEntry {
+	        private final ShardInfo shardInfo;
+	        private final ErrorCodeAccumulator.ErrorCodeEntry errorEntry;
+	        
+	        public ShardedErrorEntry(ShardInfo shardInfo, ErrorCodeAccumulator.ErrorCodeEntry errorEntry) {
+	            this.shardInfo = shardInfo;
+	            this.errorEntry = errorEntry;
+	        }
+	        
+	        public ShardInfo getShardInfo() { return shardInfo; }
+	        public ErrorCodeAccumulator.ErrorCodeEntry getErrorEntry() { return errorEntry; }
+	    }
+	    
+	    // Combine all error entries from all shards
+	    java.util.List<ShardedErrorEntry> allErrors = new ArrayList<>();
+	    long totalErrorsAcrossShards = 0;
+	    
+	    for (Map.Entry<ShardInfo, ErrorCodeAccumulator> shardEntry : shardErrorCodeAccumulators.entrySet()) {
+	        ShardInfo shardInfo = shardEntry.getKey();
+	        ErrorCodeAccumulator errorAccum = shardEntry.getValue();
+	        
+	        if (errorAccum != null && errorAccum.hasErrors()) {
+	            
+	            var entries = errorAccum.getErrorCodeEntries().values();
+	            for (var errorEntry : entries) {
+	                allErrors.add(new ShardedErrorEntry(shardInfo, errorEntry));
+	                totalErrorsAcrossShards += errorEntry.getCount();
+	            }
+	        }
+	    }
+	    
+	    
+	    // Sort by shard, then by error count
+	    allErrors.sort((a, b) -> {
+	        int shardCompare = a.getShardInfo().toString().compareTo(b.getShardInfo().toString());
+	        if (shardCompare != 0) return shardCompare;
+	        return Long.compare(b.getErrorEntry().getCount(), a.getErrorEntry().getCount());
+	    });
+	    
+	    // Calculate summary statistics
+	    int uniqueShards = (int) allErrors.stream().map(ShardedErrorEntry::getShardInfo).distinct().count();
+	    int uniqueErrorCodes = (int) allErrors.stream().map(e -> e.getErrorEntry().getCodeName()).distinct().count();
+	    
+	    writer.println("        <div class=\"summary\">");
+	    writer.println("            <h3>Error Summary</h3>");
+	    writer.println("            <div class=\"summary-grid\">");
+	    writer.println("                <div class=\"summary-item\">");
+	    writer.println("                    <div class=\"summary-label\">Total Shards with Errors</div>");
+	    writer.println("                    <div class=\"summary-value\">" + uniqueShards + "</div>");
+	    writer.println("                </div>");
+	    writer.println("                <div class=\"summary-item\">");
+	    writer.println("                    <div class=\"summary-label\">Total Error Occurrences</div>");
+	    writer.println("                    <div class=\"summary-value\">" + NUMBER_FORMAT.format(totalErrorsAcrossShards) + "</div>");
+	    writer.println("                </div>");
+	    writer.println("                <div class=\"summary-item\">");
+	    writer.println("                    <div class=\"summary-label\">Unique Error Codes</div>");
+	    writer.println("                    <div class=\"summary-value\">" + uniqueErrorCodes + "</div>");
+	    writer.println("                </div>");
+	    writer.println("                <div class=\"summary-item\">");
+	    writer.println("                    <div class=\"summary-label\">Total Error Entries</div>");
+	    writer.println("                    <div class=\"summary-value\">" + allErrors.size() + "</div>");
+	    writer.println("                </div>");
+	    writer.println("            </div>");
+	    writer.println("        </div>");
+	    
+	    writer.println("        <div class=\"table-container\">");
+	    writer.println("            <div class=\"controls\">");
+	    writer.println("                <input type=\"text\" id=\"errorCodesFilter\" class=\"filter-input\" placeholder=\"Filter by shard, error code, or message...\">");
+	    writer.println("                <button class=\"clear-btn\" onclick=\"clearFilter('errorCodesFilter', 'errorCodesTable')\">Clear Filter</button>");
+	    writer.println("                <button class=\"expand-btn\" onclick=\"expandAllAccordions('errorCodesTable')\">Expand All</button>");
+	    writer.println("                <button class=\"collapse-btn\" onclick=\"collapseAllAccordions('errorCodesTable')\">Collapse All</button>");
+	    writer.println("            </div>");
+	    writer.println("            <table id=\"errorCodesTable\">");
+	    writer.println("                <thead>");
+	    writer.println("                    <tr>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('errorCodesTable', 0, 'string')\">Shard</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('errorCodesTable', 1, 'string')\">Code Name</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('errorCodesTable', 2, 'number')\">Error Code</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('errorCodesTable', 3, 'number')\">Count</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('errorCodesTable', 4, 'number')\">% of Shard's Errors</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('errorCodesTable', 5, 'string')\">Sample Error Message</th>");
+	    writer.println("                    </tr>");
+	    writer.println("                </thead>");
+	    writer.println("                <tbody>");
+	    
+	    for (ShardedErrorEntry shardedEntry : allErrors) {
+	        ShardInfo shard = shardedEntry.getShardInfo();
+	        ErrorCodeAccumulator.ErrorCodeEntry errorEntry = shardedEntry.getErrorEntry();
+	        String shardDisplay = shard.getShard() + "-" + shard.getNode();
+	        String rowId = "err-shard-" + Math.abs((shard.toString() + errorEntry.getCodeName()).hashCode());
+	        
+	        // Calculate percentage within this shard
+	        long shardTotalErrors = shardErrorCodeAccumulators.get(shard).getTotalErrorCount();
+	        double percentage = (errorEntry.getCount() * 100.0) / Math.max(shardTotalErrors, 1);
+	        
+	        // Main row with accordion functionality  
+	        writer.println("                    <tr class=\"accordion-row\" onclick=\"toggleAccordion('" + rowId + "')\">");
+	        writer.println("                        <td><span class=\"accordion-toggle\"></span>" + shardDisplay + "</td>");
+	        writer.println("                        <td>" + escapeHtml(errorEntry.getCodeName()) + "</td>");
+	        writer.println("                        <td class=\"number\">" + 
+	                      (errorEntry.getErrorCode() != null ? errorEntry.getErrorCode().toString() : "unknown") + "</td>");
+	        writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(errorEntry.getCount()) + "</td>");
+	        writer.println("                        <td class=\"number\">" + String.format("%.1f%%", percentage) + "</td>");
+	        
+	        String sampleErrorMessage = errorEntry.getSampleErrorMessage();
+	        if (sampleErrorMessage != null) {
+	            String processedErrorMessage = LogRedactionUtil.processLogMessage(sampleErrorMessage, redactQueries);
+	            writer.println("                        <td class=\"truncated\" title=\"" + escapeHtml(processedErrorMessage) + "\">" + 
+	                          escapeHtml(truncate(processedErrorMessage, 100)) + "</td>");
+	        } else {
+	            writer.println("                        <td>N/A</td>");
+	        }
+	        writer.println("                    </tr>");
+	        
+	        // Accordion content row with full error message
+	        if (sampleErrorMessage != null && !sampleErrorMessage.isEmpty()) {
+	            writer.println("                    <tr id=\"" + rowId + "\" class=\"accordion-content\">");
+	            writer.println("                        <td colspan=\"6\">");
+	            writer.println("                            <div class=\"log-sample\">");
+	            writer.println("                                <strong>Full Error Message:</strong><br>");
+	            
+	            String processedErrorMessage = LogRedactionUtil.processLogMessage(sampleErrorMessage, redactQueries);
+	            writer.println("                                " + escapeHtml(processedErrorMessage));
+	            
+	            writer.println("                            </div>");
+	            writer.println("                        </td>");
+	            writer.println("                    </tr>");
+	        }
+	    }
+	    
+	    writer.println("                </tbody>");
+	    writer.println("            </table>");
+	    writer.println("        </div>");
+	}
+	
+	private static void writeQueryHashTableWithShards(PrintWriter writer, 
+	        Map<ShardInfo, QueryHashAccumulator> shardQueryHashAccumulators, boolean redactQueries) {
+	    // For now, just write a placeholder
+	    writer.println("        <h2>Query Patterns (By Shard)</h2>");
+	    writer.println("        <p>Query patterns analysis by shard would appear here.</p>");
+	}
+	
+	private static void writeTransactionTableWithShards(PrintWriter writer, 
+	        Map<ShardInfo, TransactionAccumulator> shardTransactionAccumulators) {
+	    // For now, just write a placeholder
+	    writer.println("        <h2>Transactions (By Shard)</h2>");
+	    writer.println("        <p>Transaction analysis by shard would appear here.</p>");
+	}
+	
+	private static void writeIndexStatsTableWithShards(PrintWriter writer, 
+	        Map<ShardInfo, IndexStatsAccumulator> shardIndexStatsAccumulators, boolean redactQueries) {
+	    // For now, just write a placeholder
+	    writer.println("        <h2>Index Statistics (By Shard)</h2>");
+	    writer.println("        <p>Index statistics by shard would appear here.</p>");
+	}
+	
+	// Stub methods for other table content generation (to be implemented)
+	private static void writeErrorCodesTableContent(PrintWriter writer, ErrorCodeAccumulator errorAccum, boolean redactQueries, String tableId) {
+	    // Implementation would go here - for now just a placeholder
+	    writer.println("            <p>Error codes analysis would appear here.</p>");
+	}
+	
+	private static void writeQueryHashTableContent(PrintWriter writer, QueryHashAccumulator queryHashAccum, boolean redactQueries, String tableId) {
+	    // Implementation would go here - for now just a placeholder
+	    writer.println("            <p>Query hash analysis would appear here.</p>");
+	}
+	
+	private static void writeTransactionTableContent(PrintWriter writer, TransactionAccumulator transAccum, String tableId) {
+	    // Implementation would go here - for now just a placeholder
+	    writer.println("            <p>Transaction analysis would appear here.</p>");
+	}
+	
+	private static void writeIndexStatsTableContent(PrintWriter writer, IndexStatsAccumulator indexAccum, boolean redactQueries, String tableId) {
+	    // Implementation would go here - for now just a placeholder
+	    writer.println("            <p>Index statistics would appear here.</p>");
 	}
 
 	private static void writeMainOperationsTable(PrintWriter writer, Accumulator accumulator, boolean redactQueries) {
@@ -345,20 +989,19 @@ public class HtmlReportGenerator {
 			String cssClass = op.getCssClass();
 			
 			writer.println("                    <tr class=\"accordion-row " + cssClass + "\" onclick=\"toggleAccordion('" + rowId + "')\">");
-			writer.println("                        <td class=\"truncated\" title=\"" + escapeHtml(namespace)
-					+ "\"><span class=\"accordion-toggle\"></span>" + escapeHtml(truncate(namespace, 50)) + "</td>");
-			writer.println("                        <td>" + escapeHtml(operation) + "</td>");
-			writer.println("                        <td class=\"number\">" + op.getFormattedCount() + "</td>");
-			writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(op.getMinMs()) + "</td>");
-			writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(op.getMaxMs()) + "</td>");
-			writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(op.getAvgMs()) + "</td>");
-			writer.println("                        <td class=\"number\">" + op.getFormattedP95Ms() + "</td>");
-			writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(op.getTotalSec()) + "</td>");
-			writer.println("                        <td class=\"number\">" + op.getFormattedAvgKeysExamined() + "</td>");
-			writer.println("                        <td class=\"number\">" + op.getFormattedAvgDocsExamined() + "</td>");
-			writer.println("                        <td class=\"number\">" + op.getFormattedAvgReturned() + "</td>");
-			writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(op.getExRetRatio()) + "</td>");
-			writer.println("                        <td class=\"number\">" + op.getFormattedAvgShards() + "</td>");
+			writer.println("                        <td class=\"namespace-cell\"><span class=\"accordion-toggle\"></span>" + escapeHtml(namespace) + "</td>");
+			writer.println("                        <td class=\"operation-cell\">" + escapeHtml(operation) + "</td>");
+			writer.println("                        <td class=\"count-cell\">" + op.getFormattedCount() + "</td>");
+			writer.println("                        <td class=\"time-cell\">" + NUMBER_FORMAT.format(op.getMinMs()) + "</td>");
+			writer.println("                        <td class=\"time-cell\">" + NUMBER_FORMAT.format(op.getMaxMs()) + "</td>");
+			writer.println("                        <td class=\"time-cell\">" + NUMBER_FORMAT.format(op.getAvgMs()) + "</td>");
+			writer.println("                        <td class=\"time-cell\">" + op.getFormattedP95Ms() + "</td>");
+			writer.println("                        <td class=\"time-cell\">" + NUMBER_FORMAT.format(op.getTotalSec()) + "</td>");
+			writer.println("                        <td class=\"count-cell\">" + op.getFormattedAvgKeysExamined() + "</td>");
+			writer.println("                        <td class=\"count-cell\">" + op.getFormattedAvgDocsExamined() + "</td>");
+			writer.println("                        <td class=\"count-cell\">" + op.getFormattedAvgReturned() + "</td>");
+			writer.println("                        <td class=\"count-cell\">" + NUMBER_FORMAT.format(op.getExRetRatio()) + "</td>");
+			writer.println("                        <td class=\"count-cell\">" + op.getFormattedAvgShards() + "</td>");
 			writer.print("                        ");
 			writer.println(op.getFormattedAvgBytesReadCell());
 			writer.print("                        ");
@@ -710,6 +1353,95 @@ public class HtmlReportGenerator {
 						writer.println("                    </tr>");
 					}
 				});
+
+		writer.println("                </tbody>");
+		writer.println("            </table>");
+		writer.println("        </div>");
+	}
+
+	private static void writeSlowPlanningTable(PrintWriter writer, SlowPlanningAccumulator slowPlanningAccumulator, boolean redactQueries) {
+		if (slowPlanningAccumulator == null || slowPlanningAccumulator.getSize() == 0) {
+			return;
+		}
+
+		writer.println("        <h2 id=\"slow-planning\">Slow Query Planning Analysis</h2>");
+
+		var topEntries = slowPlanningAccumulator.getTopEntries();
+
+		writer.println("        <div class=\"summary\">");
+		writer.println("            <h3>Slow Planning Summary</h3>");
+		writer.println("            <div class=\"summary-grid\">");
+		writer.println("                <div class=\"summary-item\">");
+		writer.println("                    <div class=\"summary-label\">Total with Planning Time</div>");
+		writer.println("                    <div class=\"summary-value\">" + NUMBER_FORMAT.format(slowPlanningAccumulator.getSize()) + "</div>");
+		writer.println("                </div>");
+		writer.println("                <div class=\"summary-item\">");
+		writer.println("                    <div class=\"summary-label\">Showing Top</div>");
+		writer.println("                    <div class=\"summary-value\">" + NUMBER_FORMAT.format(topEntries.size()) + "</div>");
+		writer.println("                </div>");
+		writer.println("            </div>");
+		writer.println("        </div>");
+
+		writer.println("        <div class=\"table-container\">");
+		writer.println("            <div class=\"controls\">");
+		writer.println("                <input type=\"text\" id=\"slowPlanningFilter\" class=\"filter-input\" placeholder=\"Filter by namespace, operation, etc...\">");
+		writer.println("                <button class=\"clear-btn\" onclick=\"clearFilter('slowPlanningFilter', 'slowPlanningTable')\">Clear Filter</button>");
+		writer.println("                <button class=\"expand-btn\" onclick=\"expandAllAccordions('slowPlanningTable')\">Expand All</button>");
+		writer.println("                <button class=\"collapse-btn\" onclick=\"collapseAllAccordions('slowPlanningTable')\">Collapse All</button>");
+		writer.println("                <button class=\"manage-cols-btn\" onclick=\"openColumnModal('slowPlanningTable')\">Manage Columns</button>");
+		writer.println("            </div>");
+		writer.println("            <table id=\"slowPlanningTable\">");
+		writer.println("                <thead>");
+		writer.println("                    <tr>");
+		writer.println("                        " + generateTableHeader("slowPlanningTable", 0, "Timestamp", "string"));
+		writer.println("                        " + generateTableHeader("slowPlanningTable", 1, "Planning Time", "number"));
+		writer.println("                        " + generateTableHeader("slowPlanningTable", 2, "Namespace", "string"));
+		writer.println("                        " + generateTableHeader("slowPlanningTable", 3, "Operation", "string"));
+		writer.println("                        " + generateTableHeader("slowPlanningTable", 4, "Query Hash", "string"));
+		writer.println("                        " + generateTableHeader("slowPlanningTable", 5, "App Name", "string"));
+		writer.println("                        " + generateTableHeader("slowPlanningTable", 6, "Plan Summary", "string"));
+		writer.println("                    </tr>");
+		writer.println("                </thead>");
+		writer.println("                <tbody>");
+
+		topEntries.forEach(entry -> {
+			String sanitizedQuery = redactQueries ? LogRedactionUtil.redactLogMessage(entry.getSanitizedQuery(), true) : entry.getSanitizedQuery();
+			String rowId = "sp-" + Math.abs(entry.getLogMessage() != null ? entry.getLogMessage().hashCode() : entry.hashCode());
+
+			writer.println("                    <tr class=\"accordion-row\" onclick=\"toggleAccordion('" + rowId + "')\">");
+			writer.println("                        <td><span class=\"accordion-toggle\"></span>" + escapeHtml(entry.getTimestamp()) + "</td>");
+			writer.println("                        <td class=\"number\" data-sort-value=\"" + entry.getPlanningTimeMicros() + "\">" + escapeHtml(entry.getFormattedPlanningTime()) + "</td>");
+			writer.println("                        <td class=\"truncated\" title=\"" + escapeHtml(entry.getNamespace()) + "\">"
+					+ escapeHtml(truncate(entry.getNamespace(), 40)) + "</td>");
+			writer.println("                        <td>" + escapeHtml(entry.getOperation()) + "</td>");
+			writer.println("                        <td class=\"truncated\" title=\"" + escapeHtml(entry.getQueryHash() != null ? entry.getQueryHash() : "") + "\">"
+					+ escapeHtml(truncate(entry.getQueryHash() != null ? entry.getQueryHash() : "-", 12)) + "</td>");
+			writer.println("                        <td class=\"truncated\" title=\"" + escapeHtml(entry.getAppName() != null ? entry.getAppName() : "") + "\">"
+					+ escapeHtml(truncate(entry.getAppName() != null ? entry.getAppName() : "-", 20)) + "</td>");
+			writer.println("                        <td class=\"truncated\" title=\"" + escapeHtml(entry.getPlanSummary()) + "\">"
+					+ escapeHtml(truncate(entry.getPlanSummary(), 30)) + "</td>");
+			writer.println("                    </tr>");
+
+			// Add accordion content row with query and log message
+			if (entry.getLogMessage() != null && !entry.getLogMessage().isEmpty()) {
+				boolean isTruncated = LogRedactionUtil.isLogMessageTruncated(entry.getLogMessage());
+				String cssClass = isTruncated ? "log-sample truncated-query" : "log-sample";
+				writer.println("                    <tr id=\"" + rowId + "\" class=\"accordion-content\">");
+				writer.println("                        <td colspan=\"7\">");
+				writer.println("                            <div class=\"" + cssClass + "\">");
+				if (isTruncated) {
+					writer.println("                                <div class=\"truncated-warning\">⚠ Query was truncated in MongoDB logs</div>");
+				}
+				writer.println("                                <strong>Query:</strong><br>");
+				writer.println("                                <pre>" + escapeHtml(sanitizedQuery) + "</pre>");
+				writer.println("                                <br>");
+				writer.println("                                <strong>Log Entry:</strong><br>");
+				writer.println("                                <pre>" + escapeHtml(entry.getLogMessage()) + "</pre>");
+				writer.println("                            </div>");
+				writer.println("                        </td>");
+				writer.println("                    </tr>");
+			}
+		});
 
 		writer.println("                </tbody>");
 		writer.println("            </table>");
@@ -1704,9 +2436,101 @@ public class HtmlReportGenerator {
 	    writer.println("                }");
 	    writer.println("            }");
 	    writer.println("        }");
+
+	    // Column management functions
+	    writer.println("");
+	    writer.println("        // Column visibility management");
+	    writer.println("        let hiddenColumns = {};");
+	    writer.println("");
+	    writer.println("        function hideColumn(tableId, colIndex) {");
+	    writer.println("            if (!hiddenColumns[tableId]) hiddenColumns[tableId] = [];");
+	    writer.println("            if (!hiddenColumns[tableId].includes(colIndex)) hiddenColumns[tableId].push(colIndex);");
+	    writer.println("            const table = document.getElementById(tableId);");
+	    writer.println("            const headers = table.querySelectorAll('thead th');");
+	    writer.println("            const rows = table.querySelectorAll('tbody tr');");
+	    writer.println("            headers[colIndex].classList.add('hidden-col');");
+	    writer.println("            rows.forEach(row => {");
+	    writer.println("                const cells = row.querySelectorAll('td');");
+	    writer.println("                if (cells[colIndex]) cells[colIndex].classList.add('hidden-col');");
+	    writer.println("            });");
+	    writer.println("        }");
+	    writer.println("");
+	    writer.println("        function showColumn(tableId, colIndex) {");
+	    writer.println("            if (hiddenColumns[tableId]) {");
+	    writer.println("                hiddenColumns[tableId] = hiddenColumns[tableId].filter(i => i !== colIndex);");
+	    writer.println("            }");
+	    writer.println("            const table = document.getElementById(tableId);");
+	    writer.println("            const headers = table.querySelectorAll('thead th');");
+	    writer.println("            const rows = table.querySelectorAll('tbody tr');");
+	    writer.println("            headers[colIndex].classList.remove('hidden-col');");
+	    writer.println("            rows.forEach(row => {");
+	    writer.println("                const cells = row.querySelectorAll('td');");
+	    writer.println("                if (cells[colIndex]) cells[colIndex].classList.remove('hidden-col');");
+	    writer.println("            });");
+	    writer.println("        }");
+	    writer.println("");
+	    writer.println("        let currentTableId = null;");
+	    writer.println("");
+	    writer.println("        function openColumnModal(tableId) {");
+	    writer.println("            currentTableId = tableId;");
+	    writer.println("            const modal = document.getElementById('columnModal');");
+	    writer.println("            const columnList = document.getElementById('columnList');");
+	    writer.println("            const table = document.getElementById(tableId);");
+	    writer.println("            const headers = table.querySelectorAll('thead th');");
+	    writer.println("            columnList.innerHTML = '';");
+	    writer.println("            headers.forEach((header, index) => {");
+	    writer.println("                const colName = header.getAttribute('data-col-name');");
+	    writer.println("                if (!colName) return;");
+	    writer.println("                const isHidden = hiddenColumns[tableId] && hiddenColumns[tableId].includes(index);");
+	    writer.println("                const item = document.createElement('div');");
+	    writer.println("                item.className = 'column-item' + (isHidden ? ' hidden' : '');");
+	    writer.println("                item.textContent = (isHidden ? '☐ ' : '☑ ') + colName;");
+	    writer.println("                item.onclick = () => toggleColumn(tableId, index);");
+	    writer.println("                columnList.appendChild(item);");
+	    writer.println("            });");
+	    writer.println("            modal.style.display = 'block';");
+	    writer.println("        }");
+	    writer.println("");
+	    writer.println("        function closeColumnModal() {");
+	    writer.println("            document.getElementById('columnModal').style.display = 'none';");
+	    writer.println("        }");
+	    writer.println("");
+	    writer.println("        function toggleColumn(tableId, colIndex) {");
+	    writer.println("            const isHidden = hiddenColumns[tableId] && hiddenColumns[tableId].includes(colIndex);");
+	    writer.println("            if (isHidden) showColumn(tableId, colIndex);");
+	    writer.println("            else hideColumn(tableId, colIndex);");
+	    writer.println("            openColumnModal(tableId);");
+	    writer.println("        }");
+	    writer.println("");
+	    writer.println("        window.onclick = function(event) {");
+	    writer.println("            const modal = document.getElementById('columnModal');");
+	    writer.println("            if (event.target == modal) closeColumnModal();");
+	    writer.println("        }");
+
 	    writer.println("    </script>");
+	    writer.println("");
+	    writer.println("    <!-- Column Management Modal -->");
+	    writer.println("    <div id=\"columnModal\" class=\"modal\">");
+	    writer.println("        <div class=\"modal-content\">");
+	    writer.println("            <div class=\"modal-header\">");
+	    writer.println("                <h3>Manage Columns</h3>");
+	    writer.println("                <span class=\"close\" onclick=\"closeColumnModal()\">&times;</span>");
+	    writer.println("            </div>");
+	    writer.println("            <div class=\"modal-body\" id=\"columnList\"></div>");
+	    writer.println("        </div>");
+	    writer.println("    </div>");
 	    writer.println("</body>");
 	    writer.println("</html>");
+	}
+
+	/**
+	 * Helper method to generate a table header with column management features
+	 */
+	private static String generateTableHeader(String tableId, int colIndex, String columnName, String sortType) {
+		return String.format(
+			"<th class=\"sortable\" onclick=\"sortTable('%s', %d, '%s')\" data-col-name=\"%s\">%s<span class=\"col-hide-btn\" onclick=\"event.stopPropagation(); hideColumn('%s', %d)\">✕</span></th>",
+			tableId, colIndex, sortType, columnName, columnName, tableId, colIndex
+		);
 	}
 
 	private static String escapeHtml(String text) {

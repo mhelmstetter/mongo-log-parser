@@ -37,7 +37,28 @@ This will analyze all `.log` files in the current directory and automatically ge
 - Java 17 or higher
 - Maven 3.6+ (for building from source)
 
-### Download
+### Quick Install (Mac/Linux)
+The easiest way to install the log parser is using the install script:
+
+```bash
+git clone https://github.com/mhelmstetter/mongo-log-parser.git
+cd mongo-log-parser
+./install.sh
+```
+
+This will:
+- Build the project if needed
+- Install the `log-parser` command to `~/.local/bin`
+- Add the directory to your PATH (if not already present)
+
+After installation, you can use the tool from anywhere:
+```bash
+log-parser mongod.log
+log-parser *.log -o analysis.html
+log-parser --help
+```
+
+### Manual Installation
 Download the latest release from the [releases page](../../releases) or build from source.
 
 ### Build from Source
@@ -53,8 +74,21 @@ The executable JAR will be created at `bin/MongoLogParser.jar`.
 
 ### Basic Usage
 
-**Default behavior (generates HTML report):**
+#### Using the installed command (after running install.sh):
 ```bash
+# Analyze a single log file
+log-parser server.log
+
+# Analyze multiple logs with custom output
+log-parser *.log -o my-report.html
+
+# Enable query redaction
+log-parser server.log --redact
+```
+
+#### Using the JAR directly:
+```bash
+# Default behavior (generates HTML report)
 java -jar bin/MongoLogParser.jar -f server.log
 ```
 

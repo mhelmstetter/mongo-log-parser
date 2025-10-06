@@ -35,9 +35,15 @@ public class LogLineAccumulator {
     // Write conflicts tracking
     private long totalWriteConflicts = 0;
     
+    // Error count tracking
+    private long errorCount = 0;
+    
     // Sample log message storage - store the log message for the slowest query
     private String sampleLogMessage = null;
     private long maxDurationForSample = 0;
+
+    // Track if this is a change stream operation
+    private boolean isChangeStream = false;
     
     // Statistics for percentiles (optional, can be disabled for performance)
     private DescriptiveStatistics executionStats = new DescriptiveStatistics();
@@ -136,6 +142,10 @@ public class LogLineAccumulator {
             this.totalWriteConflicts += writeConflicts;
         }
     }
+    
+    public void addError() {
+        this.errorCount++;
+    }
 
     // Getter methods
     public long getCount() {
@@ -217,6 +227,45 @@ public class LogLineAccumulator {
         return count > 0 ? totalWriteConflicts / count : 0;
     }
     
+    // Response length (reslen) getters
+    public long getTotalReslen() {
+        return reslen;
+    }
+    
+    public long getAvgReslen() {
+        return count > 0 ? reslen / count : 0;
+    }
+    
+    // Returned documents (nreturned) getters
+    public long getTotalReturned() {
+        return totalReturned;
+    }
+    
+    // Note: getAvgReturned() already exists above
+    
+    // Storage bytes read getters (for the bytesRead from storage.data.bytesRead)
+    public long getTotalStorageBytesRead() {
+        return totalStorageBytesRead;
+    }
+    
+    public long getAvgStorageBytesRead() {
+        return count > 0 ? totalStorageBytesRead / count : 0;
+    }
+    
+    // Regular bytes read getters (for response bytesRead)
+    public long getTotalBytesRead() {
+        return bytesRead;
+    }
+    
+    public long getAvgBytesReadResponse() {
+        return count > 0 ? bytesRead / count : 0;
+    }
+    
+    // Error count getters
+    public long getErrorCount() {
+        return errorCount;
+    }
+    
     public String toString() {
         return String.format("%-65s %-20s %10d %10.1f %10d %10d %10d %10d %10d %10d %10d %10d %10d", 
                 namespace, operation, count, reslen/ONE_MB_DOUBLE, bytesRead/1048576, 
@@ -258,11 +307,19 @@ public class LogLineAccumulator {
     public String getSampleLogMessage() {
         return sampleLogMessage;
     }
-    
+
+    public boolean isChangeStream() {
+        return isChangeStream;
+    }
+
+    public void setChangeStream(boolean isChangeStream) {
+        this.isChangeStream = isChangeStream;
+    }
+
     public String getNamespace() {
         return namespace != null ? namespace.toString() : "";
     }
-    
+
     public String getOperation() {
         return operation != null ? operation : "";
     }

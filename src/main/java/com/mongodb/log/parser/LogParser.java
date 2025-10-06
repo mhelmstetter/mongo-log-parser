@@ -39,6 +39,7 @@ import com.mongodb.log.parser.accumulator.ErrorCodeAccumulator;
 import com.mongodb.log.parser.accumulator.IndexStatsAccumulator;
 import com.mongodb.log.parser.accumulator.PlanCacheAccumulator;
 import com.mongodb.log.parser.accumulator.QueryHashAccumulator;
+import com.mongodb.log.parser.accumulator.SlowPlanningAccumulator;
 import com.mongodb.log.parser.accumulator.TransactionAccumulator;
 import com.mongodb.util.MimeTypes;
 
@@ -102,6 +103,15 @@ public class LogParser implements Callable<Integer> {
     
     @Option(names = {"--json-only"}, description = "Generate only JSON output (skip HTML)")
     private boolean jsonOnly = false;
+    
+    @Option(names = {"--shards"}, description = "Enable shard/node tracking based on filename pattern (e.g., shard-XX-YY)")
+    private boolean enableShardTracking = false;
+    
+    @Option(names = {"--drivers"}, description = "Enable driver statistics analysis (disabled by default)")
+    private boolean enableDriverStats = false;
+
+    @Option(names = {"--limit"}, description = "Limit parsing to the first N lines of each log file")
+    private Long lineLimit = null;
 
     // Statistics tracking
     private AtomicLong totalParseErrors = new AtomicLong(0);
@@ -135,6 +145,17 @@ public class LogParser implements Callable<Integer> {
     private Accumulator shapeAccumulator = new Accumulator();
     
     private QueryHashAccumulator queryHashAccumulator;
+    private SlowPlanningAccumulator slowPlanningAccumulator;
+
+    // Shard tracking
+    private ShardInfo currentShardInfo = null;
+    private Map<ShardInfo, Accumulator> shardAccumulators = new HashMap<>();
+    private Map<ShardInfo, Accumulator> shardTtlAccumulators = new HashMap<>();
+    private Map<ShardInfo, PlanCacheAccumulator> shardPlanCacheAccumulators = new HashMap<>();
+    private Map<ShardInfo, QueryHashAccumulator> shardQueryHashAccumulators = new HashMap<>();
+    private Map<ShardInfo, ErrorCodeAccumulator> shardErrorCodeAccumulators = new HashMap<>();
+    private Map<ShardInfo, TransactionAccumulator> shardTransactionAccumulators = new HashMap<>();
+    private Map<ShardInfo, IndexStatsAccumulator> shardIndexStatsAccumulators = new HashMap<>();
 
     // Ignored lines analysis
     private Map<String, AtomicLong> ignoredCategories = new HashMap<>();
@@ -144,6 +165,7 @@ public class LogParser implements Callable<Integer> {
         accumulator = new Accumulator();
         ttlAccumulator = new Accumulator();
         queryHashAccumulator = new QueryHashAccumulator();
+        slowPlanningAccumulator = new SlowPlanningAccumulator();
         planCacheAccumulator = new PlanCacheAccumulator();
         errorCodeAccumulator = new ErrorCodeAccumulator();
         transactionAccumulator = new TransactionAccumulator();
@@ -259,19 +281,28 @@ public class LogParser implements Callable<Integer> {
                     System.err.println("[VERBOSE] Starting HTML report generation");
                 }
                 HtmlReportGenerator.generateReport(
-                    htmlOutputFile, 
-                    accumulator, 
-                    ttlAccumulator, 
+                    htmlOutputFile,
+                    accumulator,
+                    ttlAccumulator,
                     planCacheAccumulator,
                     queryHashAccumulator,
+                    slowPlanningAccumulator,
                     errorCodeAccumulator,
                     transactionAccumulator,
                     indexStatsAccumulator,
-                    driverStatsAccumulator,
+                    enableDriverStats ? driverStatsAccumulator : null,
                     operationTypeStats,
                     redactQueries,
                     earliestTimestamp,
-                    latestTimestamp
+                    latestTimestamp,
+                    enableShardTracking,
+                    shardAccumulators,
+                    shardTtlAccumulators,
+                    shardPlanCacheAccumulators,
+                    shardQueryHashAccumulators,
+                    shardErrorCodeAccumulators,
+                    shardTransactionAccumulators,
+                    shardIndexStatsAccumulators
                 );
                 long htmlEnd = System.currentTimeMillis();
                 if (verbose) {
@@ -421,12 +452,42 @@ public class LogParser implements Callable<Integer> {
     }
 
     public void read(File file) throws IOException, ExecutionException, InterruptedException {
-        System.out.println("🔍 Debug: driverStatsAccumulator type = " + driverStatsAccumulator.getClass().getName());
-        if (driverStatsAccumulator instanceof TwoPassDriverStatsAccumulator) {
-            readTwoPass(file);
+        // Extract shard info from filename if shard tracking is enabled
+        if (enableShardTracking) {
+            currentShardInfo = ShardInfo.extractFromFilename(file.getName());
+            if (currentShardInfo != null) {
+                System.out.println("📍 Processing shard: " + currentShardInfo);
+                // Initialize accumulators for this shard if not already present
+                initializeShardAccumulators(currentShardInfo);
+                if (verbose) {
+                    System.err.printf("[VERBOSE] Initialized shard accumulators for %s. Total shard accumulators: %d%n", 
+                                    currentShardInfo, shardAccumulators.size());
+                }
+            } else {
+                System.out.println("⚠️  Could not extract shard info from filename: " + file.getName());
+            }
+        }
+        
+        if (enableDriverStats) {
+            if (driverStatsAccumulator instanceof TwoPassDriverStatsAccumulator) {
+                readTwoPass(file);
+            } else {
+                readSinglePass(file);
+            }
         } else {
+            // Skip two-pass processing when driver stats are disabled
             readSinglePass(file);
         }
+    }
+    
+    private void initializeShardAccumulators(ShardInfo shardInfo) {
+        shardAccumulators.computeIfAbsent(shardInfo, k -> new Accumulator());
+        shardTtlAccumulators.computeIfAbsent(shardInfo, k -> new Accumulator());
+        shardPlanCacheAccumulators.computeIfAbsent(shardInfo, k -> new PlanCacheAccumulator());
+        shardQueryHashAccumulators.computeIfAbsent(shardInfo, k -> new QueryHashAccumulator());
+        shardErrorCodeAccumulators.computeIfAbsent(shardInfo, k -> new ErrorCodeAccumulator());
+        shardTransactionAccumulators.computeIfAbsent(shardInfo, k -> new TransactionAccumulator());
+        shardIndexStatsAccumulators.computeIfAbsent(shardInfo, k -> new IndexStatsAccumulator());
     }
     
     private void readTwoPass(File file) throws IOException, ExecutionException, InterruptedException {
@@ -496,6 +557,12 @@ public class LogParser implements Callable<Integer> {
         while ((currentLine = in.readLine()) != null) {
             lineNum++;
 
+            // Check line limit
+            if (lineLimit != null && lineNum > lineLimit) {
+                System.out.printf("📊 Reached line limit of %d lines, stopping parsing\n", lineLimit);
+                break;
+            }
+
             // Process TTL operations before filtering
             if (isTtlOperation(currentLine)) {
                 processTtlOperation(currentLine);
@@ -511,14 +578,28 @@ public class LogParser implements Callable<Integer> {
             processedCount++;
 
             if (lines.size() >= 25000) {
+                // Use shard-specific accumulators if shard tracking is enabled
+                Accumulator targetAccumulator = (enableShardTracking && currentShardInfo != null) 
+                    ? shardAccumulators.get(currentShardInfo) : accumulator;
+                PlanCacheAccumulator targetPlanCache = (enableShardTracking && currentShardInfo != null)
+                    ? shardPlanCacheAccumulators.get(currentShardInfo) : planCacheAccumulator;
+                QueryHashAccumulator targetQueryHash = (enableShardTracking && currentShardInfo != null)
+                    ? shardQueryHashAccumulators.get(currentShardInfo) : queryHashAccumulator;
+                ErrorCodeAccumulator targetErrorCode = (enableShardTracking && currentShardInfo != null)
+                    ? shardErrorCodeAccumulators.get(currentShardInfo) : errorCodeAccumulator;
+                TransactionAccumulator targetTransaction = (enableShardTracking && currentShardInfo != null)
+                    ? shardTransactionAccumulators.get(currentShardInfo) : transactionAccumulator;
+                IndexStatsAccumulator targetIndexStats = (enableShardTracking && currentShardInfo != null)
+                    ? shardIndexStatsAccumulators.get(currentShardInfo) : indexStatsAccumulator;
+                    
                 completionService.submit(
-                    new LogParserTask(new ArrayList<>(lines), accumulator, planCacheAccumulator, queryHashAccumulator,
-                    		errorCodeAccumulator, transactionAccumulator, indexStatsAccumulator, driverStatsAccumulator, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this));
+                    new LogParserTask(new ArrayList<>(lines), targetAccumulator, targetPlanCache, targetQueryHash,
+                    		slowPlanningAccumulator, targetErrorCode, targetTransaction, targetIndexStats, enableDriverStats ? driverStatsAccumulator : null, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this));
                 submittedTasks++;
                 lines.clear();
                 
                 // Periodic cleanup to prevent memory leaks
-                if (driverStatsAccumulator != null && submittedTasks % 10 == 0) {
+                if (enableDriverStats && driverStatsAccumulator != null && submittedTasks % 10 == 0) {
                     int authCount = driverStatsAccumulator.getPendingAuthCount();
                     int metadataCount = driverStatsAccumulator.getPendingMetadataCount();
                     driverStatsAccumulator.performPeriodicCleanup();
@@ -540,7 +621,7 @@ public class LogParser implements Callable<Integer> {
                     System.err.printf("[VERBOSE] Processed %d lines (%d tasks), %.1f lines/sec. Memory: %d MB used, %d MB free%n", 
                                     lineNum, submittedTasks, linesPerSec, usedMemory, freeMemory);
                     
-                    if (driverStatsAccumulator != null) {
+                    if (enableDriverStats && driverStatsAccumulator != null) {
                         // Add method to get stats
                         System.err.printf("[VERBOSE] Driver stats: %d entries, pending auth: %d, pending metadata: %d%n",
                                         driverStatsAccumulator.getDriverStatsEntries().size(),
@@ -568,9 +649,23 @@ public class LogParser implements Callable<Integer> {
 
         // Submit remaining lines
         if (!lines.isEmpty()) {
+            // Use shard-specific accumulators if shard tracking is enabled
+            Accumulator targetAccumulator = (enableShardTracking && currentShardInfo != null) 
+                ? shardAccumulators.get(currentShardInfo) : accumulator;
+            PlanCacheAccumulator targetPlanCache = (enableShardTracking && currentShardInfo != null)
+                ? shardPlanCacheAccumulators.get(currentShardInfo) : planCacheAccumulator;
+            QueryHashAccumulator targetQueryHash = (enableShardTracking && currentShardInfo != null)
+                ? shardQueryHashAccumulators.get(currentShardInfo) : queryHashAccumulator;
+            ErrorCodeAccumulator targetErrorCode = (enableShardTracking && currentShardInfo != null)
+                ? shardErrorCodeAccumulators.get(currentShardInfo) : errorCodeAccumulator;
+            TransactionAccumulator targetTransaction = (enableShardTracking && currentShardInfo != null)
+                ? shardTransactionAccumulators.get(currentShardInfo) : transactionAccumulator;
+            IndexStatsAccumulator targetIndexStats = (enableShardTracking && currentShardInfo != null)
+                ? shardIndexStatsAccumulators.get(currentShardInfo) : indexStatsAccumulator;
+                
             completionService.submit(
-                new LogParserTask(new ArrayList<>(lines), accumulator, planCacheAccumulator, queryHashAccumulator,
-                		errorCodeAccumulator, transactionAccumulator, indexStatsAccumulator, driverStatsAccumulator, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this));
+                new LogParserTask(new ArrayList<>(lines), targetAccumulator, targetPlanCache, targetQueryHash,
+                		slowPlanningAccumulator, targetErrorCode, targetTransaction, targetIndexStats, enableDriverStats ? driverStatsAccumulator : null, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this));
             submittedTasks++;
         }
 
@@ -585,7 +680,7 @@ public class LogParser implements Callable<Integer> {
         }
 
         // Perform post-processing join for driver statistics
-        if (driverStatsAccumulator != null) {
+        if (enableDriverStats && driverStatsAccumulator != null) {
             if (verbose) {
                 System.err.printf("[VERBOSE] Starting post-processing join. Pending auth: %d, pending metadata: %d%n",
                                 driverStatsAccumulator.getPendingAuthCount(),
@@ -597,6 +692,15 @@ public class LogParser implements Callable<Integer> {
             if (verbose) {
                 long joinTime = System.currentTimeMillis() - joinStart;
                 System.err.printf("[VERBOSE] Post-processing join completed in %d ms%n", joinTime);
+            }
+        }
+
+        // Debug shard accumulator contents
+        if (enableShardTracking && verbose) {
+            System.err.println("[VERBOSE] Shard accumulator summary:");
+            for (Map.Entry<ShardInfo, Accumulator> entry : shardAccumulators.entrySet()) {
+                int size = entry.getValue().getAccumulators().size();
+                System.err.printf("[VERBOSE]   %s: %d operations%n", entry.getKey(), size);
             }
         }
 
@@ -673,8 +777,12 @@ public class LogParser implements Callable<Integer> {
                     Long numDeleted = getMetric(attr, "numDeleted");
                     Long durationMs = getMetric(attr, "durationMillis");
                     
-                    synchronized (ttlAccumulator) {
-                        ttlAccumulator.accumulate(null, "ttl_delete", ns, durationMs, 
+                    // Use shard-specific accumulator if shard tracking is enabled
+                    Accumulator targetTtlAccumulator = (enableShardTracking && currentShardInfo != null)
+                        ? shardTtlAccumulators.get(currentShardInfo) : ttlAccumulator;
+                    
+                    synchronized (targetTtlAccumulator) {
+                        targetTtlAccumulator.accumulate(null, "ttl_delete", ns, durationMs, 
                                                 null, null, numDeleted, null, null);
                     }
                 }
@@ -926,11 +1034,17 @@ public class LogParser implements Callable<Integer> {
         
         while ((currentLine = in.readLine()) != null) {
             lineNum++;
-            
+
+            // Check line limit
+            if (lineLimit != null && lineNum > lineLimit) {
+                System.out.printf("📊 Pass 1: Reached line limit of %d lines, stopping parsing\n", lineLimit);
+                break;
+            }
+
             if (shouldIgnoreLine(currentLine)) {
                 continue;
             }
-            
+
             lines.add(currentLine);
             
             // Submit chunks for parallel processing (let tasks do the filtering)
@@ -1068,6 +1182,12 @@ public class LogParser implements Callable<Integer> {
         while ((currentLine = in.readLine()) != null) {
             lineNum++;
 
+            // Check line limit
+            if (lineLimit != null && lineNum > lineLimit) {
+                System.out.printf("📊 Slow query pass: Reached line limit of %d lines, stopping parsing\n", lineLimit);
+                break;
+            }
+
             // Process TTL operations before filtering
             if (isTtlOperation(currentLine)) {
                 processTtlOperation(currentLine);
@@ -1084,7 +1204,7 @@ public class LogParser implements Callable<Integer> {
             if (lines.size() >= 25000) {
                 completionService.submit(
                     new LogParserTask(new ArrayList<>(lines), accumulator, planCacheAccumulator, queryHashAccumulator,
-                    		errorCodeAccumulator, transactionAccumulator, indexStatsAccumulator, null, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this));
+                    		slowPlanningAccumulator, errorCodeAccumulator, transactionAccumulator, indexStatsAccumulator, null, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this));
                 submittedTasks++;
                 lines.clear();
             }
@@ -1094,7 +1214,7 @@ public class LogParser implements Callable<Integer> {
         if (!lines.isEmpty()) {
             completionService.submit(
                 new LogParserTask(new ArrayList<>(lines), accumulator, planCacheAccumulator, queryHashAccumulator,
-                		errorCodeAccumulator, transactionAccumulator, indexStatsAccumulator, null, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this));
+                		slowPlanningAccumulator, errorCodeAccumulator, transactionAccumulator, indexStatsAccumulator, null, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this));
             submittedTasks++;
         }
 
@@ -1126,8 +1246,13 @@ public class LogParser implements Callable<Integer> {
         
         while ((currentLine = in.readLine()) != null) {
             lineNum++;
-            
-            
+
+            // Check line limit
+            if (lineLimit != null && lineNum > lineLimit) {
+                System.out.printf("📊 Pass 2: Reached line limit of %d lines, stopping parsing\n", lineLimit);
+                break;
+            }
+
             // Fast filtering: only process lines relevant to Pass 2
             // Optimize: single check for NETWORK, then check specific message types
             boolean isMetadataMessage = false;

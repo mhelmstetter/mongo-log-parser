@@ -18,6 +18,7 @@ import com.mongodb.log.parser.accumulator.ErrorCodeAccumulator;
 import com.mongodb.log.parser.accumulator.IndexStatsAccumulator;
 import com.mongodb.log.parser.accumulator.PlanCacheAccumulator;
 import com.mongodb.log.parser.accumulator.QueryHashAccumulator;
+import com.mongodb.log.parser.accumulator.SlowPlanningAccumulator;
 import com.mongodb.log.parser.accumulator.TransactionAccumulator;
 
 class LogParserTask implements Callable<ProcessingStats> {
@@ -26,6 +27,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 	private final Accumulator accumulator;
 	private final PlanCacheAccumulator planCacheAccumulator;
 	private final QueryHashAccumulator queryHashAccumulator;
+	private final SlowPlanningAccumulator slowPlanningAccumulator;
 	private final ErrorCodeAccumulator errorCodeAccumulator;
 	private final TransactionAccumulator transactionAccumulator;
 	private final IndexStatsAccumulator indexStatsAccumulator;
@@ -39,6 +41,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 
 	public LogParserTask(List<String> linesChunk, Accumulator accumulator,
 			PlanCacheAccumulator planCacheAccumulator, QueryHashAccumulator queryHashAccumulator,
+			SlowPlanningAccumulator slowPlanningAccumulator,
 			ErrorCodeAccumulator errorCodeAccumulator,
 			TransactionAccumulator transactionAccumulator,
 			IndexStatsAccumulator indexStatsAccumulator,
@@ -49,6 +52,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 		this.accumulator = accumulator;
 		this.planCacheAccumulator = planCacheAccumulator;
 		this.queryHashAccumulator = queryHashAccumulator;
+		this.slowPlanningAccumulator = slowPlanningAccumulator;
 		this.errorCodeAccumulator = errorCodeAccumulator;
 		this.transactionAccumulator = transactionAccumulator;
 		this.indexStatsAccumulator = indexStatsAccumulator;
@@ -144,13 +148,23 @@ class LogParserTask implements Callable<ProcessingStats> {
 					}
 
 					synchronized (accumulator) {
-						accumulator.accumulate(slowQuery, currentLine);
+						accumulator.accumulate(null, slowQuery.opType.getType(), slowQuery.ns, slowQuery.durationMillis,
+							slowQuery.keysExamined, slowQuery.docsExamined, slowQuery.nreturned, slowQuery.reslen,
+							slowQuery.bytesRead, slowQuery.bytesWritten, slowQuery.writeConflicts, slowQuery.nShards,
+							currentLine, isError(attr), slowQuery.isChangeStream != null && slowQuery.isChangeStream);
 					}
 
 					// Add to query hash accumulator
 					if (queryHashAccumulator != null) {
 			            synchronized (queryHashAccumulator) {
 			                queryHashAccumulator.accumulate(slowQuery, currentLine);
+			            }
+			        }
+
+					// Add to slow planning accumulator
+					if (slowPlanningAccumulator != null && slowQuery.planningTimeMicros != null) {
+			            synchronized (slowPlanningAccumulator) {
+			                slowPlanningAccumulator.accumulate(slowQuery, currentLine);
 			            }
 			        }
 
@@ -187,13 +201,23 @@ class LogParserTask implements Callable<ProcessingStats> {
 					slowQuery.durationMillis = getMetric(attr, "durationMillis");
 
 					synchronized (accumulator) {
-						accumulator.accumulate(slowQuery, currentLine);
+						accumulator.accumulate(null, slowQuery.opType.getType(), slowQuery.ns, slowQuery.durationMillis,
+							slowQuery.keysExamined, slowQuery.docsExamined, slowQuery.nreturned, slowQuery.reslen,
+							slowQuery.bytesRead, slowQuery.bytesWritten, slowQuery.writeConflicts, slowQuery.nShards,
+							currentLine, isError(attr), slowQuery.isChangeStream != null && slowQuery.isChangeStream);
 					}
 
 					// Add to query hash accumulator
 					if (queryHashAccumulator != null) {
 						synchronized (queryHashAccumulator) {
 							queryHashAccumulator.accumulate(slowQuery, currentLine);
+						}
+					}
+
+					// Add to slow planning accumulator
+					if (slowPlanningAccumulator != null && slowQuery.planningTimeMicros != null) {
+						synchronized (slowPlanningAccumulator) {
+							slowPlanningAccumulator.accumulate(slowQuery, currentLine);
 						}
 					}
 
@@ -250,7 +274,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 				JSONObject command = attr.getJSONObject("command");
 
 				// Enhanced operation type detection
-				if (processCommandOperation(command, slowQuery, ns)) {
+				if (processCommandOperation(command, attr, slowQuery, ns)) {
 					// Handle execution stats and storage metrics
 					processExecutionStats(attr, slowQuery);
 					processStorageMetrics(attr, slowQuery);
@@ -258,12 +282,22 @@ class LogParserTask implements Callable<ProcessingStats> {
 					slowQuery.durationMillis = getMetric(attr, "durationMillis");
 
 					synchronized (accumulator) {
-						accumulator.accumulate(slowQuery, currentLine);
+						accumulator.accumulate(null, slowQuery.opType.getType(), slowQuery.ns, slowQuery.durationMillis,
+							slowQuery.keysExamined, slowQuery.docsExamined, slowQuery.nreturned, slowQuery.reslen,
+							slowQuery.bytesRead, slowQuery.bytesWritten, slowQuery.writeConflicts, slowQuery.nShards,
+							currentLine, isError(attr), slowQuery.isChangeStream != null && slowQuery.isChangeStream);
 					}
 
 					if (queryHashAccumulator != null) {
 					    synchronized (queryHashAccumulator) {
 					        queryHashAccumulator.accumulate(slowQuery, currentLine);
+					    }
+					}
+
+					// Add to slow planning accumulator
+					if (slowPlanningAccumulator != null && slowQuery.planningTimeMicros != null) {
+					    synchronized (slowPlanningAccumulator) {
+					        slowPlanningAccumulator.accumulate(slowQuery, currentLine);
 					    }
 					}
 
@@ -501,6 +535,27 @@ class LogParserTask implements Callable<ProcessingStats> {
 	}
 	
 	/**
+	 * Check if the current operation resulted in an error
+	 */
+	private boolean isError(JSONObject attr) {
+	    try {
+	        // Check for top-level ok: 0
+	        if (attr.has("ok") && attr.getInt("ok") == 0) {
+	            return true;
+	        }
+	        
+	        // Check for explicit error object
+	        if (attr.has("error")) {
+	            return true;
+	        }
+	        
+	        return false;
+	    } catch (Exception e) {
+	        return false;
+	    }
+	}
+	
+	/**
 	 * Format all read preference tags as a string with each tag on a new line
 	 * Format: "key1:value1,key2:value2<br>key3:value3" for multiple tag objects
 	 */
@@ -704,6 +759,10 @@ class LogParserTask implements Callable<ProcessingStats> {
 			slowQuery.queryHash = attr.getString("queryHash");
 		}
 
+		if (attr.has("appName")) {
+			slowQuery.appName = attr.getString("appName");
+		}
+
 		if (attr.has("reslen")) {
 			slowQuery.reslen = getMetric(attr, "reslen");
 		}
@@ -717,7 +776,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 		}
 	}
 
-	private boolean processCommandOperation(JSONObject command, SlowQuery slowQuery, Namespace ns) {
+	private boolean processCommandOperation(JSONObject command, JSONObject attr, SlowQuery slowQuery, Namespace ns) {
 		// Enhanced operation type detection
 		if (command.has("find")) {
 			slowQuery.opType = OpType.QUERY;
@@ -784,10 +843,32 @@ class LogParserTask implements Callable<ProcessingStats> {
 					ns.setCollectionName((String) collectionVal);
 				}
 			}
-			
+
+			// Check if this is a change stream by looking at originatingCommand
+			if (attr.has("originatingCommand")) {
+				JSONObject origCmd = attr.getJSONObject("originatingCommand");
+				if (origCmd.has("pipeline")) {
+					Object pipelineObj = origCmd.get("pipeline");
+					if (pipelineObj instanceof JSONArray) {
+						JSONArray pipeline = (JSONArray) pipelineObj;
+						// Check if any stage in pipeline is $changeStream
+						for (int i = 0; i < pipeline.length(); i++) {
+							Object stage = pipeline.get(i);
+							if (stage instanceof JSONObject) {
+								JSONObject stageObj = (JSONObject) stage;
+								if (stageObj.has("$changeStream")) {
+									slowQuery.isChangeStream = true;
+									break;
+								}
+							}
+						}
+					}
+				}
+			}
+
 			// For getMore operations, we'll try to extract the query from originatingCommand
 			// This will be handled in extractReadPreferenceAndFilter method which has access to attr
-			
+
 			incrementOperationStat("getMore");
 			return true;
 
@@ -957,6 +1038,31 @@ class LogParserTask implements Callable<ProcessingStats> {
 	            
 	            if (codeName != null) {
 	                errorCodeAccumulator.accumulate(codeName, errorCode, errorMessage);
+	            }
+	        }
+	        
+	        // Handle top-level error indicators (ok: 0, errCode, errName)
+	        if (attr.has("ok") && attr.getInt("ok") == 0) {
+	            String codeName = null;
+	            Integer errorCode = null;
+	            String errorMessage = null;
+	            
+	            if (attr.has("errName")) {
+	                codeName = attr.getString("errName");
+	            }
+	            
+	            if (attr.has("errCode")) {
+	                errorCode = attr.getInt("errCode");
+	            }
+	            
+	            if (attr.has("errMsg")) {
+	                errorMessage = attr.getString("errMsg");
+	            }
+	            
+	            if (codeName != null) {
+	                errorCodeAccumulator.accumulate(codeName, errorCode, errorMessage);
+	            } else if (errorCode != null) {
+	                errorCodeAccumulator.accumulate("Error" + errorCode, errorCode, errorMessage);
 	            }
 	        }
 	        

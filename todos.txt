@@ -1,0 +1,6 @@
+
+Don't obfuscate the readPreference "tags" field, mode is unobfuscated
+Display truncated in red if the sample query indicates it is truncated: "truncated":{"errMsg":{"size":99999,"type":"xxx"}
+Can we freeze the column headers? Or maybe display a really small set of headers when the accordian is expanded?
+When we obsfucate a regex, can we keep any regex metacharacters?
+Can we break down the read preference by analytics vs. voting (tags?)

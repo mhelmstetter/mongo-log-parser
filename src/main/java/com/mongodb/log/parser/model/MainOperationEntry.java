@@ -35,6 +35,14 @@ public class MainOperationEntry {
     private String sampleLogMessage;
     private boolean hasCollScan;
     
+    // New fields for enhanced table
+    private long errorCount;
+    private long totalReslen;
+    private long avgReslen;
+    private long totalReturned;
+    private long totalStorageBytesRead;
+    private long avgStorageBytesRead;
+    
     public MainOperationEntry() {
         // Default constructor
     }
@@ -66,8 +74,17 @@ public class MainOperationEntry {
         this.maxBytesWritten = accumulator.getMaxBytesWritten();
         this.avgWriteConflicts = accumulator.getAvgWriteConflicts();
         this.sampleLogMessage = accumulator.getSampleLogMessage();
-        this.hasCollScan = (accumulator.getSampleLogMessage() != null && 
-                           accumulator.getSampleLogMessage().contains("COLLSCAN"));
+        this.hasCollScan = (accumulator.getSampleLogMessage() != null &&
+                           accumulator.getSampleLogMessage().contains("COLLSCAN") &&
+                           !accumulator.isChangeStream());
+        
+        // New fields
+        this.errorCount = accumulator.getErrorCount();
+        this.totalReslen = accumulator.getTotalReslen();
+        this.avgReslen = accumulator.getAvgReslen();
+        this.totalReturned = accumulator.getTotalReturned();
+        this.totalStorageBytesRead = accumulator.getTotalStorageBytesRead();
+        this.avgStorageBytesRead = accumulator.getAvgStorageBytesRead();
     }
 
     // Getters and setters
@@ -408,6 +425,90 @@ public class MainOperationEntry {
         return String.format("%,d", avgWriteConflicts);
     }
 
+    // New field getters
+    public long getErrorCount() {
+        return errorCount;
+    }
+
+    public void setErrorCount(long errorCount) {
+        this.errorCount = errorCount;
+    }
+
+    public long getTotalReslen() {
+        return totalReslen;
+    }
+
+    public void setTotalReslen(long totalReslen) {
+        this.totalReslen = totalReslen;
+    }
+
+    public long getAvgReslen() {
+        return avgReslen;
+    }
+
+    public void setAvgReslen(long avgReslen) {
+        this.avgReslen = avgReslen;
+    }
+
+    public long getTotalReturned() {
+        return totalReturned;
+    }
+
+    public void setTotalReturned(long totalReturned) {
+        this.totalReturned = totalReturned;
+    }
+
+    public long getTotalStorageBytesRead() {
+        return totalStorageBytesRead;
+    }
+
+    public void setTotalStorageBytesRead(long totalStorageBytesRead) {
+        this.totalStorageBytesRead = totalStorageBytesRead;
+    }
+
+    public long getAvgStorageBytesRead() {
+        return avgStorageBytesRead;
+    }
+
+    public void setAvgStorageBytesRead(long avgStorageBytesRead) {
+        this.avgStorageBytesRead = avgStorageBytesRead;
+    }
+    
+    /**
+     * Returns formatted response length total in human-readable format
+     */
+    public String getFormattedTotalReslen() {
+        return formatBytes(totalReslen);
+    }
+    
+    /**
+     * Returns formatted response length average in human-readable format
+     */
+    public String getFormattedAvgReslen() {
+        return formatBytes(avgReslen);
+    }
+    
+    /**
+     * Returns formatted total documents returned with thousands separator
+     */
+    public String getFormattedTotalReturned() {
+        return String.format("%,d", totalReturned);
+    }
+    
+    /**
+     * Returns formatted total storage bytes read in human-readable format
+     */
+    public String getFormattedTotalStorageBytesRead() {
+        return formatBytes(totalStorageBytesRead);
+    }
+    
+    /**
+     * Returns formatted average storage bytes read in human-readable format
+     */
+    public String getFormattedAvgStorageBytesRead() {
+        return formatBytes(avgStorageBytesRead);
+    }
+
     /**
      * Helper method to format bytes in human-readable format
      */
@@ -417,6 +518,57 @@ public class MainOperationEntry {
         if (bytes < 1024 * 1024) return String.format("%.1fKB", bytes / 1024.0);
         if (bytes < 1024 * 1024 * 1024) return String.format("%.1fMB", bytes / (1024.0 * 1024.0));
         return String.format("%.1fGB", bytes / (1024.0 * 1024.0 * 1024.0));
+    }
+    
+    /**
+     * Determines the appropriate unit scale based on a value
+     */
+    public static ByteUnit determineByteUnit(double averageValue) {
+        if (averageValue == 0) return ByteUnit.BYTES;
+        if (averageValue < 1024) return ByteUnit.BYTES;
+        if (averageValue < 1024 * 1024) return ByteUnit.KILOBYTES;
+        if (averageValue < 1024 * 1024 * 1024) return ByteUnit.MEGABYTES;
+        return ByteUnit.GIGABYTES;
+    }
+    
+    /**
+     * Formats bytes using a specific unit scale with comma separators
+     */
+    public static String formatBytesWithUnit(long bytes, ByteUnit unit) {
+        if (bytes == 0) return "0";
+        
+        switch (unit) {
+            case BYTES:
+                return String.format("%,d", bytes);
+            case KILOBYTES:
+                return String.format("%,.1f", bytes / 1024.0);
+            case MEGABYTES:
+                return String.format("%,.1f", bytes / (1024.0 * 1024.0));
+            case GIGABYTES:
+                return String.format("%,.1f", bytes / (1024.0 * 1024.0 * 1024.0));
+            default:
+                return String.format("%,d", bytes);
+        }
+    }
+    
+    /**
+     * Enum for byte units
+     */
+    public enum ByteUnit {
+        BYTES("B"),
+        KILOBYTES("KB"),
+        MEGABYTES("MB"),
+        GIGABYTES("GB");
+        
+        private final String suffix;
+        
+        ByteUnit(String suffix) {
+            this.suffix = suffix;
+        }
+        
+        public String getSuffix() {
+            return suffix;
+        }
     }
 
     @Override
