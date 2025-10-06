@@ -84,6 +84,11 @@ public class Accumulator {
 
     public void accumulate(File file, String command, Namespace namespace, Long execTime, Long keysExamined,
             Long docsExamined, Long nReturned, Long reslen, Long bytesRead, Long bytesWritten, Long writeConflicts, Long nShards, String logMessage, boolean isError, boolean isChangeStream) {
+        accumulate(file, command, namespace, execTime, keysExamined, docsExamined, nReturned, reslen, bytesRead, bytesWritten, writeConflicts, nShards, logMessage, isError, isChangeStream, null);
+    }
+
+    public void accumulate(File file, String command, Namespace namespace, Long execTime, Long keysExamined,
+            Long docsExamined, Long nReturned, Long reslen, Long bytesRead, Long bytesWritten, Long writeConflicts, Long nShards, String logMessage, boolean isError, boolean isChangeStream, String appName) {
         // TODO add an option to accumulate per file, for now glob all files
         // together
         AccumulatorKey key = new AccumulatorKey(null, namespace, command);
@@ -95,6 +100,10 @@ public class Accumulator {
 
         if (isChangeStream) {
             accum.setChangeStream(true);
+        }
+
+        if (appName != null) {
+            accum.setAppName(appName);
         }
 
         if (execTime != null) {

@@ -65,7 +65,10 @@ public class QueryHashAccumulatorEntry {
     
     // Store one example of the sanitized query
     private String sanitizedQuery = null;
-    
+
+    // Store application name
+    private String appName = null;
+
     // Store a sample log message for accordion display - store the slowest query
     private String sampleLogMessage = null;
     private long maxDurationForSample = 0;
@@ -179,7 +182,12 @@ public class QueryHashAccumulatorEntry {
         if (slowQuery.planSummary != null) {
             planSummary = slowQuery.planSummary;
         }
-        
+
+        // Track appName (use first occurrence)
+        if (this.appName == null && slowQuery.appName != null) {
+            this.appName = slowQuery.appName;
+        }
+
         // Track read preferences (mode)
         if (slowQuery.readPreference != null && !slowQuery.readPreference.isEmpty()) {
             readPreferenceCounts.merge(slowQuery.readPreference, 1L, Long::sum);
@@ -457,7 +465,11 @@ public class QueryHashAccumulatorEntry {
     public String getSanitizedQuery() {
         return sanitizedQuery != null ? sanitizedQuery : "none";
     }
-    
+
+    public String getAppName() {
+        return appName;
+    }
+
     public String getSampleLogMessage() {
         return sampleLogMessage;
     }

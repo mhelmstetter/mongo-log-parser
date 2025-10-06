@@ -946,37 +946,39 @@ public class HtmlReportGenerator {
 		writer.println(
 				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 1, 'string')\">Operation</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 2, 'number')\">Count</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 2, 'string')\">App Name</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 3, 'number')\">Min (ms)</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 3, 'number')\">Count</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 4, 'number')\">Max (ms)</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 4, 'number')\">Min (ms)</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 5, 'number')\">Avg (ms)</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 5, 'number')\">Max (ms)</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 6, 'number')\">P95 (ms)</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 6, 'number')\">Avg (ms)</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 7, 'number')\">Total (sec)</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 7, 'number')\">P95 (ms)</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 8, 'number')\">Avg Keys Ex</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 8, 'number')\">Total (sec)</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 9, 'number')\">Avg Docs Ex</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 9, 'number')\">Avg Keys Ex</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 10, 'number')\">Avg Return</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 10, 'number')\">Avg Docs Ex</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 11, 'number')\">Ex/Ret Ratio</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 11, 'number')\">Avg Return</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 12, 'number')\">Avg Shards</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 12, 'number')\">Ex/Ret Ratio</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 13, 'number')\">Avg Read</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 13, 'number')\">Avg Shards</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 14, 'number')\">Max Read</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 14, 'number')\">Avg Read</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 15, 'number')\">Avg Write</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 15, 'number')\">Max Read</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 16, 'number')\">Max Write</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 16, 'number')\">Avg Write</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 17, 'number')\">Avg Write Conflicts</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 17, 'number')\">Max Write</th>");
+		writer.println(
+				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 18, 'number')\">Avg Write Conflicts</th>");
 		writer.println("                    </tr>");
 		writer.println("                </thead>");
 		writer.println("                <tbody>");
@@ -991,6 +993,7 @@ public class HtmlReportGenerator {
 			writer.println("                    <tr class=\"accordion-row " + cssClass + "\" onclick=\"toggleAccordion('" + rowId + "')\">");
 			writer.println("                        <td class=\"namespace-cell\"><span class=\"accordion-toggle\"></span>" + escapeHtml(namespace) + "</td>");
 			writer.println("                        <td class=\"operation-cell\">" + escapeHtml(operation) + "</td>");
+			writer.println("                        <td class=\"truncated\">" + (op.getAppName() != null ? escapeHtml(op.getAppName()) : "") + "</td>");
 			writer.println("                        <td class=\"count-cell\">" + op.getFormattedCount() + "</td>");
 			writer.println("                        <td class=\"time-cell\">" + NUMBER_FORMAT.format(op.getMinMs()) + "</td>");
 			writer.println("                        <td class=\"time-cell\">" + NUMBER_FORMAT.format(op.getMaxMs()) + "</td>");
@@ -1022,7 +1025,7 @@ public class HtmlReportGenerator {
 				boolean isTruncated = LogRedactionUtil.isLogMessageTruncated(op.getSampleLogMessage());
 				String logCssClass = isTruncated ? "log-sample truncated-query" : "log-sample";
 				writer.println("                    <tr id=\"" + rowId + "\" class=\"accordion-content\">");
-				writer.println("                        <td colspan=\"17\">");
+				writer.println("                        <td colspan=\"18\">");
 				writer.println("                            <div class=\"" + logCssClass + "\">");
 				if (isTruncated) {
 					writer.println("                                <div class=\"truncated-warning\">⚠ Query was truncated in MongoDB logs</div>");
@@ -1200,45 +1203,47 @@ public class HtmlReportGenerator {
 		writer.println(
 				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 2, 'string')\">Operation</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 3, 'number')\">Count</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 3, 'string')\">App Name</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 4, 'number')\">Min (ms)</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 4, 'number')\">Count</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 5, 'number')\">Max (ms)</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 5, 'number')\">Min (ms)</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 6, 'number')\">Avg (ms)</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 6, 'number')\">Max (ms)</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 7, 'number')\">P95 (ms)</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 7, 'number')\">Avg (ms)</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 8, 'number')\">Total (sec)</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 8, 'number')\">P95 (ms)</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 9, 'number')\">Avg Keys Ex</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 9, 'number')\">Total (sec)</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 10, 'number')\">Avg Docs Ex</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 10, 'number')\">Avg Keys Ex</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 11, 'number')\">Avg Return</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 11, 'number')\">Avg Docs Ex</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 12, 'number')\">Ex/Ret Ratio</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 12, 'number')\">Avg Return</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 13, 'number')\">Avg Shards</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 13, 'number')\">Ex/Ret Ratio</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 14, 'number')\">Avg Read</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 14, 'number')\">Avg Shards</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 15, 'number')\">Max Read</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 15, 'number')\">Avg Read</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 16, 'number')\">Avg Write</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 16, 'number')\">Max Read</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 17, 'number')\">Max Write</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 17, 'number')\">Avg Write</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 18, 'string')\">Read Preference</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 18, 'number')\">Max Write</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 19, 'string')\">Read Preference Tags</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 19, 'string')\">Read Preference</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 20, 'string')\">Plan Summary</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 20, 'string')\">Read Preference Tags</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 21, 'number')\">Avg Plan (ms)</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 21, 'string')\">Plan Summary</th>");
 		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 22, 'number')\">Replan %</th>");
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 22, 'number')\">Avg Plan (ms)</th>");
+		writer.println(
+				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 23, 'number')\">Replan %</th>");
 		writer.println("                    </tr>");
 		writer.println("                </thead>");
 		writer.println("                <tbody>");
@@ -1251,12 +1256,13 @@ public class HtmlReportGenerator {
 					writer.println("                    <tr class=\"accordion-row\" onclick=\"toggleAccordion('" + rowId + "')\">");
 					writer.println(
 							"                        <td class=\"truncated\" title=\"" + escapeHtml(key.getQueryHash())
-									+ "\"><span class=\"accordion-toggle\"></span>" + escapeHtml(truncate(key.getQueryHash(), 12)) 
+									+ "\"><span class=\"accordion-toggle\"></span>" + escapeHtml(truncate(key.getQueryHash(), 12))
 									+ "</td>");
 					writer.println("                        <td class=\"truncated\" title=\""
 							+ escapeHtml(key.getNamespace().toString()) + "\">"
 							+ escapeHtml(truncate(key.getNamespace().toString(), 40)) + "</td>");
 					writer.println("                        <td>" + escapeHtml(key.getOperation()) + "</td>");
+					writer.println("                        <td class=\"truncated\">" + (entry.getAppName() != null ? escapeHtml(entry.getAppName()) : "") + "</td>");
 					writer.println("                        <td class=\"number\">"
 							+ NUMBER_FORMAT.format(entry.getCount()) + "</td>");
 					writer.println("                        <td class=\"number\">"
@@ -1317,7 +1323,7 @@ public class HtmlReportGenerator {
 						boolean isTruncated = LogRedactionUtil.isLogMessageTruncated(entry.getSampleLogMessage());
 						String cssClass = isTruncated ? "log-sample truncated-query" : "log-sample";
 						writer.println("                    <tr id=\"" + rowId + "\" class=\"accordion-content\">");
-						writer.println("                        <td colspan=\"22\">");
+						writer.println("                        <td colspan=\"23\">");
 						writer.println("                            <div class=\"" + cssClass + "\">");
 						if (isTruncated) {
 							writer.println("                                <div class=\"truncated-warning\">⚠ Query was truncated in MongoDB logs</div>");

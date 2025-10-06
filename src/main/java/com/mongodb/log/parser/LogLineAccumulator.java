@@ -44,6 +44,9 @@ public class LogLineAccumulator {
 
     // Track if this is a change stream operation
     private boolean isChangeStream = false;
+
+    // Track application name
+    private String appName = null;
     
     // Statistics for percentiles (optional, can be disabled for performance)
     private DescriptiveStatistics executionStats = new DescriptiveStatistics();
@@ -314,6 +317,17 @@ public class LogLineAccumulator {
 
     public void setChangeStream(boolean isChangeStream) {
         this.isChangeStream = isChangeStream;
+    }
+
+    public String getAppName() {
+        return appName;
+    }
+
+    public void setAppName(String appName) {
+        // Only set if not already set (use first occurrence)
+        if (this.appName == null && appName != null) {
+            this.appName = appName;
+        }
     }
 
     public String getNamespace() {

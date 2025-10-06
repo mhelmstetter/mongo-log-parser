@@ -34,7 +34,8 @@ public class MainOperationEntry {
     private long avgWriteConflicts;
     private String sampleLogMessage;
     private boolean hasCollScan;
-    
+    private String appName;
+
     // New fields for enhanced table
     private long errorCount;
     private long totalReslen;
@@ -77,7 +78,8 @@ public class MainOperationEntry {
         this.hasCollScan = (accumulator.getSampleLogMessage() != null &&
                            accumulator.getSampleLogMessage().contains("COLLSCAN") &&
                            !accumulator.isChangeStream());
-        
+        this.appName = accumulator.getAppName();
+
         // New fields
         this.errorCount = accumulator.getErrorCount();
         this.totalReslen = accumulator.getTotalReslen();
@@ -473,7 +475,15 @@ public class MainOperationEntry {
     public void setAvgStorageBytesRead(long avgStorageBytesRead) {
         this.avgStorageBytesRead = avgStorageBytesRead;
     }
-    
+
+    public String getAppName() {
+        return appName;
+    }
+
+    public void setAppName(String appName) {
+        this.appName = appName;
+    }
+
     /**
      * Returns formatted response length total in human-readable format
      */

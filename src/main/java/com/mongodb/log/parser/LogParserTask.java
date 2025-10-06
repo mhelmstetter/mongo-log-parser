@@ -151,7 +151,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 						accumulator.accumulate(null, slowQuery.opType.getType(), slowQuery.ns, slowQuery.durationMillis,
 							slowQuery.keysExamined, slowQuery.docsExamined, slowQuery.nreturned, slowQuery.reslen,
 							slowQuery.bytesRead, slowQuery.bytesWritten, slowQuery.writeConflicts, slowQuery.nShards,
-							currentLine, isError(attr), slowQuery.isChangeStream != null && slowQuery.isChangeStream);
+							currentLine, isError(attr), slowQuery.isChangeStream != null && slowQuery.isChangeStream, slowQuery.appName);
 					}
 
 					// Add to query hash accumulator
@@ -204,7 +204,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 						accumulator.accumulate(null, slowQuery.opType.getType(), slowQuery.ns, slowQuery.durationMillis,
 							slowQuery.keysExamined, slowQuery.docsExamined, slowQuery.nreturned, slowQuery.reslen,
 							slowQuery.bytesRead, slowQuery.bytesWritten, slowQuery.writeConflicts, slowQuery.nShards,
-							currentLine, isError(attr), slowQuery.isChangeStream != null && slowQuery.isChangeStream);
+							currentLine, isError(attr), slowQuery.isChangeStream != null && slowQuery.isChangeStream, slowQuery.appName);
 					}
 
 					// Add to query hash accumulator
@@ -285,7 +285,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 						accumulator.accumulate(null, slowQuery.opType.getType(), slowQuery.ns, slowQuery.durationMillis,
 							slowQuery.keysExamined, slowQuery.docsExamined, slowQuery.nreturned, slowQuery.reslen,
 							slowQuery.bytesRead, slowQuery.bytesWritten, slowQuery.writeConflicts, slowQuery.nShards,
-							currentLine, isError(attr), slowQuery.isChangeStream != null && slowQuery.isChangeStream);
+							currentLine, isError(attr), slowQuery.isChangeStream != null && slowQuery.isChangeStream, slowQuery.appName);
 					}
 
 					if (queryHashAccumulator != null) {
