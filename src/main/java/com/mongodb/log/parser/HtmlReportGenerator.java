@@ -937,48 +937,31 @@ public class HtmlReportGenerator {
 				"                <button class=\"expand-btn\" onclick=\"expandAllAccordions('mainOpsTable')\">Expand All</button>");
 		writer.println(
 				"                <button class=\"collapse-btn\" onclick=\"collapseAllAccordions('mainOpsTable')\">Collapse All</button>");
+		writer.println(
+				"                <button class=\"manage-cols-btn\" onclick=\"openColumnModal('mainOpsTable')\">Manage Columns</button>");
 		writer.println("            </div>");
 		writer.println("            <table id=\"mainOpsTable\">");
 		writer.println("                <thead>");
 		writer.println("                    <tr>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 0, 'string')\">Namespace</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 1, 'string')\">Operation</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 2, 'string')\">App Name</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 3, 'number')\">Count</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 4, 'number')\">Min (ms)</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 5, 'number')\">Max (ms)</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 6, 'number')\">Avg (ms)</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 7, 'number')\">P95 (ms)</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 8, 'number')\">Total (sec)</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 9, 'number')\">Avg Keys Ex</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 10, 'number')\">Avg Docs Ex</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 11, 'number')\">Avg Return</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 12, 'number')\">Ex/Ret Ratio</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 13, 'number')\">Avg Shards</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 14, 'number')\">Avg Read</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 15, 'number')\">Max Read</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 16, 'number')\">Avg Write</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 17, 'number')\">Max Write</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('mainOpsTable', 18, 'number')\">Avg Write Conflicts</th>");
+		writer.println("                        " + generateTableHeader("mainOpsTable", 0, "Namespace", "string"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 1, "Operation", "string"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 2, "App Name", "string"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 3, "Count", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 4, "Min (ms)", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 5, "Max (ms)", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 6, "Avg (ms)", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 7, "P95 (ms)", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 8, "Total (sec)", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 9, "Avg Keys Ex", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 10, "Avg Docs Ex", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 11, "Avg Return", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 12, "Ex/Ret Ratio", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 13, "Avg Shards", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 14, "Avg Read", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 15, "Max Read", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 16, "Avg Write", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 17, "Max Write", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 18, "Avg Write Conflicts", "number"));
 		writer.println("                    </tr>");
 		writer.println("                </thead>");
 		writer.println("                <tbody>");
@@ -1099,22 +1082,18 @@ public class HtmlReportGenerator {
 				"                <input type=\"text\" id=\"ttlFilter\" class=\"filter-input\" placeholder=\"Filter by namespace...\">");
 		writer.println(
 				"                <button class=\"clear-btn\" onclick=\"clearFilter('ttlFilter', 'ttlTable')\">Clear Filter</button>");
+		writer.println(
+				"                <button class=\"manage-cols-btn\" onclick=\"openColumnModal('ttlTable')\">Manage Columns</button>");
 		writer.println("            </div>");
 		writer.println("            <table id=\"ttlTable\">");
 		writer.println("                <thead>");
 		writer.println("                    <tr>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('ttlTable', 0, 'string')\">Namespace</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('ttlTable', 1, 'number')\">Count</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('ttlTable', 2, 'number')\">Total Deleted</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('ttlTable', 3, 'number')\">Avg Deleted</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('ttlTable', 4, 'number')\">Min (ms)</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('ttlTable', 5, 'number')\">Max (ms)</th>");
+		writer.println("                        " + generateTableHeader("ttlTable", 0, "Namespace", "string"));
+		writer.println("                        " + generateTableHeader("ttlTable", 1, "Count", "number"));
+		writer.println("                        " + generateTableHeader("ttlTable", 2, "Total Deleted", "number"));
+		writer.println("                        " + generateTableHeader("ttlTable", 3, "Avg Deleted", "number"));
+		writer.println("                        " + generateTableHeader("ttlTable", 4, "Min (ms)", "number"));
+		writer.println("                        " + generateTableHeader("ttlTable", 5, "Max (ms)", "number"));
 		writer.println("                    </tr>");
 		writer.println("                </thead>");
 		writer.println("                <tbody>");
@@ -1192,58 +1171,36 @@ public class HtmlReportGenerator {
 				"                <button class=\"expand-btn\" onclick=\"expandAllAccordions('queryHashTable')\">Expand All</button>");
 		writer.println(
 				"                <button class=\"collapse-btn\" onclick=\"collapseAllAccordions('queryHashTable')\">Collapse All</button>");
+		writer.println(
+				"                <button class=\"manage-cols-btn\" onclick=\"openColumnModal('queryHashTable')\">Manage Columns</button>");
 		writer.println("            </div>");
 		writer.println("            <table id=\"queryHashTable\">");
 		writer.println("                <thead>");
 		writer.println("                    <tr>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 0, 'string')\">Query Hash</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 1, 'string')\">Namespace</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 2, 'string')\">Operation</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 3, 'string')\">App Name</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 4, 'number')\">Count</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 5, 'number')\">Min (ms)</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 6, 'number')\">Max (ms)</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 7, 'number')\">Avg (ms)</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 8, 'number')\">P95 (ms)</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 9, 'number')\">Total (sec)</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 10, 'number')\">Avg Keys Ex</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 11, 'number')\">Avg Docs Ex</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 12, 'number')\">Avg Return</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 13, 'number')\">Ex/Ret Ratio</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 14, 'number')\">Avg Shards</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 15, 'number')\">Avg Read</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 16, 'number')\">Max Read</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 17, 'number')\">Avg Write</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 18, 'number')\">Max Write</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 19, 'string')\">Read Preference</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 20, 'string')\">Read Preference Tags</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 21, 'string')\">Plan Summary</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 22, 'number')\">Avg Plan (ms)</th>");
-		writer.println(
-				"                        <th class=\"sortable\" onclick=\"sortTable('queryHashTable', 23, 'number')\">Replan %</th>");
+		writer.println("                        " + generateTableHeader("queryHashTable", 0, "Query Hash", "string"));
+		writer.println("                        " + generateTableHeader("queryHashTable", 1, "Namespace", "string"));
+		writer.println("                        " + generateTableHeader("queryHashTable", 2, "Operation", "string"));
+		writer.println("                        " + generateTableHeader("queryHashTable", 3, "App Name", "string"));
+		writer.println("                        " + generateTableHeader("queryHashTable", 4, "Count", "number"));
+		writer.println("                        " + generateTableHeader("queryHashTable", 5, "Min (ms)", "number"));
+		writer.println("                        " + generateTableHeader("queryHashTable", 6, "Max (ms)", "number"));
+		writer.println("                        " + generateTableHeader("queryHashTable", 7, "Avg (ms)", "number"));
+		writer.println("                        " + generateTableHeader("queryHashTable", 8, "P95 (ms)", "number"));
+		writer.println("                        " + generateTableHeader("queryHashTable", 9, "Total (sec)", "number"));
+		writer.println("                        " + generateTableHeader("queryHashTable", 10, "Avg Keys Ex", "number"));
+		writer.println("                        " + generateTableHeader("queryHashTable", 11, "Avg Docs Ex", "number"));
+		writer.println("                        " + generateTableHeader("queryHashTable", 12, "Avg Return", "number"));
+		writer.println("                        " + generateTableHeader("queryHashTable", 13, "Ex/Ret Ratio", "number"));
+		writer.println("                        " + generateTableHeader("queryHashTable", 14, "Avg Shards", "number"));
+		writer.println("                        " + generateTableHeader("queryHashTable", 15, "Avg Read", "number"));
+		writer.println("                        " + generateTableHeader("queryHashTable", 16, "Max Read", "number"));
+		writer.println("                        " + generateTableHeader("queryHashTable", 17, "Avg Write", "number"));
+		writer.println("                        " + generateTableHeader("queryHashTable", 18, "Max Write", "number"));
+		writer.println("                        " + generateTableHeader("queryHashTable", 19, "Read Preference", "string"));
+		writer.println("                        " + generateTableHeader("queryHashTable", 20, "Read Preference Tags", "string"));
+		writer.println("                        " + generateTableHeader("queryHashTable", 21, "Plan Summary", "string"));
+		writer.println("                        " + generateTableHeader("queryHashTable", 22, "Avg Plan (ms)", "number"));
+		writer.println("                        " + generateTableHeader("queryHashTable", 23, "Replan %", "number"));
 		writer.println("                    </tr>");
 		writer.println("                </thead>");
 		writer.println("                <tbody>");
