@@ -13,6 +13,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import com.mongodb.log.parser.accumulator.Accumulator;
+import com.mongodb.log.parser.accumulator.AppNameConnectionStatsAccumulator;
 import com.mongodb.log.parser.accumulator.TwoPassDriverStatsAccumulator;
 import com.mongodb.log.parser.accumulator.ErrorCodeAccumulator;
 import com.mongodb.log.parser.accumulator.IndexStatsAccumulator;
@@ -32,6 +33,8 @@ class LogParserTask implements Callable<ProcessingStats> {
 	private final TransactionAccumulator transactionAccumulator;
 	private final IndexStatsAccumulator indexStatsAccumulator;
 	private final TwoPassDriverStatsAccumulator driverStatsAccumulator;
+	private final AppNameConnectionStatsAccumulator appNameConnectionStatsAccumulator;
+	private final String currentFilename;
 	private final Map<String, AtomicLong> operationTypeStats;
 	private final boolean debug;
 	private final Set<String> namespaceFilters;
@@ -46,6 +49,8 @@ class LogParserTask implements Callable<ProcessingStats> {
 			TransactionAccumulator transactionAccumulator,
 			IndexStatsAccumulator indexStatsAccumulator,
 			TwoPassDriverStatsAccumulator driverStatsAccumulator,
+			AppNameConnectionStatsAccumulator appNameConnectionStatsAccumulator,
+			String currentFilename,
 			Map<String, AtomicLong> operationTypeStats, boolean debug,
 			Set<String> namespaceFilters, AtomicLong totalFilteredByNamespace, boolean redactQueries, LogParser logParser) {
 		this.linesChunk = linesChunk;
@@ -57,6 +62,8 @@ class LogParserTask implements Callable<ProcessingStats> {
 		this.transactionAccumulator = transactionAccumulator;
 		this.indexStatsAccumulator = indexStatsAccumulator;
 		this.driverStatsAccumulator = driverStatsAccumulator;
+		this.appNameConnectionStatsAccumulator = appNameConnectionStatsAccumulator;
+		this.currentFilename = currentFilename;
 		this.operationTypeStats = operationTypeStats;
 		this.debug = debug;
 		this.namespaceFilters = namespaceFilters;
@@ -75,14 +82,20 @@ class LogParserTask implements Callable<ProcessingStats> {
 		long localFilteredByNamespace = 0;
 
 		for (String currentLine : linesChunk) {
-			
+
 			// Connection lifecycle debugging disabled - working correctly
-			
+
 			JSONObject jo = null;
+			String ctx = null; // Declare outside try block for appName tracking
+
 			try {
 				jo = new JSONObject(currentLine);
-				
-				
+
+				// Extract ctx for connection tracking
+				if (jo.has("ctx")) {
+					ctx = jo.getString("ctx");
+				}
+
 				// Extract timestamp for tracking
 				if (jo.has("t") && logParser != null) {
 					try {
@@ -97,7 +110,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 						// Ignore timestamp extraction errors
 					}
 				}
-				
+
 				if (jo.has("attr")) {
 	                JSONObject attr = jo.getJSONObject("attr");
 	                processErrorCode(jo, attr);
@@ -154,6 +167,11 @@ class LogParserTask implements Callable<ProcessingStats> {
 							currentLine, isError(attr), slowQuery.isChangeStream != null && slowQuery.isChangeStream, slowQuery.appName);
 					}
 
+					// Track appName connection stats
+					if (appNameConnectionStatsAccumulator != null && ctx != null) {
+						appNameConnectionStatsAccumulator.recordConnection(currentFilename, slowQuery.appName, ctx);
+					}
+
 					// Add to query hash accumulator
 					if (queryHashAccumulator != null) {
 			            synchronized (queryHashAccumulator) {
@@ -205,6 +223,11 @@ class LogParserTask implements Callable<ProcessingStats> {
 							slowQuery.keysExamined, slowQuery.docsExamined, slowQuery.nreturned, slowQuery.reslen,
 							slowQuery.bytesRead, slowQuery.bytesWritten, slowQuery.writeConflicts, slowQuery.nShards,
 							currentLine, isError(attr), slowQuery.isChangeStream != null && slowQuery.isChangeStream, slowQuery.appName);
+					}
+
+					// Track appName connection stats
+					if (appNameConnectionStatsAccumulator != null && ctx != null) {
+						appNameConnectionStatsAccumulator.recordConnection(currentFilename, slowQuery.appName, ctx);
 					}
 
 					// Add to query hash accumulator

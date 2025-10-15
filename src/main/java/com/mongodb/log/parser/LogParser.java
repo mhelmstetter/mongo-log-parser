@@ -34,6 +34,7 @@ import org.slf4j.LoggerFactory;
 
 import com.mongodb.log.filter.FilterConfig;
 import com.mongodb.log.parser.accumulator.Accumulator;
+import com.mongodb.log.parser.accumulator.AppNameConnectionStatsAccumulator;
 import com.mongodb.log.parser.accumulator.TwoPassDriverStatsAccumulator;
 import com.mongodb.log.parser.accumulator.ErrorCodeAccumulator;
 import com.mongodb.log.parser.accumulator.IndexStatsAccumulator;
@@ -110,6 +111,9 @@ public class LogParser implements Callable<Integer> {
     @Option(names = {"--drivers"}, description = "Enable driver statistics analysis (disabled by default)")
     private boolean enableDriverStats = false;
 
+    @Option(names = {"--appNameStats"}, description = "Enable appName connection statistics (tracks distinct connections per appName)")
+    private boolean enableAppNameStats = false;
+
     @Option(names = {"--limit"}, description = "Limit parsing to the first N lines of each log file")
     private Long lineLimit = null;
 
@@ -134,6 +138,7 @@ public class LogParser implements Callable<Integer> {
     private final TransactionAccumulator transactionAccumulator;
     private final IndexStatsAccumulator indexStatsAccumulator;
     private final TwoPassDriverStatsAccumulator driverStatsAccumulator;
+    private final AppNameConnectionStatsAccumulator appNameConnectionStatsAccumulator;
     
     private FilterConfig filterConfig;
     private int unmatchedCount = 0;
@@ -171,6 +176,7 @@ public class LogParser implements Callable<Integer> {
         transactionAccumulator = new TransactionAccumulator();
         indexStatsAccumulator = new IndexStatsAccumulator();
         driverStatsAccumulator = new TwoPassDriverStatsAccumulator();
+        appNameConnectionStatsAccumulator = new AppNameConnectionStatsAccumulator();
         filterConfig = new FilterConfig();
     }
 
@@ -250,7 +256,32 @@ public class LogParser implements Callable<Integer> {
         if (transactionAccumulator.hasTransactions() && textOutput) {
             transactionAccumulator.report();
         }
-        
+
+        if (enableAppNameStats) {
+            System.out.println("\n=== AppName Connection Statistics ===");
+            System.out.println("Feature enabled: " + enableAppNameStats);
+            System.out.println("Total distinct connections: " + appNameConnectionStatsAccumulator.getTotalConnectionCount());
+            System.out.println("Unique appNames: " + appNameConnectionStatsAccumulator.getAppNameCount());
+            if (appNameConnectionStatsAccumulator.getAppNameCount() > 0 && textOutput) {
+                System.out.println("\nTop appNames by connection count:");
+                appNameConnectionStatsAccumulator.getAggregatedStats().entrySet().stream()
+                    .sorted((a, b) -> Integer.compare(b.getValue(), a.getValue()))
+                    .limit(10)
+                    .forEach(entry -> System.out.println("  " + entry.getKey() + ": " + entry.getValue()));
+            }
+        }
+
+        if (enableDriverStats) {
+            System.out.println("\n=== Driver Statistics ===");
+            System.out.println("Feature enabled: " + enableDriverStats);
+            if (driverStatsAccumulator != null) {
+                System.out.println("Driver stats entries: " + (driverStatsAccumulator.hasDriverStats() ? driverStatsAccumulator.getDriverStatsEntries().size() : 0));
+                System.out.println("Total connections: " + driverStatsAccumulator.getTotalConnections());
+            } else {
+                System.out.println("Driver stats accumulator is NULL");
+            }
+        }
+
         // Generate CSV reports if requested
         if (planCacheCsvFile != null) {
             System.out.println("📊 Generating plan cache CSV: " + planCacheCsvFile);
@@ -291,6 +322,7 @@ public class LogParser implements Callable<Integer> {
                     transactionAccumulator,
                     indexStatsAccumulator,
                     enableDriverStats ? driverStatsAccumulator : null,
+                    enableAppNameStats ? appNameConnectionStatsAccumulator : null,
                     operationTypeStats,
                     redactQueries,
                     earliestTimestamp,
@@ -554,7 +586,7 @@ public class LogParser implements Callable<Integer> {
                             usedMemory, freeMemory, totalMemory);
         }
 
-        while ((currentLine = in.readLine()) != null) {
+        while ((currentLine = readLineSafe(in, 1 * 1024 * 1024)) != null) {
             lineNum++;
 
             // Check line limit
@@ -594,7 +626,11 @@ public class LogParser implements Callable<Integer> {
                     
                 completionService.submit(
                     new LogParserTask(new ArrayList<>(lines), targetAccumulator, targetPlanCache, targetQueryHash,
-                    		slowPlanningAccumulator, targetErrorCode, targetTransaction, targetIndexStats, enableDriverStats ? driverStatsAccumulator : null, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this));
+                    		slowPlanningAccumulator, targetErrorCode, targetTransaction, targetIndexStats,
+                    		enableDriverStats ? driverStatsAccumulator : null,
+                    		enableAppNameStats ? appNameConnectionStatsAccumulator : null,
+                    		file.getName(),
+                    		operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this));
                 submittedTasks++;
                 lines.clear();
                 
@@ -665,7 +701,11 @@ public class LogParser implements Callable<Integer> {
                 
             completionService.submit(
                 new LogParserTask(new ArrayList<>(lines), targetAccumulator, targetPlanCache, targetQueryHash,
-                		slowPlanningAccumulator, targetErrorCode, targetTransaction, targetIndexStats, enableDriverStats ? driverStatsAccumulator : null, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this));
+                		slowPlanningAccumulator, targetErrorCode, targetTransaction, targetIndexStats,
+                		enableDriverStats ? driverStatsAccumulator : null,
+                		enableAppNameStats ? appNameConnectionStatsAccumulator : null,
+                		file.getName(),
+                		operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this));
             submittedTasks++;
         }
 
@@ -709,13 +749,106 @@ public class LogParser implements Callable<Integer> {
     }
 
     private BufferedReader createReader(File file, String mimeType) throws IOException {
+        // Use 16MB buffer size to handle large lines efficiently
+        int bufferSize = 16 * 1024 * 1024;
+
         if (mimeType != null && mimeType.equals(MimeTypes.GZIP)) {
-            return new BufferedReader(new InputStreamReader(new GZIPInputStream(new FileInputStream(file))));
+            return new BufferedReader(
+                new InputStreamReader(new GZIPInputStream(new FileInputStream(file))),
+                bufferSize);
         } else if (mimeType != null && mimeType.equals(MimeTypes.ZIP)) {
-            return new BufferedReader(new InputStreamReader(new ZipInputStream(new FileInputStream(file))));
+            return new BufferedReader(
+                new InputStreamReader(new ZipInputStream(new FileInputStream(file))),
+                bufferSize);
         } else {
-            return new BufferedReader(new FileReader(file));
+            return new BufferedReader(new FileReader(file), bufferSize);
         }
+    }
+
+    /**
+     * Read a line with maximum length protection to prevent OOM.
+     * If line exceeds maxLength, the rest of the line is skipped and null is returned.
+     * Returns null when end of stream is reached or line is too long.
+     */
+    private String readLineSafe(BufferedReader reader, int maxLength) throws IOException {
+        char[] buffer = new char[Math.min(maxLength, 8192)];
+        StringBuilder sb = new StringBuilder(8192);
+        int totalRead = 0;
+
+        while (totalRead < maxLength) {
+            int toRead = Math.min(buffer.length, maxLength - totalRead);
+            reader.mark(toRead + 1);
+            int n = reader.read(buffer, 0, toRead);
+
+            if (n == -1) {
+                // EOF
+                if (totalRead == 0) {
+                    return null;
+                }
+                return sb.toString();
+            }
+
+            // Look for newline in what we just read
+            int newlinePos = -1;
+            for (int i = 0; i < n; i++) {
+                if (buffer[i] == '\n' || buffer[i] == '\r') {
+                    newlinePos = i;
+                    break;
+                }
+            }
+
+            if (newlinePos >= 0) {
+                // Found newline - add chars up to newline
+                sb.append(buffer, 0, newlinePos);
+
+                // Position reader after the newline
+                reader.reset();
+                reader.skip(newlinePos + 1);
+                // Handle \r\n
+                if (buffer[newlinePos] == '\r') {
+                    reader.mark(1);
+                    int next = reader.read();
+                    if (next != '\n' && next != -1) {
+                        reader.reset();
+                    }
+                }
+                return sb.toString();
+            }
+
+            // No newline found, add all chars
+            sb.append(buffer, 0, n);
+            totalRead += n;
+        }
+
+        // Reached maxLength without finding newline - log prefix and skip rest of line
+        String prefix = sb.toString();
+        String displayPrefix = prefix.length() > 64 ? prefix.substring(0, 64) : prefix;
+        System.err.printf("WARNING: Line exceeds %d chars (%.1f MB), skipping. First 64 chars: %s...%n",
+            maxLength, maxLength / (1024.0 * 1024.0), displayPrefix);
+
+        // Skip until we find newline or EOF
+        int ch;
+        long skippedCount = 0;
+        while ((ch = reader.read()) != -1) {
+            skippedCount++;
+            if (ch == '\n' || ch == '\r') {
+                if (ch == '\r') {
+                    reader.mark(1);
+                    int next = reader.read();
+                    if (next != '\n' && next != -1) {
+                        reader.reset();
+                    }
+                }
+                break;
+            }
+        }
+
+        if (skippedCount > 0) {
+            System.err.printf("         Skipped %d additional chars to reach end of line%n", skippedCount);
+        }
+
+        // Return null to skip this line entirely
+        return null;
     }
 
     private boolean shouldIgnoreLine(String line) {
@@ -1032,7 +1165,7 @@ public class LogParser implements Callable<Integer> {
         int submittedTasks = 0;
         long startTime = System.currentTimeMillis();
         
-        while ((currentLine = in.readLine()) != null) {
+        while ((currentLine = readLineSafe(in, 1 * 1024 * 1024)) != null) {
             lineNum++;
 
             // Check line limit
@@ -1179,7 +1312,7 @@ public class LogParser implements Callable<Integer> {
         int submittedTasks = 0;
         List<String> lines = new ArrayList<>();
         
-        while ((currentLine = in.readLine()) != null) {
+        while ((currentLine = readLineSafe(in, 1 * 1024 * 1024)) != null) {
             lineNum++;
 
             // Check line limit
@@ -1204,7 +1337,9 @@ public class LogParser implements Callable<Integer> {
             if (lines.size() >= 25000) {
                 completionService.submit(
                     new LogParserTask(new ArrayList<>(lines), accumulator, planCacheAccumulator, queryHashAccumulator,
-                    		slowPlanningAccumulator, errorCodeAccumulator, transactionAccumulator, indexStatsAccumulator, null, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this));
+                    		slowPlanningAccumulator, errorCodeAccumulator, transactionAccumulator, indexStatsAccumulator,
+                    		enableDriverStats ? driverStatsAccumulator : null, enableAppNameStats ? appNameConnectionStatsAccumulator : null, file.getName(),
+                    		operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this));
                 submittedTasks++;
                 lines.clear();
             }
@@ -1214,7 +1349,9 @@ public class LogParser implements Callable<Integer> {
         if (!lines.isEmpty()) {
             completionService.submit(
                 new LogParserTask(new ArrayList<>(lines), accumulator, planCacheAccumulator, queryHashAccumulator,
-                		slowPlanningAccumulator, errorCodeAccumulator, transactionAccumulator, indexStatsAccumulator, null, operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this));
+                		slowPlanningAccumulator, errorCodeAccumulator, transactionAccumulator, indexStatsAccumulator,
+                		null, enableAppNameStats ? appNameConnectionStatsAccumulator : null, file.getName(),
+                		operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this));
             submittedTasks++;
         }
 
@@ -1244,7 +1381,7 @@ public class LogParser implements Callable<Integer> {
         int connectionEndCount = 0;
         long startTime = System.currentTimeMillis();
         
-        while ((currentLine = in.readLine()) != null) {
+        while ((currentLine = readLineSafe(in, 1 * 1024 * 1024)) != null) {
             lineNum++;
 
             // Check line limit

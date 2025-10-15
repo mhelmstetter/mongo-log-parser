@@ -13,6 +13,7 @@ import java.util.TreeMap;
 import java.util.stream.Collectors;
 
 import com.mongodb.log.parser.accumulator.Accumulator;
+import com.mongodb.log.parser.accumulator.AppNameConnectionStatsAccumulator;
 import com.mongodb.log.parser.accumulator.TwoPassDriverStatsAccumulator;
 import com.mongodb.log.parser.accumulator.DriverStatsEntry;
 import com.mongodb.log.parser.LogRedactionUtil;
@@ -46,6 +47,7 @@ public class HtmlReportGenerator {
 	        TransactionAccumulator transactionAccumulator,
 	        IndexStatsAccumulator indexStatsAccumulator,
 	        TwoPassDriverStatsAccumulator driverStatsAccumulator,
+	        AppNameConnectionStatsAccumulator appNameConnectionStatsAccumulator,
 	        Map<String, java.util.concurrent.atomic.AtomicLong> operationTypeStats, boolean redactQueries,
 	        String earliestTimestamp, String latestTimestamp,
 	        boolean enableShardTracking,
@@ -61,7 +63,7 @@ public class HtmlReportGenerator {
 	        writeHtmlHeader(writer);
 	        writeNavigationHeader(writer, accumulator, ttlAccumulator, planCacheAccumulator,
 	                             queryHashAccumulator, slowPlanningAccumulator, errorCodeAccumulator, transactionAccumulator,
-	                             indexStatsAccumulator, driverStatsAccumulator, operationTypeStats, earliestTimestamp, latestTimestamp);
+	                             indexStatsAccumulator, driverStatsAccumulator, appNameConnectionStatsAccumulator, operationTypeStats, earliestTimestamp, latestTimestamp);
 	        
 	        // Write tables with shard column if shard tracking is enabled
 	        if (enableShardTracking && !shardAccumulators.isEmpty()) {
@@ -105,6 +107,11 @@ public class HtmlReportGenerator {
 	            }
 	        }
 
+	        // AppName connection stats table
+	        if (appNameConnectionStatsAccumulator != null && appNameConnectionStatsAccumulator.getAppNameCount() > 0) {
+	            writeAppNameStatsTable(writer, appNameConnectionStatsAccumulator);
+	        }
+
 	        // Driver stats table is not sharded
 	        if (driverStatsAccumulator != null && driverStatsAccumulator.hasDriverStats()) {
 	            writeDriverStatsTable(writer, driverStatsAccumulator);
@@ -123,6 +130,7 @@ public class HtmlReportGenerator {
 	        TransactionAccumulator transactionAccumulator,
 	        IndexStatsAccumulator indexStatsAccumulator,
 	        TwoPassDriverStatsAccumulator driverStatsAccumulator,
+	        AppNameConnectionStatsAccumulator appNameConnectionStatsAccumulator,
 	        Map<String, java.util.concurrent.atomic.AtomicLong> operationTypeStats, boolean redactQueries,
 	        String earliestTimestamp, String latestTimestamp) throws IOException {
 
@@ -130,7 +138,7 @@ public class HtmlReportGenerator {
 	        writeHtmlHeader(writer);
 	        writeNavigationHeader(writer, accumulator, ttlAccumulator, planCacheAccumulator,
 	                             queryHashAccumulator, slowPlanningAccumulator, errorCodeAccumulator, transactionAccumulator,
-	                             indexStatsAccumulator, driverStatsAccumulator, operationTypeStats, earliestTimestamp, latestTimestamp);
+	                             indexStatsAccumulator, driverStatsAccumulator, appNameConnectionStatsAccumulator, operationTypeStats, earliestTimestamp, latestTimestamp);
 	        writeMainOperationsTable(writer, accumulator, redactQueries);
 	        writeTtlOperationsTable(writer, ttlAccumulator);
 	        writeOperationStatsTable(writer, operationTypeStats);
@@ -150,6 +158,10 @@ public class HtmlReportGenerator {
 
 	        if (indexStatsAccumulator != null && indexStatsAccumulator.hasIndexStats()) {
 	            writeIndexStatsTable(writer, indexStatsAccumulator, redactQueries);
+	        }
+
+	        if (appNameConnectionStatsAccumulator != null && appNameConnectionStatsAccumulator.getAppNameCount() > 0) {
+	            writeAppNameStatsTable(writer, appNameConnectionStatsAccumulator);
 	        }
 
 	        if (driverStatsAccumulator != null && driverStatsAccumulator.hasDriverStats()) {
@@ -286,6 +298,7 @@ public class HtmlReportGenerator {
 	        ErrorCodeAccumulator errorCodeAccumulator,
 	        TransactionAccumulator transactionAccumulator, IndexStatsAccumulator indexStatsAccumulator,
 	        TwoPassDriverStatsAccumulator driverStatsAccumulator,
+	        AppNameConnectionStatsAccumulator appNameConnectionStatsAccumulator,
 	        Map<String, java.util.concurrent.atomic.AtomicLong> operationTypeStats,
 	        String earliestTimestamp, String latestTimestamp) {
 	    
@@ -334,11 +347,16 @@ public class HtmlReportGenerator {
 	        writer.println("                    <a href=\"#index-stats\" class=\"nav-link\">Index Usage Statistics</a>");
 	    }
 	    
+	    // AppName Connection Statistics
+	    if (appNameConnectionStatsAccumulator != null && appNameConnectionStatsAccumulator.getAppNameCount() > 0) {
+	        writer.println("                    <a href=\"#appname-stats\" class=\"nav-link\">AppName Statistics</a>");
+	    }
+
 	    // Driver Statistics (last)
 	    if (driverStatsAccumulator != null && driverStatsAccumulator.hasDriverStats()) {
 	        writer.println("                    <a href=\"#driver-stats\" class=\"nav-link\">Driver Statistics</a>");
 	    }
-	    
+
 	    writer.println("                </div>");
 	    
 	    // Add timestamp range information with right-justified generation date
@@ -1016,11 +1034,19 @@ public class HtmlReportGenerator {
 				String contentId = "log-content-" + rowId;
 				String buttonId = "btn-" + rowId;
 				String formattedDuration = LogRedactionUtil.extractFormattedDuration(op.getSampleLogMessage());
+				String formattedPlanningTime = LogRedactionUtil.extractFormattedPlanningTime(op.getSampleLogMessage());
+				String formattedStorageTime = LogRedactionUtil.extractFormattedStorageTime(op.getSampleLogMessage());
 				String formattedBytesRead = LogRedactionUtil.extractFormattedBytesRead(op.getSampleLogMessage());
-				
+
 				StringBuilder headerText = new StringBuilder();
 				if (!formattedDuration.isEmpty()) {
-					headerText.append(" (").append(formattedDuration);
+					headerText.append(" (total: ").append(formattedDuration);
+					if (!formattedPlanningTime.isEmpty()) {
+						headerText.append(", planning: ").append(formattedPlanningTime);
+					}
+					if (!formattedStorageTime.isEmpty()) {
+						headerText.append(", storage: ").append(formattedStorageTime);
+					}
 				}
 				if (!formattedBytesRead.isEmpty()) {
 					if (headerText.length() > 0) {
@@ -1291,11 +1317,19 @@ public class HtmlReportGenerator {
 						String contentId = "log-content-" + rowId;
 						String buttonId = "btn-" + rowId;
 						String formattedDuration = LogRedactionUtil.extractFormattedDuration(entry.getSampleLogMessage());
+						String formattedPlanningTime = LogRedactionUtil.extractFormattedPlanningTime(entry.getSampleLogMessage());
+						String formattedStorageTime = LogRedactionUtil.extractFormattedStorageTime(entry.getSampleLogMessage());
 						String formattedBytesRead = LogRedactionUtil.extractFormattedBytesRead(entry.getSampleLogMessage());
-						
+
 						StringBuilder headerText = new StringBuilder();
 						if (!formattedDuration.isEmpty()) {
-							headerText.append(" (").append(formattedDuration);
+							headerText.append(" (total: ").append(formattedDuration);
+							if (!formattedPlanningTime.isEmpty()) {
+								headerText.append(", planning: ").append(formattedPlanningTime);
+							}
+							if (!formattedStorageTime.isEmpty()) {
+								headerText.append(", storage: ").append(formattedStorageTime);
+							}
 						}
 						if (!formattedBytesRead.isEmpty()) {
 							if (headerText.length() > 0) {
@@ -1635,11 +1669,19 @@ public class HtmlReportGenerator {
 						String contentId = "log-content-" + rowId;
 						String buttonId = "btn-" + rowId;
 						String formattedDuration = LogRedactionUtil.extractFormattedDuration(entry.getSampleLogMessage());
+						String formattedPlanningTime = LogRedactionUtil.extractFormattedPlanningTime(entry.getSampleLogMessage());
+						String formattedStorageTime = LogRedactionUtil.extractFormattedStorageTime(entry.getSampleLogMessage());
 						String formattedBytesRead = LogRedactionUtil.extractFormattedBytesRead(entry.getSampleLogMessage());
-						
+
 						StringBuilder headerText = new StringBuilder();
 						if (!formattedDuration.isEmpty()) {
-							headerText.append(" (").append(formattedDuration);
+							headerText.append(" (total: ").append(formattedDuration);
+							if (!formattedPlanningTime.isEmpty()) {
+								headerText.append(", planning: ").append(formattedPlanningTime);
+							}
+							if (!formattedStorageTime.isEmpty()) {
+								headerText.append(", storage: ").append(formattedStorageTime);
+							}
 						}
 						if (!formattedBytesRead.isEmpty()) {
 							if (headerText.length() > 0) {
@@ -1940,6 +1982,75 @@ public class HtmlReportGenerator {
 	    writer.println("                </tbody>");
 	    writer.println("            </table>");
 	    writer.println("        </div>");
+	}
+
+	private static void writeAppNameStatsTable(PrintWriter writer, AppNameConnectionStatsAccumulator appNameConnectionStatsAccumulator) {
+	    if (appNameConnectionStatsAccumulator == null || appNameConnectionStatsAccumulator.getAppNameCount() == 0) {
+	        return;
+	    }
+
+	    writer.println("        <h2 id=\"appname-stats\">AppName Connection Statistics</h2>");
+
+	    Map<String, Integer> stats = appNameConnectionStatsAccumulator.getAggregatedStats();
+	    long totalConnections = appNameConnectionStatsAccumulator.getTotalConnectionCount();
+	    long uniqueAppNames = appNameConnectionStatsAccumulator.getAppNameCount();
+
+	    // Summary
+	    writer.println("        <div class=\"summary\">");
+	    writer.println("            <h3>AppName Summary</h3>");
+	    writer.println("            <div class=\"summary-grid\">");
+	    writer.println("                <div class=\"summary-item\">");
+	    writer.println("                    <div class=\"summary-label\">Total Distinct Connections</div>");
+	    writer.println("                    <div class=\"summary-value\">" + NUMBER_FORMAT.format(totalConnections) + "</div>");
+	    writer.println("                </div>");
+	    writer.println("                <div class=\"summary-item\">");
+	    writer.println("                    <div class=\"summary-label\">Unique AppNames</div>");
+	    writer.println("                    <div class=\"summary-value\">" + NUMBER_FORMAT.format(uniqueAppNames) + "</div>");
+	    writer.println("                </div>");
+	    writer.println("            </div>");
+	    writer.println("        </div>");
+
+	    // Table
+	    writer.println("        <div class=\"table-container\">");
+	    writer.println("            <div class=\"controls\">");
+	    writer.println("                <input type=\"text\" id=\"appNameStatsFilter\" class=\"filter-input\" placeholder=\"Filter by appName...\">");
+	    writer.println("                <button class=\"clear-btn\" onclick=\"clearAppNameStatsFilter()\" style=\"margin-left: 10px;\">Clear Filter</button>");
+	    writer.println("            </div>");
+	    writer.println("            <table id=\"appNameStatsTable\">");
+	    writer.println("                <thead>");
+	    writer.println("                    <tr>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('appNameStatsTable', 0, 'string')\">AppName</th>");
+	    writer.println("                        <th class=\"sortable\" onclick=\"sortTable('appNameStatsTable', 1, 'number')\">Distinct Connections</th>");
+	    writer.println("                    </tr>");
+	    writer.println("                </thead>");
+	    writer.println("                <tbody>");
+
+	    stats.entrySet().stream()
+	            .sorted((a, b) -> Integer.compare(b.getValue(), a.getValue()))
+	            .forEach(entry -> {
+	                String appName = entry.getKey();
+	                int connCount = entry.getValue();
+
+	                writer.println("                    <tr>");
+	                writer.println("                        <td>" + escapeHtml(appName) + "</td>");
+	                writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(connCount) + "</td>");
+	                writer.println("                    </tr>");
+	            });
+
+	    writer.println("                </tbody>");
+	    writer.println("            </table>");
+	    writer.println("        </div>");
+
+	    // Add filter script
+	    writer.println("        <script>");
+	    writer.println("            function clearAppNameStatsFilter() {");
+	    writer.println("                document.getElementById('appNameStatsFilter').value = '';");
+	    writer.println("                filterTable('appNameStatsTable', 'appNameStatsFilter');");
+	    writer.println("            }");
+	    writer.println("            document.getElementById('appNameStatsFilter').addEventListener('input', function() {");
+	    writer.println("                filterTable('appNameStatsTable', 'appNameStatsFilter');");
+	    writer.println("            });");
+	    writer.println("        </script>");
 	}
 
 	private static void writeDriverStatsTable(PrintWriter writer, TwoPassDriverStatsAccumulator driverStatsAccumulator) {

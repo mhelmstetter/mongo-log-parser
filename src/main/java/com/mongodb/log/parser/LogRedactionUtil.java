@@ -528,7 +528,7 @@ public class LogRedactionUtil {
         if (logMessage == null || logMessage.isEmpty()) {
             return "";
         }
-        
+
         try {
             JSONObject jo = new JSONObject(logMessage);
             if (jo.has("attr")) {
@@ -550,6 +550,48 @@ public class LogRedactionUtil {
                     // Ignore
                 }
             }
+        }
+        return "";
+    }
+
+    public static String extractFormattedPlanningTime(String logMessage) {
+        if (logMessage == null || logMessage.isEmpty()) {
+            return "";
+        }
+
+        try {
+            JSONObject jo = new JSONObject(logMessage);
+            if (jo.has("attr")) {
+                JSONObject attr = jo.getJSONObject("attr");
+                if (attr.has("planningTimeMicros")) {
+                    long planningMicros = attr.getLong("planningTimeMicros");
+                    long planningMs = planningMicros / 1000;
+                    return formatDuration(planningMs);
+                }
+            }
+        } catch (Exception e) {
+            // Ignore
+        }
+        return "";
+    }
+
+    public static String extractFormattedStorageTime(String logMessage) {
+        if (logMessage == null || logMessage.isEmpty()) {
+            return "";
+        }
+
+        try {
+            JSONObject jo = new JSONObject(logMessage);
+            if (jo.has("attr")) {
+                JSONObject attr = jo.getJSONObject("attr");
+                if (attr.has("timeReadingMicros")) {
+                    long storageMicros = attr.getLong("timeReadingMicros");
+                    long storageMs = storageMicros / 1000;
+                    return formatDuration(storageMs);
+                }
+            }
+        } catch (Exception e) {
+            // Ignore
         }
         return "";
     }

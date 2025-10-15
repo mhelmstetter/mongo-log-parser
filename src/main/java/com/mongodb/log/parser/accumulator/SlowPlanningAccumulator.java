@@ -15,6 +15,7 @@ public class SlowPlanningAccumulator {
 
     private List<SlowPlanningEntry> entries = new ArrayList<>();
     private int topN = 50; // default to top 50
+    private long minPlanningTimeThreshold = 0; // Track minimum planning time in current top entries
 
     public SlowPlanningAccumulator() {
         this(50);
@@ -24,8 +25,13 @@ public class SlowPlanningAccumulator {
         this.topN = topN;
     }
 
-    public void accumulate(SlowQuery slowQuery, String logMessage) {
+    public synchronized void accumulate(SlowQuery slowQuery, String logMessage) {
         if (slowQuery.planningTimeMicros == null) {
+            return;
+        }
+
+        // If we already have topN entries and this one is slower than the minimum, skip it
+        if (entries.size() >= topN && slowQuery.planningTimeMicros < minPlanningTimeThreshold) {
             return;
         }
 
@@ -41,6 +47,14 @@ public class SlowPlanningAccumulator {
         );
 
         entries.add(entry);
+
+        // If we exceed topN, sort and trim to keep only the slowest ones
+        if (entries.size() > topN) {
+            entries.sort(Comparator.comparingLong(SlowPlanningEntry::getPlanningTimeMicros).reversed());
+            entries = new ArrayList<>(entries.subList(0, topN));
+            // Update threshold to the new minimum in the top N
+            minPlanningTimeThreshold = entries.get(topN - 1).getPlanningTimeMicros();
+        }
     }
 
     /**

@@ -128,6 +128,12 @@ public class FilterConfig {
     }
     
     public boolean shouldIgnore(String line) {
-        return ignorePatterns.stream().anyMatch(line::contains);
+        // Avoid stream overhead - use simple loop for better performance and memory
+        for (String pattern : ignorePatterns) {
+            if (line.contains(pattern)) {
+                return true;
+            }
+        }
+        return false;
     }
 }
