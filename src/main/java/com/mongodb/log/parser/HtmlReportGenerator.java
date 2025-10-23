@@ -2338,7 +2338,12 @@ public class HtmlReportGenerator {
 	    writer.println("                    if (match) {");
 	    writer.println("                        const accordionRow = document.getElementById(match[1]);");
 	    writer.println("                        if (accordionRow) {");
-	    writer.println("                            accordionRow.style.display = matches ? '' : 'none';");
+	    writer.println("                            if (matches) {");
+	    writer.println("                                // Remove inline style to let CSS classes control visibility");
+	    writer.println("                                accordionRow.style.removeProperty('display');");
+	    writer.println("                            } else {");
+	    writer.println("                                accordionRow.style.display = 'none';");
+	    writer.println("                            }");
 	    writer.println("                        }");
 	    writer.println("                    }");
 	    writer.println("                }");

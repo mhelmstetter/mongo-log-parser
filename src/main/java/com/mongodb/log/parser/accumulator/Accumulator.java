@@ -91,7 +91,7 @@ public class Accumulator {
             Long docsExamined, Long nReturned, Long reslen, Long bytesRead, Long bytesWritten, Long writeConflicts, Long nShards, String logMessage, boolean isError, boolean isChangeStream, String appName) {
         // TODO add an option to accumulate per file, for now glob all files
         // together
-        AccumulatorKey key = new AccumulatorKey(null, namespace, command);
+        AccumulatorKey key = new AccumulatorKey(null, namespace, command, appName);
         LogLineAccumulator accum = accumulators.get(key);
         if (accum == null) {
             accum = new LogLineAccumulator(null, command, namespace);

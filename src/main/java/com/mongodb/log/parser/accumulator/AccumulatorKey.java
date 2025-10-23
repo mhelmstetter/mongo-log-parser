@@ -5,26 +5,36 @@ import java.io.File;
 import com.mongodb.log.parser.Namespace;
 
 public class AccumulatorKey {
-    
+
     private File file;
     //private String namespace;
     private String dbName;
     private String collName;
     private String command;
+    private String appName;
     
     public AccumulatorKey(File file, String dbName, String collName, String command) {
+        this(file, dbName, collName, command, null);
+    }
+
+    public AccumulatorKey(File file, String dbName, String collName, String command, String appName) {
         this.file = file;
         this.dbName = dbName;
         this.collName = collName;
         this.command = command;
+        this.appName = appName;
     }
-    
+
     public AccumulatorKey(File file, Namespace namespace, String command) {
+        this(file, namespace, command, null);
+    }
+
+    public AccumulatorKey(File file, Namespace namespace, String command, String appName) {
         this.file = file;
         this.dbName = namespace.getDatabaseName();
         this.collName = namespace.getCollectionName();
-        
         this.command = command;
+        this.appName = appName;
     }
     
     public String toString() {
@@ -50,6 +60,7 @@ public class AccumulatorKey {
         result = prime * result + ((command == null) ? 0 : command.hashCode());
         result = prime * result + ((dbName == null) ? 0 : dbName.hashCode());
         result = prime * result + ((file == null) ? 0 : file.hashCode());
+        result = prime * result + ((appName == null) ? 0 : appName.hashCode());
         return result;
     }
 
@@ -81,6 +92,11 @@ public class AccumulatorKey {
             if (other.file != null)
                 return false;
         } else if (!file.equals(other.file))
+            return false;
+        if (appName == null) {
+            if (other.appName != null)
+                return false;
+        } else if (!appName.equals(other.appName))
             return false;
         return true;
     }
