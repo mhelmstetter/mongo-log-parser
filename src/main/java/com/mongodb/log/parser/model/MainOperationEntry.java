@@ -34,6 +34,7 @@ public class MainOperationEntry {
     private long avgWriteConflicts;
     private String sampleLogMessage;
     private boolean hasCollScan;
+    private boolean isMirrored;
     private String appName;
 
     // New fields for enhanced table
@@ -75,9 +76,12 @@ public class MainOperationEntry {
         this.maxBytesWritten = accumulator.getMaxBytesWritten();
         this.avgWriteConflicts = accumulator.getAvgWriteConflicts();
         this.sampleLogMessage = accumulator.getSampleLogMessage();
+        this.isMirrored = (accumulator.getSampleLogMessage() != null &&
+                          accumulator.getSampleLogMessage().contains("\"mirrored\":true"));
         this.hasCollScan = (accumulator.getSampleLogMessage() != null &&
                            accumulator.getSampleLogMessage().contains("COLLSCAN") &&
-                           !accumulator.isChangeStream());
+                           !accumulator.isChangeStream() &&
+                           !this.isMirrored);
         this.appName = accumulator.getAppName();
 
         // New fields
@@ -282,10 +286,28 @@ public class MainOperationEntry {
         this.hasCollScan = hasCollScan;
     }
 
+    public boolean isMirrored() {
+        return isMirrored;
+    }
+
+    public void setMirrored(boolean mirrored) {
+        this.isMirrored = mirrored;
+    }
+
     /**
-     * Returns the CSS class for this row (e.g., "collscan" for collection scans)
+     * Returns the operation name with "(mirrored)" appended if this is a mirrored read
+     */
+    public String getOperationDisplay() {
+        return isMirrored ? operation + " (mirrored)" : operation;
+    }
+
+    /**
+     * Returns the CSS class for this row (e.g., "collscan" for collection scans, "mirrored" for mirrored reads)
      */
     public String getCssClass() {
+        if (isMirrored) {
+            return "mirrored";
+        }
         return hasCollScan ? "collscan" : "";
     }
 

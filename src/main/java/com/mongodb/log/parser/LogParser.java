@@ -341,8 +341,29 @@ public class LogParser implements Callable<Integer> {
                     System.err.printf("[VERBOSE] HTML report generation completed in %d ms%n", htmlEnd - htmlStart);
                 }
                 System.out.println("🎉 HTML report completed: " + htmlOutputFile);
+            } catch (OutOfMemoryError e) {
+                System.err.println("❌ Out of memory generating HTML report!");
+                System.err.println("    Current max heap size: " + Runtime.getRuntime().maxMemory() / (1024*1024) + " MB");
+                System.err.println("    Try increasing heap size: java -Xmx4g -jar MongoLogParser.jar ...");
+                System.err.println("    Stack trace:");
+                e.printStackTrace();
+
+                // Clean up incomplete file
+                File reportFile = new File(htmlOutputFile);
+                if (reportFile.exists() && reportFile.delete()) {
+                    System.err.println("    Deleted incomplete report file: " + htmlOutputFile);
+                }
             } catch (IOException e) {
-                System.err.println("❌ Failed to generate HTML report: " + e.getMessage());
+                System.err.println("❌ Failed to generate HTML report: " + htmlOutputFile);
+                System.err.println("    Error: " + e.getMessage());
+                System.err.println("    Stack trace:");
+                e.printStackTrace();
+
+                // Clean up incomplete file
+                File reportFile = new File(htmlOutputFile);
+                if (reportFile.exists() && reportFile.delete()) {
+                    System.err.println("    Deleted incomplete report file: " + htmlOutputFile);
+                }
             }
         }
         
@@ -366,8 +387,29 @@ public class LogParser implements Callable<Integer> {
                     latestTimestamp
                 );
                 System.out.println("🎉 JSON report completed: " + jsonOutputFile);
+            } catch (OutOfMemoryError e) {
+                System.err.println("❌ Out of memory generating JSON report!");
+                System.err.println("    Current max heap size: " + Runtime.getRuntime().maxMemory() / (1024*1024) + " MB");
+                System.err.println("    Try increasing heap size: java -Xmx4g -jar MongoLogParser.jar ...");
+                System.err.println("    Stack trace:");
+                e.printStackTrace();
+
+                // Clean up incomplete file
+                File reportFile = new File(jsonOutputFile);
+                if (reportFile.exists() && reportFile.delete()) {
+                    System.err.println("    Deleted incomplete report file: " + jsonOutputFile);
+                }
             } catch (IOException e) {
-                System.err.println("❌ Failed to generate JSON report: " + e.getMessage());
+                System.err.println("❌ Failed to generate JSON report: " + jsonOutputFile);
+                System.err.println("    Error: " + e.getMessage());
+                System.err.println("    Stack trace:");
+                e.printStackTrace();
+
+                // Clean up incomplete file
+                File reportFile = new File(jsonOutputFile);
+                if (reportFile.exists() && reportFile.delete()) {
+                    System.err.println("    Deleted incomplete report file: " + jsonOutputFile);
+                }
             }
         }
 

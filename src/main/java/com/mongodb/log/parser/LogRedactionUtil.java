@@ -446,7 +446,10 @@ public class LogRedactionUtil {
         // Bold storage-related fields
         enhanced = enhanced.replaceAll("\"bytesRead\":(\\s*)(\\d+)", "<strong>\"bytesRead\":</strong>$1<strong>$2</strong>");
         enhanced = enhanced.replaceAll("\"timeReadingMicros\":(\\s*)(\\d+)", "<strong>\"timeReadingMicros\":</strong>$1<strong>$2</strong>");
-        
+
+        // Bold mirrored reads
+        enhanced = enhanced.replaceAll("\"mirrored\":(\\s*)(true|false)", "<strong>\"mirrored\":</strong>$1<strong>$2</strong>");
+
         // Bold the $audit.$impersonatedUser section
         // This pattern looks for "$audit": { ... "$impersonatedUser": { "user": "...", "db": "..." } ... }
         enhanced = enhanced.replaceAll(

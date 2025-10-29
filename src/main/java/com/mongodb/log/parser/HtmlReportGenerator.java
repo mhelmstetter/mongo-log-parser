@@ -118,6 +118,12 @@ public class HtmlReportGenerator {
 	        }
 
 	        writeHtmlFooter(writer);
+
+	        // Check for any I/O errors that occurred during writing
+	        if (writer.checkError()) {
+	            throw new IOException("Error writing HTML report to " + fileName +
+	                                 " - possible disk full, I/O error, or out of memory");
+	        }
 	    }
 	}
 
@@ -169,6 +175,12 @@ public class HtmlReportGenerator {
 	        }
 
 	        writeHtmlFooter(writer);
+
+	        // Check for any I/O errors that occurred during writing
+	        if (writer.checkError()) {
+	            throw new IOException("Error writing HTML report to " + fileName +
+	                                 " - possible disk full, I/O error, or out of memory");
+	        }
 	    }
 	}
 
@@ -232,6 +244,7 @@ public class HtmlReportGenerator {
 		writer.println("        .summary-label { font-weight: bold; color: #21313C; }");
 		writer.println("        .summary-value { font-size: 18px; color: #00684A; }");
 		writer.println("        .collscan { background-color: #ffebee !important; }");
+		writer.println("        .mirrored { color: #999999 !important; }");
 		writer.println(
 				"        .truncated { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help; }");
 		writer.println(
@@ -494,7 +507,7 @@ public class HtmlReportGenerator {
 	        writer.println("                    <tr class=\"" + cssClass + "\" onclick=\"toggleAccordion('" + rowId + "')\">");
 	        writer.println("                        <td class=\"shard-cell\"><span class=\"accordion-toggle\"></span>" + shardDisplay + "</td>");
 	        writer.println("                        <td class=\"namespace-cell\">" + escapeHtml(op.getNamespace()) + "</td>");
-	        writer.println("                        <td class=\"operation-cell\">" + escapeHtml(op.getOperation()) + "</td>");
+	        writer.println("                        <td class=\"operation-cell\">" + escapeHtml(op.getOperationDisplay()) + "</td>");
 	        writer.println("                        <td class=\"count-cell\">" + op.getFormattedCount() + "</td>");
 	        writer.println("                        <td class=\"time-cell\">" + NUMBER_FORMAT.format(op.getMinMs()) + "</td>");
 	        writer.println("                        <td class=\"time-cell\">" + NUMBER_FORMAT.format(op.getMaxMs()) + "</td>");
@@ -599,7 +612,7 @@ public class HtmlReportGenerator {
 	        String cssClass = op.getCssClass();
 	        writer.println("                    <tr class=\"" + cssClass + "\">");
 	        writer.println("                        <td>" + op.getNamespace() + "</td>");
-	        writer.println("                        <td>" + op.getOperation() + "</td>");
+	        writer.println("                        <td>" + op.getOperationDisplay() + "</td>");
 	        writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(op.getCount()) + "</td>");
 	        writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(op.getMinMs()) + "</td>");
 	        writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(op.getMaxMs()) + "</td>");
@@ -973,13 +986,14 @@ public class HtmlReportGenerator {
 		writer.println("                        " + generateTableHeader("mainOpsTable", 9, "Avg Keys Ex", "number"));
 		writer.println("                        " + generateTableHeader("mainOpsTable", 10, "Avg Docs Ex", "number"));
 		writer.println("                        " + generateTableHeader("mainOpsTable", 11, "Avg Return", "number"));
-		writer.println("                        " + generateTableHeader("mainOpsTable", 12, "Ex/Ret Ratio", "number"));
-		writer.println("                        " + generateTableHeader("mainOpsTable", 13, "Avg Shards", "number"));
-		writer.println("                        " + generateTableHeader("mainOpsTable", 14, "Avg Read", "number"));
-		writer.println("                        " + generateTableHeader("mainOpsTable", 15, "Max Read", "number"));
-		writer.println("                        " + generateTableHeader("mainOpsTable", 16, "Avg Write", "number"));
-		writer.println("                        " + generateTableHeader("mainOpsTable", 17, "Max Write", "number"));
-		writer.println("                        " + generateTableHeader("mainOpsTable", 18, "Avg Write Conflicts", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 12, "Total Return", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 13, "Ex/Ret Ratio", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 14, "Avg Shards", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 15, "Avg Read", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 16, "Max Read", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 17, "Avg Write", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 18, "Max Write", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 19, "Avg Write Conflicts", "number"));
 		writer.println("                    </tr>");
 		writer.println("                </thead>");
 		writer.println("                <tbody>");
@@ -987,10 +1001,10 @@ public class HtmlReportGenerator {
 		// Use model objects for rendering (View layer)
 		operations.forEach(op -> {
 			String namespace = op.getNamespace();
-			String operation = op.getOperation();
-			String rowId = "mo-" + Math.abs((namespace + operation).hashCode());
+			String operation = op.getOperationDisplay();
+			String rowId = "mo-" + Math.abs((namespace + op.getOperation()).hashCode());
 			String cssClass = op.getCssClass();
-			
+
 			writer.println("                    <tr class=\"accordion-row " + cssClass + "\" onclick=\"toggleAccordion('" + rowId + "')\">");
 			writer.println("                        <td class=\"namespace-cell\"><span class=\"accordion-toggle\"></span>" + escapeHtml(namespace) + "</td>");
 			writer.println("                        <td class=\"operation-cell\">" + escapeHtml(operation) + "</td>");
@@ -1004,6 +1018,7 @@ public class HtmlReportGenerator {
 			writer.println("                        <td class=\"count-cell\">" + op.getFormattedAvgKeysExamined() + "</td>");
 			writer.println("                        <td class=\"count-cell\">" + op.getFormattedAvgDocsExamined() + "</td>");
 			writer.println("                        <td class=\"count-cell\">" + op.getFormattedAvgReturned() + "</td>");
+			writer.println("                        <td class=\"count-cell\">" + op.getFormattedTotalReturned() + "</td>");
 			writer.println("                        <td class=\"count-cell\">" + NUMBER_FORMAT.format(op.getExRetRatio()) + "</td>");
 			writer.println("                        <td class=\"count-cell\">" + op.getFormattedAvgShards() + "</td>");
 			writer.print("                        ");
@@ -1026,7 +1041,7 @@ public class HtmlReportGenerator {
 				boolean isTruncated = LogRedactionUtil.isLogMessageTruncated(op.getSampleLogMessage());
 				String logCssClass = isTruncated ? "log-sample truncated-query" : "log-sample";
 				writer.println("                    <tr id=\"" + rowId + "\" class=\"accordion-content\">");
-				writer.println("                        <td colspan=\"18\">");
+				writer.println("                        <td colspan=\"20\">");
 				writer.println("                            <div class=\"" + logCssClass + "\">");
 				if (isTruncated) {
 					writer.println("                                <div class=\"truncated-warning\">⚠ Query was truncated in MongoDB logs</div>");
@@ -1421,6 +1436,9 @@ public class HtmlReportGenerator {
 
 			// Add accordion content row with query and log message
 			if (entry.getLogMessage() != null && !entry.getLogMessage().isEmpty()) {
+				String processedLogMessage = LogRedactionUtil.processLogMessage(entry.getLogMessage(), redactQueries);
+				String enhancedLogMessage = LogRedactionUtil.enhanceLogMessageForHtml(processedLogMessage);
+				enhancedLogMessage = escapeHtml(enhancedLogMessage);
 				boolean isTruncated = LogRedactionUtil.isLogMessageTruncated(entry.getLogMessage());
 				String cssClass = isTruncated ? "log-sample truncated-query" : "log-sample";
 				writer.println("                    <tr id=\"" + rowId + "\" class=\"accordion-content\">");
@@ -1430,10 +1448,10 @@ public class HtmlReportGenerator {
 					writer.println("                                <div class=\"truncated-warning\">⚠ Query was truncated in MongoDB logs</div>");
 				}
 				writer.println("                                <strong>Query:</strong><br>");
-				writer.println("                                <pre>" + escapeHtml(sanitizedQuery) + "</pre>");
-				writer.println("                                <br>");
+				writer.println("                                " + escapeHtml(sanitizedQuery));
+				writer.println("                                <br><br>");
 				writer.println("                                <strong>Log Entry:</strong><br>");
-				writer.println("                                <pre>" + escapeHtml(entry.getLogMessage()) + "</pre>");
+				writer.println("                                " + enhancedLogMessage);
 				writer.println("                            </div>");
 				writer.println("                        </td>");
 				writer.println("                    </tr>");
