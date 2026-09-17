@@ -4,8 +4,10 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.text.NumberFormat;
+import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -51,6 +53,7 @@ public class HtmlReportGenerator {
 	        Map<String, java.util.concurrent.atomic.AtomicLong> operationTypeStats, boolean redactQueries,
 	        String earliestTimestamp, String latestTimestamp,
 	        boolean enableShardTracking,
+	        boolean enableShardMatrix,
 	        Map<ShardInfo, Accumulator> shardAccumulators,
 	        Map<ShardInfo, Accumulator> shardTtlAccumulators,
 	        Map<ShardInfo, PlanCacheAccumulator> shardPlanCacheAccumulators,
@@ -63,7 +66,8 @@ public class HtmlReportGenerator {
 	        writeHtmlHeader(writer);
 	        writeNavigationHeader(writer, accumulator, ttlAccumulator, planCacheAccumulator,
 	                             queryHashAccumulator, slowPlanningAccumulator, errorCodeAccumulator, transactionAccumulator,
-	                             indexStatsAccumulator, driverStatsAccumulator, appNameConnectionStatsAccumulator, operationTypeStats, earliestTimestamp, latestTimestamp);
+	                             indexStatsAccumulator, driverStatsAccumulator, appNameConnectionStatsAccumulator, operationTypeStats, earliestTimestamp, latestTimestamp,
+	                             enableShardMatrix, shardAccumulators, shardQueryHashAccumulators);
 	        
 	        // Write tables with shard column if shard tracking is enabled
 	        if (enableShardTracking && !shardAccumulators.isEmpty()) {
@@ -83,6 +87,10 @@ public class HtmlReportGenerator {
 	            if (!shardIndexStatsAccumulators.isEmpty()) {
 	                writeIndexStatsTableWithShards(writer, shardIndexStatsAccumulators, redactQueries);
 	            }
+
+	            if (enableShardMatrix) {
+	                writeShardNamespaceMatrix(writer, shardAccumulators);
+	            }
 	        } else {
 	            // Write regular tables (aggregated across all files)
 	            writeMainOperationsTable(writer, accumulator, redactQueries);
@@ -90,8 +98,13 @@ public class HtmlReportGenerator {
 	            writeOperationStatsTable(writer, operationTypeStats);
 	            writeErrorCodesTable(writer, errorCodeAccumulator, redactQueries);
 
+	            if (planCacheAccumulator != null && planCacheAccumulator.getSize() > 0) {
+	                writePlanCacheTable(writer, planCacheAccumulator, redactQueries);
+	            }
+
 	            if (queryHashAccumulator != null) {
 	                writeQueryHashTable(writer, queryHashAccumulator, redactQueries);
+	                writeCpuByQueryHashTable(writer, queryHashAccumulator, redactQueries);
 	            }
 
 	            if (slowPlanningAccumulator != null) {
@@ -144,14 +157,20 @@ public class HtmlReportGenerator {
 	        writeHtmlHeader(writer);
 	        writeNavigationHeader(writer, accumulator, ttlAccumulator, planCacheAccumulator,
 	                             queryHashAccumulator, slowPlanningAccumulator, errorCodeAccumulator, transactionAccumulator,
-	                             indexStatsAccumulator, driverStatsAccumulator, appNameConnectionStatsAccumulator, operationTypeStats, earliestTimestamp, latestTimestamp);
+	                             indexStatsAccumulator, driverStatsAccumulator, appNameConnectionStatsAccumulator, operationTypeStats, earliestTimestamp, latestTimestamp,
+	                             false, java.util.Collections.emptyMap(), java.util.Collections.emptyMap());
 	        writeMainOperationsTable(writer, accumulator, redactQueries);
 	        writeTtlOperationsTable(writer, ttlAccumulator);
 	        writeOperationStatsTable(writer, operationTypeStats);
 	        writeErrorCodesTable(writer, errorCodeAccumulator, redactQueries);
 
+	        if (planCacheAccumulator != null && planCacheAccumulator.getSize() > 0) {
+	            writePlanCacheTable(writer, planCacheAccumulator, redactQueries);
+	        }
+
 	        if (queryHashAccumulator != null) {
 	            writeQueryHashTable(writer, queryHashAccumulator, redactQueries);
+	            writeCpuByQueryHashTable(writer, queryHashAccumulator, redactQueries);
 	        }
 
 	        if (slowPlanningAccumulator != null) {
@@ -244,6 +263,7 @@ public class HtmlReportGenerator {
 		writer.println("        .summary-label { font-weight: bold; color: #21313C; }");
 		writer.println("        .summary-value { font-size: 18px; color: #00684A; }");
 		writer.println("        .collscan { background-color: #ffebee !important; }");
+		writer.println("        .scan-and-order { background-color: #fff8e1 !important; }");
 		writer.println("        .mirrored { color: #999999 !important; }");
 		writer.println(
 				"        .truncated { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help; }");
@@ -313,7 +333,9 @@ public class HtmlReportGenerator {
 	        TwoPassDriverStatsAccumulator driverStatsAccumulator,
 	        AppNameConnectionStatsAccumulator appNameConnectionStatsAccumulator,
 	        Map<String, java.util.concurrent.atomic.AtomicLong> operationTypeStats,
-	        String earliestTimestamp, String latestTimestamp) {
+	        String earliestTimestamp, String latestTimestamp,
+	        boolean enableShardMatrix, Map<ShardInfo, Accumulator> shardAccumulators,
+	        Map<ShardInfo, QueryHashAccumulator> shardQueryHashAccumulators) {
 	    
 	    writer.println("    <div class=\"nav-header\">");
 	    writer.println("        <div class=\"nav-content\">");
@@ -340,9 +362,25 @@ public class HtmlReportGenerator {
 	        writer.println("                    <a href=\"#error-codes\" class=\"nav-link\">Error Codes</a>");
 	    }
 	    
+	    // Plan Cache Analysis
+	    if (planCacheAccumulator != null && planCacheAccumulator.getSize() > 0) {
+	        writer.println("                    <a href=\"#plan-cache\" class=\"nav-link\">Plan Cache Analysis</a>");
+	    }
+
 	    // Query Hash Analysis
 	    if (queryHashAccumulator != null && !queryHashAccumulator.getQueryHashEntries().isEmpty()) {
 	        writer.println("                    <a href=\"#query-hash\" class=\"nav-link\">Query Hash Analysis</a>");
+	    }
+
+	    // CPU by Query Hash
+	    if (queryHashAccumulator != null && queryHashAccumulator.getQueryHashEntries().values().stream().anyMatch(e -> e.getCpuCount() > 0)) {
+	        writer.println("                    <a href=\"#cpu-by-query-hash\" class=\"nav-link\">CPU by Query Hash</a>");
+	    }
+
+	    // Query Hash Analysis (By Shard)
+	    if (shardQueryHashAccumulators != null && shardQueryHashAccumulators.values().stream()
+	            .anyMatch(acc -> !acc.getQueryHashEntries().isEmpty())) {
+	        writer.println("                    <a href=\"#query-hash-shards\" class=\"nav-link\">Query Hash by Shard</a>");
 	    }
 
 	    // Slow Planning Analysis
@@ -368,6 +406,11 @@ public class HtmlReportGenerator {
 	    // Driver Statistics (last)
 	    if (driverStatsAccumulator != null && driverStatsAccumulator.hasDriverStats()) {
 	        writer.println("                    <a href=\"#driver-stats\" class=\"nav-link\">Driver Statistics</a>");
+	    }
+
+	    // Shard Namespace Matrix
+	    if (enableShardMatrix && shardAccumulators != null && !shardAccumulators.isEmpty()) {
+	        writer.println("                    <a href=\"#shard-ns-matrix\" class=\"nav-link\">Shard Matrix</a>");
 	    }
 
 	    writer.println("                </div>");
@@ -875,11 +918,216 @@ public class HtmlReportGenerator {
 	    writer.println("        </div>");
 	}
 	
-	private static void writeQueryHashTableWithShards(PrintWriter writer, 
+	private static void writeQueryHashTableWithShards(PrintWriter writer,
 	        Map<ShardInfo, QueryHashAccumulator> shardQueryHashAccumulators, boolean redactQueries) {
-	    // For now, just write a placeholder
-	    writer.println("        <h2>Query Patterns (By Shard)</h2>");
-	    writer.println("        <p>Query patterns analysis by shard would appear here.</p>");
+
+	    writer.println("        <h2 id=\"query-hash-shards\">Query Hash Analysis (By Shard)</h2>");
+
+	    List<AbstractMap.SimpleEntry<ShardInfo, QueryHashAccumulatorEntry>> allEntries = new ArrayList<>();
+	    for (Map.Entry<ShardInfo, QueryHashAccumulator> shardEntry : shardQueryHashAccumulators.entrySet()) {
+	        for (QueryHashAccumulatorEntry entry : shardEntry.getValue().getQueryHashEntries().values()) {
+	            allEntries.add(new AbstractMap.SimpleEntry<>(shardEntry.getKey(), entry));
+	        }
+	    }
+
+	    if (allEntries.isEmpty()) {
+	        writer.println("        <p>No query hash entries found.</p>");
+	        return;
+	    }
+
+	    long totalQueries = allEntries.stream().mapToLong(e -> e.getValue().getCount()).sum();
+	    long uniqueQueryHashes = allEntries.stream().map(e -> e.getValue().getKey().getQueryHash()).distinct().count();
+
+	    writer.println("        <div class=\"summary\">");
+	    writer.println("            <h3>Query Hash Summary (All Shards)</h3>");
+	    writer.println("            <div class=\"summary-grid\">");
+	    writer.println("                <div class=\"summary-item\">");
+	    writer.println("                    <div class=\"summary-label\">Total Queries</div>");
+	    writer.println(
+	            "                    <div class=\"summary-value\">" + NUMBER_FORMAT.format(totalQueries) + "</div>");
+	    writer.println("                </div>");
+	    writer.println("                <div class=\"summary-item\">");
+	    writer.println("                    <div class=\"summary-label\">Unique Query Hashes</div>");
+	    writer.println("                    <div class=\"summary-value\">" + NUMBER_FORMAT.format(uniqueQueryHashes)
+	            + "</div>");
+	    writer.println("                </div>");
+	    writer.println("                <div class=\"summary-item\">");
+	    writer.println("                    <div class=\"summary-label\">Shards Tracked</div>");
+	    writer.println("                    <div class=\"summary-value\">" + NUMBER_FORMAT.format(shardQueryHashAccumulators.size())
+	            + "</div>");
+	    writer.println("                </div>");
+	    writer.println("            </div>");
+	    writer.println("        </div>");
+
+	    // Quick per-shard comparison so outliers (e.g. one shard with elevated scan-and-order) jump out
+	    writer.println("        <div class=\"summary\">");
+	    writer.println("            <h3>Scan &amp; Order by Shard</h3>");
+	    writer.println("            <div class=\"summary-grid\">");
+	    shardQueryHashAccumulators.entrySet().stream()
+	            .sorted(Comparator.comparing(e -> e.getKey().getDisplayName()))
+	            .forEach(shardEntry -> {
+	                var shardQueries = shardEntry.getValue().getQueryHashEntries().values();
+	                long shardTotal = shardQueries.stream().mapToLong(QueryHashAccumulatorEntry::getCount).sum();
+	                long shardScanOrder = shardQueries.stream().mapToLong(QueryHashAccumulatorEntry::getScanAndOrderCount).sum();
+	                double pct = shardTotal > 0 ? (shardScanOrder * 100.0) / shardTotal : 0.0;
+	                writer.println("                <div class=\"summary-item\">");
+	                writer.println("                    <div class=\"summary-label\">" + escapeHtml(shardEntry.getKey().getDisplayName()) + "</div>");
+	                writer.println("                    <div class=\"summary-value\">" + String.format("%.1f%%", pct) + " ("
+	                        + NUMBER_FORMAT.format(shardScanOrder) + "/" + NUMBER_FORMAT.format(shardTotal) + ")</div>");
+	                writer.println("                </div>");
+	            });
+	    writer.println("            </div>");
+	    writer.println("        </div>");
+
+	    writer.println("        <div class=\"table-container\">");
+	    writer.println("            <div class=\"controls\">");
+	    writer.println(
+	            "                <input type=\"text\" id=\"queryHashShardsFilter\" class=\"filter-input\" placeholder=\"Filter by shard, query hash, namespace, etc...\">");
+	    writer.println(
+	            "                <button class=\"clear-btn\" onclick=\"clearFilter('queryHashShardsFilter', 'queryHashShardsTable')\">Clear Filter</button>");
+	    writer.println(
+	            "                <button class=\"expand-btn\" onclick=\"expandAllAccordions('queryHashShardsTable')\">Expand All</button>");
+	    writer.println(
+	            "                <button class=\"collapse-btn\" onclick=\"collapseAllAccordions('queryHashShardsTable')\">Collapse All</button>");
+	    writer.println(
+	            "                <button class=\"manage-cols-btn\" onclick=\"openColumnModal('queryHashShardsTable')\">Manage Columns</button>");
+	    writer.println("            </div>");
+	    writer.println("            <table id=\"queryHashShardsTable\">");
+	    writer.println("                <thead>");
+	    writer.println("                    <tr>");
+	    writer.println("                        " + generateTableHeader("queryHashShardsTable", 0, "Shard", "string"));
+	    writer.println("                        " + generateTableHeader("queryHashShardsTable", 1, "Query Hash", "string"));
+	    writer.println("                        " + generateTableHeader("queryHashShardsTable", 2, "Namespace", "string"));
+	    writer.println("                        " + generateTableHeader("queryHashShardsTable", 3, "Operation", "string"));
+	    writer.println("                        " + generateTableHeader("queryHashShardsTable", 4, "Count", "number"));
+	    writer.println("                        " + generateTableHeader("queryHashShardsTable", 5, "Min (ms)", "number"));
+	    writer.println("                        " + generateTableHeader("queryHashShardsTable", 6, "Max (ms)", "number"));
+	    writer.println("                        " + generateTableHeader("queryHashShardsTable", 7, "Avg (ms)", "number"));
+	    writer.println("                        " + generateTableHeader("queryHashShardsTable", 8, "P95 (ms)", "number"));
+	    writer.println("                        " + generateTableHeader("queryHashShardsTable", 9, "Total (sec)", "number"));
+	    writer.println("                        " + generateTableHeader("queryHashShardsTable", 10, "Avg Keys Ex", "number"));
+	    writer.println("                        " + generateTableHeader("queryHashShardsTable", 11, "Avg Docs Ex", "number"));
+	    writer.println("                        " + generateTableHeader("queryHashShardsTable", 12, "Avg Return", "number"));
+	    writer.println("                        " + generateTableHeader("queryHashShardsTable", 13, "Ex/Ret Ratio", "number"));
+	    writer.println("                        " + generateTableHeader("queryHashShardsTable", 14, "Plan Summary", "string"));
+	    writer.println("                        " + generateTableHeader("queryHashShardsTable", 15, "Avg Plan (ms)", "number"));
+	    writer.println("                        " + generateTableHeader("queryHashShardsTable", 16, "Replan %", "number"));
+	    writer.println("                        " + generateTableHeader("queryHashShardsTable", 17, "Scan&Order %", "number"));
+	    writer.println("                    </tr>");
+	    writer.println("                </thead>");
+	    writer.println("                <tbody>");
+
+	    allEntries.stream()
+	            .sorted(Comparator.comparingLong((AbstractMap.SimpleEntry<ShardInfo, QueryHashAccumulatorEntry> e) -> e.getValue().getCount()).reversed())
+	            .forEach(shardAndEntry -> {
+	                ShardInfo shard = shardAndEntry.getKey();
+	                QueryHashAccumulatorEntry entry = shardAndEntry.getValue();
+	                QueryHashKey key = entry.getKey();
+	                String rowId = "qhs-" + shard.getDisplayName() + "-" + Math.abs(key.hashCode());
+
+	                String rowClass = "accordion-row";
+	                if (entry.getScanAndOrderPercentage() > 0) {
+	                    rowClass += " scan-and-order";
+	                }
+
+	                writer.println("                    <tr class=\"" + rowClass + "\" onclick=\"toggleAccordion('" + rowId + "')\">");
+	                writer.println("                        <td><span class=\"accordion-toggle\"></span>" + escapeHtml(shard.getDisplayName()) + "</td>");
+	                writer.println(
+	                        "                        <td class=\"truncated\" title=\"" + escapeHtml(key.getQueryHash())
+	                                + "\">" + escapeHtml(truncate(key.getQueryHash(), 12))
+	                                + "</td>");
+	                writer.println("                        <td class=\"truncated\" title=\""
+	                        + escapeHtml(key.getNamespace().toString()) + "\">"
+	                        + escapeHtml(truncate(key.getNamespace().toString(), 40)) + "</td>");
+	                writer.println("                        <td>" + escapeHtml(key.getOperation()) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(entry.getCount()) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(entry.getMin()) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(entry.getMax()) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(entry.getAvg()) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(Math.round(entry.getPercentile95())) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format((entry.getCount() * entry.getAvg()) / 1000) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(entry.getAvgKeysExamined()) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(entry.getAvgDocsExamined()) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(entry.getAvgReturned()) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(entry.getScannedReturnRatio()) + "</td>");
+	                String planSummary = entry.getPlanSummary();
+	                String compressedPlanSummary = compressPlanSummary(planSummary);
+	                writer.println("                        <td class=\"wrapped\" title=\""
+	                        + escapeHtml(planSummary) + "\">" + escapeHtml(compressedPlanSummary) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + NUMBER_FORMAT.format(entry.getAvgPlanningTimeMs()) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + String.format("%.1f", entry.getReplannedPercentage()) + "</td>");
+	                writer.println("                        <td class=\"number\">"
+	                        + String.format("%.1f", entry.getScanAndOrderPercentage()) + "</td>");
+	                writer.println("                    </tr>");
+
+	                // Add accordion content row for sample log message
+	                if (entry.getSampleLogMessage() != null) {
+	                    String processedLogMessage = LogRedactionUtil.processLogMessage(entry.getSampleLogMessage(), redactQueries);
+	                    String enhancedLogMessage = LogRedactionUtil.enhanceLogMessageForHtml(processedLogMessage);
+	                    enhancedLogMessage = escapeHtml(enhancedLogMessage);
+	                    boolean isTruncated = LogRedactionUtil.isLogMessageTruncated(entry.getSampleLogMessage());
+	                    String cssClass = isTruncated ? "log-sample truncated-query" : "log-sample";
+	                    writer.println("                    <tr id=\"" + rowId + "\" class=\"accordion-content\">");
+	                    writer.println("                        <td colspan=\"18\">");
+	                    writer.println("                            <div class=\"" + cssClass + "\">");
+	                    if (isTruncated) {
+	                        writer.println("                                <div class=\"truncated-warning\">⚠ Query was truncated in MongoDB logs</div>");
+	                    }
+	                    writer.println("                                <strong>Query:</strong><br>");
+	                    writer.println("                                " + escapeHtml(entry.getSanitizedQuery()));
+	                    writer.println("                                <br><br>");
+	                    String contentId = "log-content-" + rowId;
+	                    String buttonId = "btn-" + rowId;
+	                    String formattedDuration = LogRedactionUtil.extractFormattedDuration(entry.getSampleLogMessage());
+	                    String formattedPlanningTime = LogRedactionUtil.extractFormattedPlanningTime(entry.getSampleLogMessage());
+	                    String formattedStorageTime = LogRedactionUtil.extractFormattedStorageTime(entry.getSampleLogMessage());
+	                    String formattedBytesRead = LogRedactionUtil.extractFormattedBytesRead(entry.getSampleLogMessage());
+
+	                    StringBuilder headerText = new StringBuilder();
+	                    if (!formattedDuration.isEmpty()) {
+	                        headerText.append(" (total: ").append(formattedDuration);
+	                        if (!formattedPlanningTime.isEmpty()) {
+	                            headerText.append(", planning: ").append(formattedPlanningTime);
+	                        }
+	                        if (!formattedStorageTime.isEmpty()) {
+	                            headerText.append(", storage: ").append(formattedStorageTime);
+	                        }
+	                    }
+	                    if (!formattedBytesRead.isEmpty()) {
+	                        if (headerText.length() > 0) {
+	                            headerText.append(", ").append(formattedBytesRead);
+	                        } else {
+	                            headerText.append(" (").append(formattedBytesRead);
+	                        }
+	                    }
+	                    if (headerText.length() > 0) {
+	                        headerText.append(")");
+	                    }
+
+	                    writer.println("                                <strong>Slowest Query Log Message" + headerText.toString() + ":</strong>");
+	                    writer.println("                                <button class=\"pretty-print-btn\" id=\"" + buttonId + "\" onclick=\"togglePrettyPrint('" + buttonId + "', '" + contentId + "')\">Pretty</button><br>");
+	                    writer.println("                                <div class=\"json-content\" id=\"" + contentId + "\">" + enhancedLogMessage + "</div>");
+	                    writer.println("                            </div>");
+	                    writer.println("                        </td>");
+	                    writer.println("                    </tr>");
+	                }
+	            });
+
+	    writer.println("                </tbody>");
+	    writer.println("            </table>");
+	    writer.println("        </div>");
 	}
 	
 	private static void writeTransactionTableWithShards(PrintWriter writer, 
@@ -926,7 +1174,12 @@ public class HtmlReportGenerator {
 
 		// Use MVC pattern: Convert to model objects via service
 		java.util.List<MainOperationEntry> operations = MainOperationService.getMainOperationEntries(accumulator);
-		
+
+		// Calculate appropriate unit scale for Total Reslen based on average value
+		double avgTotalReslen = operations.isEmpty() ? 0 :
+			operations.stream().mapToLong(MainOperationEntry::getTotalReslen).average().orElse(0);
+		MainOperationEntry.ByteUnit totalReslenUnit = MainOperationEntry.determineByteUnit(avgTotalReslen);
+
 		// Calculate summary statistics using model objects
 		long totalOperations = operations.stream().mapToLong(MainOperationEntry::getCount).sum();
 		long totalTimeMs = operations.stream().mapToLong(op -> op.getCount() * op.getAvgMs()).sum();
@@ -994,6 +1247,7 @@ public class HtmlReportGenerator {
 		writer.println("                        " + generateTableHeader("mainOpsTable", 17, "Avg Write", "number"));
 		writer.println("                        " + generateTableHeader("mainOpsTable", 18, "Max Write", "number"));
 		writer.println("                        " + generateTableHeader("mainOpsTable", 19, "Avg Write Conflicts", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 20, "Total Reslen (" + totalReslenUnit.getSuffix() + ")", "number"));
 		writer.println("                    </tr>");
 		writer.println("                </thead>");
 		writer.println("                <tbody>");
@@ -1030,6 +1284,7 @@ public class HtmlReportGenerator {
 			writer.print("                        ");
 			writer.println(op.getFormattedMaxBytesWrittenCell());
 			writer.println("                        <td class=\"number\">" + op.getFormattedAvgWriteConflicts() + "</td>");
+			writer.println("                        <td class=\"bytes-cell\" data-sort-value=\"" + op.getTotalReslen() + "\">" + MainOperationEntry.formatBytesWithUnit(op.getTotalReslen(), totalReslenUnit) + "</td>");
 			writer.println("                    </tr>");
 			
 			// Add accordion content row for sample log message
@@ -1037,11 +1292,10 @@ public class HtmlReportGenerator {
 				String processedLogMessage = LogRedactionUtil.processLogMessage(op.getSampleLogMessage(), redactQueries);
 				String enhancedLogMessage = LogRedactionUtil.enhanceLogMessageForHtml(processedLogMessage);
 				enhancedLogMessage = escapeHtml(enhancedLogMessage);
-				String querySource = LogRedactionUtil.detectQuerySource(op.getSampleLogMessage());
 				boolean isTruncated = LogRedactionUtil.isLogMessageTruncated(op.getSampleLogMessage());
 				String logCssClass = isTruncated ? "log-sample truncated-query" : "log-sample";
 				writer.println("                    <tr id=\"" + rowId + "\" class=\"accordion-content\">");
-				writer.println("                        <td colspan=\"20\">");
+				writer.println("                        <td colspan=\"21\">");
 				writer.println("                            <div class=\"" + logCssClass + "\">");
 				if (isTruncated) {
 					writer.println("                                <div class=\"truncated-warning\">⚠ Query was truncated in MongoDB logs</div>");
@@ -1074,7 +1328,7 @@ public class HtmlReportGenerator {
 					headerText.append(")");
 				}
 				
-				writer.println("                                <strong>Slowest Query Log Message" + querySource + headerText.toString() + ":</strong>");
+				writer.println("                                <strong>Slowest Query Log Message" + headerText.toString() + ":</strong>");
 				writer.println("                                <button class=\"pretty-print-btn\" id=\"" + buttonId + "\" onclick=\"togglePrettyPrint('" + buttonId + "', '" + contentId + "')\">Pretty</button><br>");
 				writer.println("                                <div class=\"json-content\" id=\"" + contentId + "\">" + enhancedLogMessage + "</div>");
 				writer.println("                            </div>");
@@ -1242,6 +1496,7 @@ public class HtmlReportGenerator {
 		writer.println("                        " + generateTableHeader("queryHashTable", 21, "Plan Summary", "string"));
 		writer.println("                        " + generateTableHeader("queryHashTable", 22, "Avg Plan (ms)", "number"));
 		writer.println("                        " + generateTableHeader("queryHashTable", 23, "Replan %", "number"));
+		writer.println("                        " + generateTableHeader("queryHashTable", 24, "Scan&Order %", "number"));
 		writer.println("                    </tr>");
 		writer.println("                </thead>");
 		writer.println("                <tbody>");
@@ -1251,7 +1506,12 @@ public class HtmlReportGenerator {
 					QueryHashKey key = entry.getKey();
 					String rowId = "qh-" + Math.abs(key.hashCode());
 
-					writer.println("                    <tr class=\"accordion-row\" onclick=\"toggleAccordion('" + rowId + "')\">");
+					String rowClass = "accordion-row";
+					if (entry.getScanAndOrderPercentage() > 0) {
+						rowClass += " scan-and-order";
+					}
+
+					writer.println("                    <tr class=\"" + rowClass + "\" onclick=\"toggleAccordion('" + rowId + "')\">");
 					writer.println(
 							"                        <td class=\"truncated\" title=\"" + escapeHtml(key.getQueryHash())
 									+ "\"><span class=\"accordion-toggle\"></span>" + escapeHtml(truncate(key.getQueryHash(), 12))
@@ -1310,18 +1570,19 @@ public class HtmlReportGenerator {
 							+ NUMBER_FORMAT.format(entry.getAvgPlanningTimeMs()) + "</td>");
 					writer.println("                        <td class=\"number\">"
 							+ String.format("%.1f", entry.getReplannedPercentage()) + "</td>");
+					writer.println("                        <td class=\"number\">"
+							+ String.format("%.1f", entry.getScanAndOrderPercentage()) + "</td>");
 					writer.println("                    </tr>");
-					
+
 					// Add accordion content row for sample log message
 					if (entry.getSampleLogMessage() != null) {
 						String processedLogMessage = LogRedactionUtil.processLogMessage(entry.getSampleLogMessage(), redactQueries);
 						String enhancedLogMessage = LogRedactionUtil.enhanceLogMessageForHtml(processedLogMessage);
 						enhancedLogMessage = escapeHtml(enhancedLogMessage);
-						String querySource = LogRedactionUtil.detectQuerySource(entry.getSampleLogMessage());
 						boolean isTruncated = LogRedactionUtil.isLogMessageTruncated(entry.getSampleLogMessage());
 						String cssClass = isTruncated ? "log-sample truncated-query" : "log-sample";
 						writer.println("                    <tr id=\"" + rowId + "\" class=\"accordion-content\">");
-						writer.println("                        <td colspan=\"23\">");
+						writer.println("                        <td colspan=\"24\">");
 						writer.println("                            <div class=\"" + cssClass + "\">");
 						if (isTruncated) {
 							writer.println("                                <div class=\"truncated-warning\">⚠ Query was truncated in MongoDB logs</div>");
@@ -1357,7 +1618,7 @@ public class HtmlReportGenerator {
 							headerText.append(")");
 						}
 						
-						writer.println("                                <strong>Slowest Query Log Message" + querySource + headerText.toString() + ":</strong>");
+						writer.println("                                <strong>Slowest Query Log Message" + headerText.toString() + ":</strong>");
 						writer.println("                                <button class=\"pretty-print-btn\" id=\"" + buttonId + "\" onclick=\"togglePrettyPrint('" + buttonId + "', '" + contentId + "')\">Pretty</button><br>");
 						writer.println("                                <div class=\"json-content\" id=\"" + contentId + "\">" + enhancedLogMessage + "</div>");
 						writer.println("                            </div>");
@@ -1371,8 +1632,124 @@ public class HtmlReportGenerator {
 		writer.println("        </div>");
 	}
 
+	private static void writeCpuByQueryHashTable(PrintWriter writer, QueryHashAccumulator queryHashAccumulator, boolean redactQueries) {
+		var cpuEntries = queryHashAccumulator.getQueryHashEntries().values().stream()
+				.filter(e -> e.getCpuCount() > 0)
+				.sorted(Comparator.comparingLong(QueryHashAccumulatorEntry::getTotalCpuNanos).reversed())
+				.toList();
+
+		if (cpuEntries.isEmpty()) {
+			return;
+		}
+
+		long totalCpuNanos = cpuEntries.stream().mapToLong(QueryHashAccumulatorEntry::getTotalCpuNanos).sum();
+		long mongodCpuNanos = cpuEntries.stream().mapToLong(QueryHashAccumulatorEntry::getMongodCpuNanos).sum();
+		long mongosDirectCpuNanos = cpuEntries.stream().mapToLong(QueryHashAccumulatorEntry::getMongosDirectCpuNanos).sum();
+
+		writer.println("        <h2 id=\"cpu-by-query-hash\">CPU Usage by Query Hash</h2>");
+		writer.println("        <div class=\"summary\">");
+		writer.println("            <h3>CPU Summary</h3>");
+		writer.println("            <div class=\"summary-grid\">");
+		writer.println("                <div class=\"summary-item\">");
+		writer.println("                    <div class=\"summary-label\">Total CPU</div>");
+		writer.println("                    <div class=\"summary-value\">" + formatNanos(totalCpuNanos) + "</div>");
+		writer.println("                </div>");
+		writer.println("                <div class=\"summary-item\">");
+		writer.println("                    <div class=\"summary-label\">Mongod CPU (via mongos)</div>");
+		writer.println("                    <div class=\"summary-value\">" + formatNanos(mongodCpuNanos) + "</div>");
+		writer.println("                </div>");
+		writer.println("                <div class=\"summary-item\">");
+		writer.println("                    <div class=\"summary-label\">Mongos / Direct CPU</div>");
+		writer.println("                    <div class=\"summary-value\">" + formatNanos(mongosDirectCpuNanos) + "</div>");
+		writer.println("                </div>");
+		writer.println("                <div class=\"summary-item\">");
+		writer.println("                    <div class=\"summary-label\">Query Hashes with CPU Data</div>");
+		writer.println("                    <div class=\"summary-value\">" + NUMBER_FORMAT.format(cpuEntries.size()) + "</div>");
+		writer.println("                </div>");
+		writer.println("            </div>");
+		writer.println("        </div>");
+
+		writer.println("        <div class=\"table-container\">");
+		writer.println("            <div class=\"controls\">");
+		writer.println("                <input type=\"text\" id=\"cpuQueryHashFilter\" class=\"filter-input\" placeholder=\"Filter by query hash, namespace, etc...\">");
+		writer.println("                <button class=\"clear-btn\" onclick=\"clearFilter('cpuQueryHashFilter', 'cpuQueryHashTable')\">Clear Filter</button>");
+		writer.println("                <button class=\"expand-btn\" onclick=\"expandAllAccordions('cpuQueryHashTable')\">Expand All</button>");
+		writer.println("                <button class=\"collapse-btn\" onclick=\"collapseAllAccordions('cpuQueryHashTable')\">Collapse All</button>");
+		writer.println("                <button class=\"manage-cols-btn\" onclick=\"openColumnModal('cpuQueryHashTable')\">Manage Columns</button>");
+		writer.println("            </div>");
+		writer.println("            <table id=\"cpuQueryHashTable\">");
+		writer.println("                <thead>");
+		writer.println("                    <tr>");
+		writer.println("                        " + generateTableHeader("cpuQueryHashTable", 0, "Query Hash", "string"));
+		writer.println("                        " + generateTableHeader("cpuQueryHashTable", 1, "Namespace", "string"));
+		writer.println("                        " + generateTableHeader("cpuQueryHashTable", 2, "Operation", "string"));
+		writer.println("                        " + generateTableHeader("cpuQueryHashTable", 3, "Count", "number"));
+		writer.println("                        " + generateTableHeader("cpuQueryHashTable", 4, "Avg CPU", "number"));
+		writer.println("                        " + generateTableHeader("cpuQueryHashTable", 5, "Max CPU", "number"));
+		writer.println("                        " + generateTableHeader("cpuQueryHashTable", 6, "Total CPU", "number"));
+		writer.println("                        " + generateTableHeader("cpuQueryHashTable", 7, "Mongod CPU", "number"));
+		writer.println("                        " + generateTableHeader("cpuQueryHashTable", 8, "Mongos/Direct CPU", "number"));
+		writer.println("                    </tr>");
+		writer.println("                </thead>");
+		writer.println("                <tbody>");
+
+		for (QueryHashAccumulatorEntry entry : cpuEntries) {
+			QueryHashKey key = entry.getKey();
+			String rowId = "cpu-qh-" + Math.abs(key.hashCode());
+
+			writer.println("                    <tr class=\"accordion-row\" onclick=\"toggleAccordion('" + rowId + "')\">");
+			writer.println("                        <td class=\"truncated\" title=\"" + escapeHtml(key.getQueryHash())
+					+ "\"><span class=\"accordion-toggle\"></span>" + escapeHtml(truncate(key.getQueryHash(), 12)) + "</td>");
+			writer.println("                        <td class=\"truncated\" title=\""
+					+ escapeHtml(key.getNamespace().toString()) + "\">"
+					+ escapeHtml(truncate(key.getNamespace().toString(), 40)) + "</td>");
+			writer.println("                        <td>" + escapeHtml(key.getOperation()) + "</td>");
+			writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(entry.getCount()) + "</td>");
+			writer.print("                        ");
+			writer.println(entry.getCpuAvgCell());
+			writer.print("                        ");
+			writer.println(entry.getCpuMaxCell());
+			writer.print("                        ");
+			writer.println(entry.getCpuTotalCell());
+			writer.print("                        ");
+			writer.println(entry.getMongodCpuCell());
+			writer.print("                        ");
+			writer.println(entry.getMongosDirectCpuCell());
+			writer.println("                    </tr>");
+
+			if (entry.getSampleLogMessage() != null) {
+				String processedLogMessage = LogRedactionUtil.processLogMessage(entry.getSampleLogMessage(), redactQueries);
+				String enhancedLogMessage = LogRedactionUtil.enhanceLogMessageForHtml(processedLogMessage);
+				enhancedLogMessage = escapeHtml(enhancedLogMessage);
+				boolean isTruncated = LogRedactionUtil.isLogMessageTruncated(entry.getSampleLogMessage());
+				String cssClass = isTruncated ? "log-sample truncated-query" : "log-sample";
+				writer.println("                    <tr id=\"" + rowId + "\" class=\"accordion-content\">");
+				writer.println("                        <td colspan=\"9\">");
+				writer.println("                            <div class=\"" + cssClass + "\">");
+				if (isTruncated) {
+					writer.println("                                <div class=\"truncated-warning\">\u26a0 Query was truncated in MongoDB logs</div>");
+				}
+				writer.println("                                <strong>Query:</strong><br>");
+				writer.println("                                " + escapeHtml(entry.getSanitizedQuery()));
+				writer.println("                                <br><br>");
+				String contentId = "log-content-" + rowId;
+				String buttonId = "btn-" + rowId;
+				writer.println("                                <strong>Slowest Query Log Message:</strong>");
+				writer.println("                                <button class=\"pretty-print-btn\" id=\"" + buttonId + "\" onclick=\"togglePrettyPrint('" + buttonId + "', '" + contentId + "')\">Pretty</button><br>");
+				writer.println("                                <div class=\"json-content\" id=\"" + contentId + "\">" + enhancedLogMessage + "</div>");
+				writer.println("                            </div>");
+				writer.println("                        </td>");
+				writer.println("                    </tr>");
+			}
+		}
+
+		writer.println("                </tbody>");
+		writer.println("            </table>");
+		writer.println("        </div>");
+	}
+
 	private static void writeSlowPlanningTable(PrintWriter writer, SlowPlanningAccumulator slowPlanningAccumulator, boolean redactQueries) {
-		if (slowPlanningAccumulator == null || slowPlanningAccumulator.getSize() == 0) {
+	if (slowPlanningAccumulator == null || slowPlanningAccumulator.getSize() == 0) {
 			return;
 		}
 
@@ -1543,6 +1920,7 @@ public class HtmlReportGenerator {
 		long collScanQueries = filteredEntries.stream().filter(entry -> entry.isCollectionScan())
 				.mapToLong(PlanCacheAccumulatorEntry::getCount).sum();
 		long totalReplanned = filteredEntries.stream().mapToLong(PlanCacheAccumulatorEntry::getReplannedCount).sum();
+		long totalScanAndOrder = filteredEntries.stream().mapToLong(PlanCacheAccumulatorEntry::getScanAndOrderCount).sum();
 		long uniquePlanKeys = filteredEntries.size();
 
 		writer.println("        <div class=\"summary\">");
@@ -1568,9 +1946,14 @@ public class HtmlReportGenerator {
 		writer.println("                    <div class=\"summary-value\">" + NUMBER_FORMAT.format(totalReplanned) + " ("
 				+ String.format("%.1f%%", (totalReplanned * 100.0) / Math.max(totalQueries, 1)) + ")</div>");
 		writer.println("                </div>");
+		writer.println("                <div class=\"summary-item\">");
+		writer.println("                    <div class=\"summary-label\">Scan and Order (Unindexed Sort)</div>");
+		writer.println("                    <div class=\"summary-value\">" + NUMBER_FORMAT.format(totalScanAndOrder) + " ("
+				+ String.format("%.1f%%", (totalScanAndOrder * 100.0) / Math.max(totalQueries, 1)) + ")</div>");
+		writer.println("                </div>");
 		writer.println("            </div>");
 		writer.println("        </div>");
-		
+
 		// Add informational note if there are entries without plan summaries
 		if (!entriesWithoutPlanSummary.isEmpty()) {
 			long entriesWithoutPlanSummaryCount = entriesWithoutPlanSummary.stream().mapToLong(PlanCacheAccumulatorEntry::getCount).sum();
@@ -1622,6 +2005,8 @@ public class HtmlReportGenerator {
 				"                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 11, 'number')\">Avg Plan (ms)</th>");
 		writer.println(
 				"                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 12, 'number')\">Replan %</th>");
+		writer.println(
+				"                        <th class=\"sortable\" onclick=\"sortTable('planCacheTable', 13, 'number')\">Scan&Order %</th>");
 		writer.println("                    </tr>");
 		writer.println("                </thead>");
 		writer.println("                <tbody>");
@@ -1634,6 +2019,9 @@ public class HtmlReportGenerator {
 					String rowClass = "accordion-row";
 					if (key.getPlanSummary() != null && key.getPlanSummary().contains("COLLSCAN")) {
 						rowClass += " collscan";
+					}
+					if (entry.getScanAndOrderPercentage() > 0) {
+						rowClass += " scan-and-order";
 					}
 
 					writer.println("                    <tr class=\"" + rowClass + "\" onclick=\"toggleAccordion('" + rowId + "')\">");
@@ -1668,18 +2056,19 @@ public class HtmlReportGenerator {
 							+ NUMBER_FORMAT.format(entry.getAvgPlanningTimeMs()) + "</td>");
 					writer.println("                        <td class=\"number\">"
 							+ String.format("%.1f%%", entry.getReplannedPercentage()) + "</td>");
+					writer.println("                        <td class=\"number\">"
+							+ String.format("%.1f%%", entry.getScanAndOrderPercentage()) + "</td>");
 					writer.println("                    </tr>");
-					
+
 					// Add accordion content row for sample log message
 					if (entry.getSampleLogMessage() != null) {
 						String processedLogMessage = LogRedactionUtil.processLogMessage(entry.getSampleLogMessage(), redactQueries);
 						String enhancedLogMessage = LogRedactionUtil.enhanceLogMessageForHtml(processedLogMessage);
 						enhancedLogMessage = escapeHtml(enhancedLogMessage);
-						String querySource = LogRedactionUtil.detectQuerySource(entry.getSampleLogMessage());
 						boolean isTruncated = LogRedactionUtil.isLogMessageTruncated(entry.getSampleLogMessage());
 						String cssClass = isTruncated ? "log-sample truncated-query" : "log-sample";
 						writer.println("                    <tr id=\"" + rowId + "\" class=\"accordion-content\">");
-						writer.println("                        <td colspan=\"18\">");
+						writer.println("                        <td colspan=\"19\">");
 						writer.println("                            <div class=\"" + cssClass + "\">");
 						if (isTruncated) {
 							writer.println("                                <div class=\"truncated-warning\">⚠ Query was truncated in MongoDB logs</div>");
@@ -1712,7 +2101,7 @@ public class HtmlReportGenerator {
 							headerText.append(")");
 						}
 						
-						writer.println("                                <strong>Slowest Query Log Message" + querySource + headerText.toString() + ":</strong>");
+						writer.println("                                <strong>Slowest Query Log Message" + headerText.toString() + ":</strong>");
 						writer.println("                                <button class=\"pretty-print-btn\" id=\"" + buttonId + "\" onclick=\"togglePrettyPrint('" + buttonId + "', '" + contentId + "')\">Pretty</button><br>");
 						writer.println("                                <div class=\"json-content\" id=\"" + contentId + "\">" + enhancedLogMessage + "</div>");
 						writer.println("                            </div>");
@@ -2394,10 +2783,20 @@ public class HtmlReportGenerator {
 	    writer.println("                    input.addEventListener('input', () => filterTable('planCacheFilter', 'planCacheTable'));");
 	    writer.println("                } else if (tableId === 'queryHashTable') {");
 	    writer.println("                    input.addEventListener('input', () => filterTable('queryHashFilter', 'queryHashTable'));");
+	    writer.println("                } else if (tableId === 'queryHashShardsTable') {");
+	    writer.println("                    input.addEventListener('input', () => filterTable('queryHashShardsFilter', 'queryHashShardsTable'));");
+	    writer.println("                } else if (tableId === 'cpuQueryHashTable') {");
+	    writer.println("                    input.addEventListener('input', () => filterTable('cpuQueryHashFilter', 'cpuQueryHashTable'));");
 	    writer.println("                } else if (tableId === 'errorCodesTable') {");
 	    writer.println("                    input.addEventListener('input', () => filterTable('errorCodesFilter', 'errorCodesTable'));");
 	    writer.println("                } else if (tableId === 'transactionTable') {");
 	    writer.println("                    input.addEventListener('input', () => filterTable('transactionFilter', 'transactionTable'));");
+	    writer.println("                } else if (tableId === 'indexStatsTable') {");
+	    writer.println("                    input.addEventListener('input', () => filterTable('indexStatsFilter', 'indexStatsTable'));");
+	    writer.println("                } else if (tableId === 'slowPlanningTable') {");
+	    writer.println("                    input.addEventListener('input', () => filterTable('slowPlanningFilter', 'slowPlanningTable'));");
+	    writer.println("                } else if (tableId === 'appNameStatsTable') {");
+	    writer.println("                    input.addEventListener('input', () => filterTable('appNameStatsFilter', 'appNameStatsTable'));");
 	    writer.println("                } else if (tableId === 'driverStatsTable') {");
 	    writer.println("                    input.addEventListener('input', () => filterTable('driverStatsFilter', 'driverStatsTable'));");
 	    writer.println("                    // Also add listener for column filter dropdown");
@@ -2772,6 +3171,17 @@ public class HtmlReportGenerator {
 	}
 	
 	/**
+	 * Format nanoseconds to human-readable format (ns → µs → ms → s)
+	 */
+	private static String formatNanos(long nanos) {
+	    if (nanos == 0) return "0";
+	    if (nanos < 1_000) return nanos + "ns";
+	    if (nanos < 1_000_000) return String.format("%.1f\u00b5s", nanos / 1_000.0);
+	    if (nanos < 1_000_000_000) return String.format("%.1fms", nanos / 1_000_000.0);
+	    return String.format("%.2fs", nanos / 1_000_000_000.0);
+	}
+
+	/**
 	 * Format duration from milliseconds to human-readable format
 	 * (Same as in LogRedactionUtil but included here to avoid dependency)
 	 */
@@ -2795,5 +3205,98 @@ public class HtmlReportGenerator {
 	        long minutes = (durationMs % 3600000) / 60000;
 	        return String.format("%dd %dh %dm", days, hours, minutes);
 	    }
+	}
+
+	private static void writeShardNamespaceMatrix(PrintWriter writer,
+	        Map<ShardInfo, Accumulator> shardAccumulators) {
+
+	    // Build matrix: namespace -> (shardInfo -> [count, totalReturned])
+	    java.util.Map<String, java.util.Map<ShardInfo, long[]>> matrix = new java.util.HashMap<>();
+
+	    for (Map.Entry<ShardInfo, Accumulator> shardEntry : shardAccumulators.entrySet()) {
+	        ShardInfo shard = shardEntry.getKey();
+	        for (LogLineAccumulator acc : shardEntry.getValue().getAccumulators().values()) {
+	            String ns = acc.getNamespace();
+	            matrix.computeIfAbsent(ns, k -> new java.util.HashMap<>())
+	                  .merge(shard, new long[]{acc.getCount(), acc.getTotalReturned()},
+	                         (a, b) -> new long[]{a[0] + b[0], a[1] + b[1]});
+	        }
+	    }
+
+	    // Sorted shard list for stable column ordering
+	    java.util.List<ShardInfo> sortedShards = shardAccumulators.keySet().stream()
+	        .sorted(Comparator.comparing(ShardInfo::getDisplayName))
+	        .collect(Collectors.toList());
+
+	    // Sort namespaces by total count descending
+	    java.util.List<String> sortedNamespaces = matrix.entrySet().stream()
+	        .sorted(Comparator.comparingLong((Map.Entry<String, java.util.Map<ShardInfo, long[]>> e) ->
+	            e.getValue().values().stream().mapToLong(v -> v[0]).sum()).reversed())
+	        .map(Map.Entry::getKey)
+	        .collect(Collectors.toList());
+
+	    writer.println("        <h2 id=\"shard-ns-matrix\">Namespace x Shard Matrix</h2>");
+
+	    String tableId = "shard-ns-matrix-table";
+	    writer.println("        <div style=\"overflow-x:auto;\">");
+	    writer.println("        <table class=\"sortable\" id=\"" + tableId + "\">");
+
+	    // Single header row — keeps column indices aligned with row.cells[] for sortTable()
+	    writer.print("            <thead><tr>");
+	    writer.print("<th class=\"sortable\" onclick=\"sortTable('" + tableId + "', 0, 'string')\">Namespace</th>");
+	    writer.print("<th class=\"number sortable\" onclick=\"sortTable('" + tableId + "', 1, 'number')\">Imbalance</th>");
+	    int col = 2;
+	    for (ShardInfo shard : sortedShards) {
+	        String name = shard.getDisplayName();
+	        writer.print("<th class=\"number sortable\" onclick=\"sortTable('" + tableId + "', " + col + ", 'number')\" style=\"background:#e8eaf6;\">" + name + " Count</th>");
+	        col++;
+	        writer.print("<th class=\"number sortable\" onclick=\"sortTable('" + tableId + "', " + col + ", 'number')\" style=\"background:#e8eaf6;\">" + name + " Returned</th>");
+	        col++;
+	    }
+	    writer.print("<th class=\"number sortable\" onclick=\"sortTable('" + tableId + "', " + col + ", 'number')\" style=\"background:#c8e6c9;\">Total Count</th>");
+	    col++;
+	    writer.println("<th class=\"number sortable\" onclick=\"sortTable('" + tableId + "', " + col + ", 'number')\" style=\"background:#c8e6c9;\">Total Returned</th></tr></thead>");
+
+	    writer.println("            <tbody>");
+	    for (String ns : sortedNamespaces) {
+	        java.util.Map<ShardInfo, long[]> shardStats = matrix.get(ns);
+	        long totalCount = 0;
+	        long totalReturned = 0;
+
+	        // Compute max/min count ratio across shards that have data for this namespace
+	        long minCount = Long.MAX_VALUE;
+	        long maxCount = Long.MIN_VALUE;
+	        int shardsWithData = 0;
+	        for (ShardInfo shard : sortedShards) {
+	            long c = shardStats.getOrDefault(shard, new long[]{0, 0})[0];
+	            if (c > 0) {
+	                shardsWithData++;
+	                if (c < minCount) minCount = c;
+	                if (c > maxCount) maxCount = c;
+	            }
+	        }
+	        double ratio = shardsWithData >= 2 ? (double) maxCount / minCount : 0.0;
+	        boolean imbalanced = ratio >= 5.0;
+	        String rowClass = imbalanced ? " class=\"collscan\"" : "";
+
+	        String imbalanceDisplay = shardsWithData >= 2
+	            ? String.format("%.1fx", ratio)
+	            : "&mdash;";
+	        // Use 0 as sort value when no ratio (single shard), so they sort last when descending
+	        double imbalanceSortVal = shardsWithData >= 2 ? ratio : 0.0;
+
+	        writer.print("            <tr" + rowClass + "><td>" + escapeHtml(ns) + "</td>");
+	        writer.print("<td class=\"number\" data-sort-value=\"" + imbalanceSortVal + "\">" + imbalanceDisplay + "</td>");
+	        for (ShardInfo shard : sortedShards) {
+	            long[] vals = shardStats.getOrDefault(shard, new long[]{0, 0});
+	            totalCount += vals[0];
+	            totalReturned += vals[1];
+	            writer.print("<td class=\"number\" data-sort-value=\"" + vals[0] + "\">" + NUMBER_FORMAT.format(vals[0]) + "</td>");
+	            writer.print("<td class=\"number\" data-sort-value=\"" + vals[1] + "\">" + NUMBER_FORMAT.format(vals[1]) + "</td>");
+	        }
+	        writer.print("<td class=\"number\" data-sort-value=\"" + totalCount + "\" style=\"background:#f1f8e9;font-weight:bold;\">" + NUMBER_FORMAT.format(totalCount) + "</td>");
+	        writer.println("<td class=\"number\" data-sort-value=\"" + totalReturned + "\" style=\"background:#f1f8e9;font-weight:bold;\">" + NUMBER_FORMAT.format(totalReturned) + "</td></tr>");
+	    }
+	    writer.println("            </tbody></table></div>");
 	}
 }

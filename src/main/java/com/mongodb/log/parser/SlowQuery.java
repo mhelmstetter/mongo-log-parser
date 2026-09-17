@@ -11,6 +11,7 @@ public class SlowQuery {
 	public Long reslen = null;
 	public Long bytesRead = null;
 	public Long bytesWritten = null;
+	public String timestamp = null;
 	public String queryHash = null;
 	public String appName = null;
 	public String remote = null;
@@ -20,10 +21,13 @@ public class SlowQuery {
 	public Boolean replanned = null;
 	public String replanReason = null;
 	public Boolean fromMultiPlanner = null;
+	public Boolean hasSortStage = null;
 	public String readPreference = null;
 	public String readPreferenceTags = null;
 	public String sanitizedFilter = null;
 	public Long nShards = null;
 	public Long writeConflicts = null;
 	public Boolean isChangeStream = null;
+	public Long cpuNanos = null;
+	public Boolean fromMongos = null;
 }

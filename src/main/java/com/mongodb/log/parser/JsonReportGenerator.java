@@ -138,7 +138,6 @@ public class JsonReportGenerator {
                         String processedMessage = LogRedactionUtil.processLogMessage(acc.getSampleLogMessage(), redactQueries);
                         op.put("sampleLogMessage", processedMessage);
                         op.put("isTruncated", LogRedactionUtil.isLogMessageTruncated(acc.getSampleLogMessage()));
-                        op.put("querySource", LogRedactionUtil.detectQuerySource(acc.getSampleLogMessage()));
                     }
                     
                     operations.add(op);
@@ -240,8 +239,12 @@ public class JsonReportGenerator {
         // Summary  
         ObjectNode summary = mapper.createObjectNode();
         long totalQueries = queryHashAccumulator.getQueryHashEntries().values().stream().mapToLong(entry -> entry.getCount()).sum();
+        long totalScanAndOrder = queryHashAccumulator.getQueryHashEntries().values().stream().mapToLong(entry -> entry.getScanAndOrderCount()).sum();
+        double scanAndOrderPercentage = totalQueries > 0 ? (totalScanAndOrder * 100.0) / totalQueries : 0.0;
         summary.put("totalQueries", totalQueries);
         summary.put("uniqueQueryHashes", queryHashAccumulator.getQueryHashEntries().size());
+        summary.put("scanAndOrderQueries", totalScanAndOrder);
+        summary.put("scanAndOrderPercentage", Math.round(scanAndOrderPercentage * 10.0) / 10.0);
         queryHash.set("summary", summary);
 
         // Individual query hashes
@@ -274,6 +277,7 @@ public class JsonReportGenerator {
                     query.put("planSummary", entry.getPlanSummary());
                     query.put("avgPlanningTimeMs", entry.getAvgPlanningTimeMs());
                     query.put("replannedPercentage", entry.getReplannedPercentage());
+                    query.put("scanAndOrderPercentage", entry.getScanAndOrderPercentage());
                     query.put("sanitizedQuery", entry.getSanitizedQuery());
                     
                     if (entry.getSampleLogMessage() != null) {

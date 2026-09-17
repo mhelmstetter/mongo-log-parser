@@ -370,6 +370,16 @@ public class TwoPassDriverStatsAccumulator {
         return driverStatsEntries;
     }
     
+    private volatile boolean isMongodLog = false;
+
+    public void setIsMongodLog(boolean value) {
+        isMongodLog = value;
+    }
+
+    public boolean isMongodLog() {
+        return isMongodLog;
+    }
+
     public boolean hasDriverStats() {
         return !driverStatsEntries.isEmpty();
     }

@@ -23,8 +23,8 @@ print_color() {
 }
 
 print_color $BLUE "┌─────────────────────────────────────────────┐"
-print_color $BLUE "│        Mongo Log Parser Installer          │"
-print_color $BLUE "│     MongoDB Log Analysis & Reporting       │"
+print_color $BLUE "│        Mongo Log Parser Installer           │"
+print_color $BLUE "│     MongoDB Log Analysis & Reporting        │"
 print_color $BLUE "└─────────────────────────────────────────────┘"
 echo
 

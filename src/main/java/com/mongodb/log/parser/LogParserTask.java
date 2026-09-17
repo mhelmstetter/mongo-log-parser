@@ -41,6 +41,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 	private final AtomicLong totalFilteredByNamespace;
 	private final boolean redactQueries;
 	private final LogParser logParser;
+	private final LogQueryWriter logQueryWriter;
 
 	public LogParserTask(List<String> linesChunk, Accumulator accumulator,
 			PlanCacheAccumulator planCacheAccumulator, QueryHashAccumulator queryHashAccumulator,
@@ -52,7 +53,8 @@ class LogParserTask implements Callable<ProcessingStats> {
 			AppNameConnectionStatsAccumulator appNameConnectionStatsAccumulator,
 			String currentFilename,
 			Map<String, AtomicLong> operationTypeStats, boolean debug,
-			Set<String> namespaceFilters, AtomicLong totalFilteredByNamespace, boolean redactQueries, LogParser logParser) {
+			Set<String> namespaceFilters, AtomicLong totalFilteredByNamespace, boolean redactQueries, LogParser logParser,
+			LogQueryWriter logQueryWriter) {
 		this.linesChunk = linesChunk;
 		this.accumulator = accumulator;
 		this.planCacheAccumulator = planCacheAccumulator;
@@ -70,6 +72,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 		this.totalFilteredByNamespace = totalFilteredByNamespace;
 		this.redactQueries = redactQueries;
 		this.logParser = logParser;
+		this.logQueryWriter = logQueryWriter;
 	}
 
 	@Override
@@ -87,6 +90,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 
 			JSONObject jo = null;
 			String ctx = null; // Declare outside try block for appName tracking
+			String lineTimestamp = null;
 
 			try {
 				jo = new JSONObject(currentLine);
@@ -97,13 +101,16 @@ class LogParserTask implements Callable<ProcessingStats> {
 				}
 
 				// Extract timestamp for tracking
-				if (jo.has("t") && logParser != null) {
+				if (jo.has("t")) {
 					try {
 						Object tObj = jo.get("t");
 						if (tObj instanceof JSONObject) {
 							JSONObject tJson = (JSONObject) tObj;
 							if (tJson.has("$date")) {
-								logParser.updateTimestamps(tJson.getString("$date"));
+								lineTimestamp = tJson.getString("$date");
+								if (logParser != null) {
+									logParser.updateTimestamps(lineTimestamp);
+								}
 							}
 						}
 					} catch (Exception e) {
@@ -150,6 +157,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 
 			Namespace ns = null;
 			SlowQuery slowQuery = new SlowQuery();
+			slowQuery.timestamp = lineTimestamp;
 
 			// Check for INDEX operations first (TTL operations, index maintenance)
 			if (jo.has("c") && "INDEX".equals(jo.getString("c"))) {
@@ -191,6 +199,10 @@ class LogParserTask implements Callable<ProcessingStats> {
 						synchronized (indexStatsAccumulator) {
 							indexStatsAccumulator.accumulate(slowQuery);
 						}
+					}
+
+					if (logQueryWriter != null) {
+						logQueryWriter.writeIfMatching(slowQuery);
 					}
 
 					localFoundOps++;
@@ -258,6 +270,10 @@ class LogParserTask implements Callable<ProcessingStats> {
 						}
 					}
 
+					if (logQueryWriter != null) {
+						logQueryWriter.writeIfMatching(slowQuery);
+					}
+
 					localFoundOps++;
 				}
 
@@ -294,6 +310,10 @@ class LogParserTask implements Callable<ProcessingStats> {
 				// Extract replanning information
 				extractReplanningInfo(attr, slowQuery);
 
+				if (!(attr.get("command") instanceof JSONObject)) {
+					localNoCommand++;
+					continue;
+				}
 				JSONObject command = attr.getJSONObject("command");
 
 				// Enhanced operation type detection
@@ -336,6 +356,10 @@ class LogParserTask implements Callable<ProcessingStats> {
 						synchronized (planCacheAccumulator) {
 							planCacheAccumulator.accumulate(slowQuery, currentLine);
 						}
+					}
+
+					if (logQueryWriter != null) {
+						logQueryWriter.writeIfMatching(slowQuery);
 					}
 
 					localFoundOps++;
@@ -447,6 +471,11 @@ class LogParserTask implements Callable<ProcessingStats> {
 	    try {
 	        if (attr.has("command")) {
 	            JSONObject command = attr.getJSONObject("command");
+
+	            // Extract fromMongos flag (true when mongod received this command from mongos)
+	            if (command.has("fromMongos")) {
+	                slowQuery.fromMongos = command.getBoolean("fromMongos");
+	            }
 
 	            // Extract read preference mode and tags separately
 	            if (command.has("$readPreference")) {
@@ -710,6 +739,11 @@ class LogParserTask implements Callable<ProcessingStats> {
 				slowQuery.fromMultiPlanner = attr.getBoolean("fromMultiPlanner");
 			}
 
+			// Extract hasSortStage flag (in-memory/unindexed sort, aka "scan and order")
+			if (attr.has("hasSortStage")) {
+				slowQuery.hasSortStage = attr.getBoolean("hasSortStage");
+			}
+
 		} catch (JSONException e) {
 			if (debug) {
 				LogParser.logger.debug("Error extracting replanning info: {}", e.getMessage());
@@ -796,6 +830,10 @@ class LogParserTask implements Callable<ProcessingStats> {
 		
 		if (attr.has("nShards")) {
 			slowQuery.nShards = getMetric(attr, "nShards");
+		}
+
+		if (attr.has("cpuNanos")) {
+			slowQuery.cpuNanos = getMetric(attr, "cpuNanos");
 		}
 	}
 
@@ -1286,12 +1324,13 @@ class LogParserTask implements Callable<ProcessingStats> {
 	                    platform = doc.getString("platform");
 	                }
 	                
-	                // MongoDB server version from mongos field
+	                // MongoDB server version from mongos field; its presence means this is a mongod log
 	                if (doc.has("mongos")) {
 	                    JSONObject mongos = doc.getJSONObject("mongos");
 	                    if (mongos.has("version")) {
 	                        serverVersion = mongos.getString("version");
 	                    }
+	                    driverStatsAccumulator.setIsMongodLog(true);
 	                }
 	            }
 	            

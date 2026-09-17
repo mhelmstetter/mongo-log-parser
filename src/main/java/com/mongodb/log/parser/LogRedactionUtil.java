@@ -620,67 +620,6 @@ public class LogRedactionUtil {
     }
     
     /**
-     * Detect if log message is from mongod or mongos
-     */
-    public static String detectQuerySource(String logMessage) {
-        if (logMessage == null || logMessage.isEmpty()) {
-            return "";
-        }
-        
-        try {
-            JSONObject jo = new JSONObject(logMessage);
-            // Check if there's a mongos field in the client information
-            if (hasNestedMongosField(jo)) {
-                return " (from mongos)";
-            }
-            // Check for other indicators of mongos vs mongod
-            if (logMessage.contains("\"mongos\"") || logMessage.contains("\"fromMongos\"")) {
-                return " (from mongos)";
-            }
-            // Default to mongod if no mongos indicators found
-            return " (from mongod)";
-        } catch (Exception e) {
-            // If parsing fails, try simple string matching
-            if (logMessage.contains("mongos") || logMessage.contains("fromMongos")) {
-                return " (from mongos)";
-            }
-            return " (from mongod)";
-        }
-    }
-    
-    /**
-     * Recursively check for mongos field in JSON object
-     */
-    private static boolean hasNestedMongosField(JSONObject obj) throws JSONException {
-        Iterator<String> keys = obj.keys();
-        while (keys.hasNext()) {
-            String key = keys.next();
-            Object value = obj.get(key);
-            
-            if (key.equals("mongos") || key.equals("fromMongos")) {
-                return true;
-            }
-            
-            if (value instanceof JSONObject) {
-                if (hasNestedMongosField((JSONObject) value)) {
-                    return true;
-                }
-            } else if (value instanceof JSONArray) {
-                JSONArray arr = (JSONArray) value;
-                for (int i = 0; i < arr.length(); i++) {
-                    Object arrValue = arr.get(i);
-                    if (arrValue instanceof JSONObject) {
-                        if (hasNestedMongosField((JSONObject) arrValue)) {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-        return false;
-    }
-    
-    /**
      * Recursively check for truncation field in JSON object
      */
     private static boolean hasNestedTruncationField(JSONObject obj) throws JSONException {

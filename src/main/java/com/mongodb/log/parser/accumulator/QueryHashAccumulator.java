@@ -19,7 +19,7 @@ public class QueryHashAccumulator {
     	    "QueryHash", "Namespace", "Operation", "Count", "MinMs", "MaxMs", 
     	    "AvgMs", "P95Ms", "TotalSec", "AvgKeysEx", "AvgDocsEx", "KeysP95", 
     	    "DocsP95", "TotalKeysK", "TotalDocsK", "AvgReturn", "ExRetRatio",
-    	    "ReadPreference", "ReadPreferenceTags", "SanitizedQuery"
+    	    "ReadPreference", "ReadPreferenceTags", "ScanAndOrderPct", "SanitizedQuery"
     	};
 
     public void accumulate(SlowQuery slowQuery) {

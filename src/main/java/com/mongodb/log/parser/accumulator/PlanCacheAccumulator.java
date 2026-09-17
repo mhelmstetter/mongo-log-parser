@@ -21,8 +21,9 @@ public class PlanCacheAccumulator {
     	    "MinMs", "MaxMs", "AvgMs", "P95Ms", "TotalSec", "AvgKeysEx", 
     	    "AvgDocsEx", "KeysP95", "DocsP95", "TotalKeysK", "TotalDocsK", 
     	    "AvgReturn", "ExRetRatio", "CollScanCount", "CollScanPct", 
-    	    "MinPlanMs", "MaxPlanMs", "AvgPlanMs", "PlanP95Ms", "ReplannedCount", 
-    	    "ReplannedPct", "MultiPlannerCount", "MultiPlannerPct", "TopReplanReason"
+    	    "MinPlanMs", "MaxPlanMs", "AvgPlanMs", "PlanP95Ms", "ReplannedCount",
+    	    "ReplannedPct", "MultiPlannerCount", "MultiPlannerPct",
+    	    "ScanAndOrderCount", "ScanAndOrderPct", "TopReplanReason"
     	};
 
     public void accumulate(SlowQuery slowQuery) {

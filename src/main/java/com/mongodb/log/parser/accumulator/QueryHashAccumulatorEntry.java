@@ -47,6 +47,9 @@ public class QueryHashAccumulatorEntry {
     private long replannedCount = 0;
     private long multiPlannerCount = 0;
     private Map<String, Long> replanReasons = new HashMap<>();
+
+    // Scan and order (unindexed/in-memory sort) tracking
+    private long scanAndOrderCount = 0;
     
     // Plan summary tracking - store the most recent one
     private String planSummary = null;
@@ -72,6 +75,17 @@ public class QueryHashAccumulatorEntry {
     // Store a sample log message for accordion display - store the slowest query
     private String sampleLogMessage = null;
     private long maxDurationForSample = 0;
+
+    // CPU tracking (cpuNanos from log, split by fromMongos)
+    private long totalCpuNanos = 0;
+    private long maxCpuNanos = Long.MIN_VALUE;
+    private long cpuCount = 0;
+    // fromMongos=true: mongod received command from mongos (shard-side execution)
+    private long totalMongodCpuNanos = 0;
+    private long mongodCpuCount = 0;
+    // fromMongos=false/absent: mongos-level or direct mongod operations
+    private long totalMongosDirectCpuNanos = 0;
+    private long mongosDirectCpuCount = 0;
     
     public QueryHashAccumulatorEntry(QueryHashKey key) {
         this.key = key;
@@ -177,7 +191,12 @@ public class QueryHashAccumulatorEntry {
         if (slowQuery.fromMultiPlanner != null && slowQuery.fromMultiPlanner) {
             multiPlannerCount++;
         }
-        
+
+        // Track scan and order (unindexed/in-memory sort) usage
+        if (slowQuery.hasSortStage != null && slowQuery.hasSortStage) {
+            scanAndOrderCount++;
+        }
+
         // Track plan summary (use the most recent one)
         if (slowQuery.planSummary != null) {
             planSummary = slowQuery.planSummary;
@@ -203,6 +222,22 @@ public class QueryHashAccumulatorEntry {
             readPreferenceTagsCounts.merge(slowQuery.readPreferenceTags, 1L, Long::sum);
         }
         
+        // Track CPU usage
+        if (slowQuery.cpuNanos != null) {
+            cpuCount++;
+            totalCpuNanos += slowQuery.cpuNanos;
+            if (slowQuery.cpuNanos > maxCpuNanos) {
+                maxCpuNanos = slowQuery.cpuNanos;
+            }
+            if (Boolean.TRUE.equals(slowQuery.fromMongos)) {
+                mongodCpuCount++;
+                totalMongodCpuNanos += slowQuery.cpuNanos;
+            } else {
+                mongosDirectCpuCount++;
+                totalMongosDirectCpuNanos += slowQuery.cpuNanos;
+            }
+        }
+
         // Store sanitized query if we don't have one yet
         if (sanitizedQuery == null && slowQuery.sanitizedFilter != null) {
             sanitizedQuery = slowQuery.sanitizedFilter;
@@ -322,6 +357,17 @@ public class QueryHashAccumulatorEntry {
      */
     public String getFormattedMaxBytesWrittenCell() {
         return "<td class=\"number\" data-sort-value=\"" + getMaxBytesWritten() + "\">" + formatBytes(getMaxBytesWritten()) + "</td>";
+    }
+
+    /**
+     * Helper method to format nanoseconds in human-readable format (ns → µs → ms → s)
+     */
+    private String formatNanos(long nanos) {
+        if (nanos == 0) return "0";
+        if (nanos < 1_000) return nanos + "ns";
+        if (nanos < 1_000_000) return String.format("%.1f\u00b5s", nanos / 1_000.0);
+        if (nanos < 1_000_000_000) return String.format("%.1fms", nanos / 1_000_000.0);
+        return String.format("%.2fs", nanos / 1_000_000_000.0);
     }
 
     /**
@@ -503,9 +549,18 @@ public class QueryHashAccumulatorEntry {
     public long getMultiPlannerCount() {
         return multiPlannerCount;
     }
-    
+
     public double getMultiPlannerPercentage() {
         return count > 0 ? (multiPlannerCount * 100.0) / count : 0.0;
+    }
+
+    // Scan and order (unindexed/in-memory sort) getters
+    public long getScanAndOrderCount() {
+        return scanAndOrderCount;
+    }
+
+    public double getScanAndOrderPercentage() {
+        return count > 0 ? (scanAndOrderCount * 100.0) / count : 0.0;
     }
     
     public Map<String, Long> getReplanReasons() {
@@ -535,6 +590,45 @@ public class QueryHashAccumulatorEntry {
         return query.substring(0, maxLength - 3) + "...";
     }
     
+    // CPU getters
+    public long getCpuCount() { return cpuCount; }
+
+    public long getAvgCpuNanos() { return cpuCount > 0 ? totalCpuNanos / cpuCount : 0; }
+
+    public long getMaxCpuNanos() { return cpuCount > 0 && maxCpuNanos != Long.MIN_VALUE ? maxCpuNanos : 0; }
+
+    public long getTotalCpuNanos() { return totalCpuNanos; }
+
+    public long getMongodCpuNanos() { return totalMongodCpuNanos; }
+
+    public long getMongosDirectCpuNanos() { return totalMongosDirectCpuNanos; }
+
+    public long getMongodCpuCount() { return mongodCpuCount; }
+
+    public long getMongosDirectCpuCount() { return mongosDirectCpuCount; }
+
+    public String getCpuAvgCell() {
+        long val = getAvgCpuNanos();
+        return "<td class=\"number\" data-sort-value=\"" + val + "\">" + formatNanos(val) + "</td>";
+    }
+
+    public String getCpuMaxCell() {
+        long val = getMaxCpuNanos();
+        return "<td class=\"number\" data-sort-value=\"" + val + "\">" + formatNanos(val) + "</td>";
+    }
+
+    public String getCpuTotalCell() {
+        return "<td class=\"number\" data-sort-value=\"" + totalCpuNanos + "\">" + formatNanos(totalCpuNanos) + "</td>";
+    }
+
+    public String getMongodCpuCell() {
+        return "<td class=\"number\" data-sort-value=\"" + totalMongodCpuNanos + "\">" + formatNanos(totalMongodCpuNanos) + "</td>";
+    }
+
+    public String getMongosDirectCpuCell() {
+        return "<td class=\"number\" data-sort-value=\"" + totalMongosDirectCpuNanos + "\">" + formatNanos(totalMongosDirectCpuNanos) + "</td>";
+    }
+
     @Override
     public String toString() {
         // Dynamic truncation based on reasonable limits
@@ -567,7 +661,7 @@ public class QueryHashAccumulatorEntry {
     }
     
     public String toCsvString() {
-        return String.format("%s,%s,%s,%d,%d,%d,%d,%.0f,%d,%d,%d,%.0f,%.0f,%.1f,%.1f,%d,%d,%s,%s,%s",
+        return String.format("%s,%s,%s,%d,%d,%d,%d,%.0f,%d,%d,%d,%.0f,%.0f,%.1f,%.1f,%d,%d,%s,%s,%.1f,%s",
                 escapeCsv(key.getQueryHash()),
                 escapeCsv(key.getNamespace().toString()),
                 escapeCsv(key.getOperation()),
@@ -587,6 +681,7 @@ public class QueryHashAccumulatorEntry {
                 getScannedReturnRatio(),
                 escapeCsv(getReadPreferenceSummary()),
                 escapeCsv(getReadPreferenceTagsSummary()),
+                getScanAndOrderPercentage(),
                 escapeCsv(getSanitizedQuery()));
     }
     

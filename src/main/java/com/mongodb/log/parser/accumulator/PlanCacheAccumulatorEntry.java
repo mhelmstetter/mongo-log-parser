@@ -33,6 +33,9 @@ public class PlanCacheAccumulatorEntry {
     private long replannedCount = 0;
     private long multiPlannerCount = 0;
     private java.util.Map<String, Long> replanReasons = new java.util.HashMap<>();
+
+    // Scan and order (unindexed/in-memory sort) tracking
+    private long scanAndOrderCount = 0;
     
     // Statistics for percentiles
     private DescriptiveStatistics executionStats = new DescriptiveStatistics();
@@ -133,7 +136,12 @@ public class PlanCacheAccumulatorEntry {
         if (slowQuery.fromMultiPlanner != null && slowQuery.fromMultiPlanner) {
             multiPlannerCount++;
         }
-        
+
+        // Track scan and order (unindexed/in-memory sort) usage
+        if (slowQuery.hasSortStage != null && slowQuery.hasSortStage) {
+            scanAndOrderCount++;
+        }
+
         // Track collection scans based on current query's plan summary
         if (slowQuery.planSummary != null && slowQuery.planSummary.contains("COLLSCAN")) {
             collectionScanCount++;
@@ -252,7 +260,16 @@ public class PlanCacheAccumulatorEntry {
     public double getMultiPlannerPercentage() {
         return count > 0 ? (multiPlannerCount * 100.0) / count : 0.0;
     }
-    
+
+    // Scan and order (unindexed/in-memory sort) getters
+    public long getScanAndOrderCount() {
+        return scanAndOrderCount;
+    }
+
+    public double getScanAndOrderPercentage() {
+        return count > 0 ? (scanAndOrderCount * 100.0) / count : 0.0;
+    }
+
     public java.util.Map<String, Long> getReplanReasons() {
         return new java.util.HashMap<>(replanReasons);
     }
@@ -312,7 +329,7 @@ public class PlanCacheAccumulatorEntry {
     }
     
     public String toCsvString() {
-        return String.format("%s,%s,%s,%d,%d,%d,%d,%.0f,%d,%d,%d,%.0f,%.0f,%.1f,%.1f,%d,%d,%d,%.1f,%d,%d,%d,%.0f,%d,%.1f,%d,%.1f,%s",
+        return String.format("%s,%s,%s,%d,%d,%d,%d,%.0f,%d,%d,%d,%.0f,%.0f,%.1f,%.1f,%d,%d,%d,%.1f,%d,%d,%d,%.0f,%d,%.1f,%d,%.1f,%d,%.1f,%s",
                 key.getNamespace(),
                 escapeCsv(key.getQueryHash()),
                 escapeCsv(key.getPlanSummary()),
@@ -340,6 +357,8 @@ public class PlanCacheAccumulatorEntry {
                 getReplannedPercentage(),
                 multiPlannerCount,
                 getMultiPlannerPercentage(),
+                scanAndOrderCount,
+                getScanAndOrderPercentage(),
                 escapeCsv(getMostCommonReplanReason()));
     }
     

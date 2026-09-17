@@ -80,7 +80,13 @@ public class LogParser implements Callable<Integer> {
 
     @Option(names = {"--queryHashCsv"}, description = "CSV output file for query hash analysis")
     private String queryHashCsvFile;
-    
+
+    @Option(names = {"--logQueryCsv"}, description = "CSV output file for per-entry log query results")
+    private String logQueryCsvFile;
+
+    @Option(names = {"--logQueryFilter"}, description = "Filter predicate as key=value. Can be specified multiple times (AND logic). Keys: appName, ns, queryHash, opType, planSummary (contains), readPreference")
+    private List<String> logQueryFilters;
+
     @Option(names = {"--errorCodesCsv"}, description = "CSV output file for error code analysis")
     private String errorCodesCsvFile;
     
@@ -107,6 +113,9 @@ public class LogParser implements Callable<Integer> {
     
     @Option(names = {"--shards"}, description = "Enable shard/node tracking based on filename pattern (e.g., shard-XX-YY)")
     private boolean enableShardTracking = false;
+
+    @Option(names = {"--shard-matrix"}, description = "Generate namespace x shard matrix table showing count and returned docs per shard (requires --shards)")
+    private boolean enableShardMatrix = false;
     
     @Option(names = {"--drivers"}, description = "Enable driver statistics analysis (disabled by default)")
     private boolean enableDriverStats = false;
@@ -151,6 +160,7 @@ public class LogParser implements Callable<Integer> {
     
     private QueryHashAccumulator queryHashAccumulator;
     private SlowPlanningAccumulator slowPlanningAccumulator;
+    private LogQueryWriter logQueryWriter;
 
     // Shard tracking
     private ShardInfo currentShardInfo = null;
@@ -209,8 +219,21 @@ public class LogParser implements Callable<Integer> {
                             runtime.availableProcessors());
         }
         
+        if (logQueryCsvFile != null) {
+            System.out.println("📋 Log query output: " + logQueryCsvFile);
+            if (logQueryFilters != null && !logQueryFilters.isEmpty()) {
+                System.out.println("🔍 Log query filters: " + String.join(", ", logQueryFilters));
+            }
+            logQueryWriter = new LogQueryWriter(logQueryCsvFile, logQueryFilters);
+        }
+
         int successfulFiles = read();
-        
+
+        if (logQueryWriter != null) {
+            logQueryWriter.close();
+            System.out.println("✅ Log query CSV written: " + logQueryCsvFile);
+        }
+
         if (verbose) {
             long overallTime = System.currentTimeMillis() - overallStart;
             System.err.printf("[VERBOSE] Overall processing completed in %d ms%n", overallTime);
@@ -328,6 +351,7 @@ public class LogParser implements Callable<Integer> {
                     earliestTimestamp,
                     latestTimestamp,
                     enableShardTracking,
+                    enableShardMatrix,
                     shardAccumulators,
                     shardTtlAccumulators,
                     shardPlanCacheAccumulators,
@@ -672,7 +696,8 @@ public class LogParser implements Callable<Integer> {
                     		enableDriverStats ? driverStatsAccumulator : null,
                     		enableAppNameStats ? appNameConnectionStatsAccumulator : null,
                     		file.getName(),
-                    		operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this));
+                    		operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this,
+                    		logQueryWriter));
                 submittedTasks++;
                 lines.clear();
                 
@@ -747,7 +772,8 @@ public class LogParser implements Callable<Integer> {
                 		enableDriverStats ? driverStatsAccumulator : null,
                 		enableAppNameStats ? appNameConnectionStatsAccumulator : null,
                 		file.getName(),
-                		operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this));
+                		operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this,
+                		logQueryWriter));
             submittedTasks++;
         }
 
@@ -1381,7 +1407,8 @@ public class LogParser implements Callable<Integer> {
                     new LogParserTask(new ArrayList<>(lines), accumulator, planCacheAccumulator, queryHashAccumulator,
                     		slowPlanningAccumulator, errorCodeAccumulator, transactionAccumulator, indexStatsAccumulator,
                     		enableDriverStats ? driverStatsAccumulator : null, enableAppNameStats ? appNameConnectionStatsAccumulator : null, file.getName(),
-                    		operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this));
+                    		operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this,
+                    		logQueryWriter));
                 submittedTasks++;
                 lines.clear();
             }
@@ -1393,7 +1420,8 @@ public class LogParser implements Callable<Integer> {
                 new LogParserTask(new ArrayList<>(lines), accumulator, planCacheAccumulator, queryHashAccumulator,
                 		slowPlanningAccumulator, errorCodeAccumulator, transactionAccumulator, indexStatsAccumulator,
                 		null, enableAppNameStats ? appNameConnectionStatsAccumulator : null, file.getName(),
-                		operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this));
+                		operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this,
+                		logQueryWriter));
             submittedTasks++;
         }
 
