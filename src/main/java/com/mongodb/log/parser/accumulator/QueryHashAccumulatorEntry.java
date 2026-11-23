@@ -62,6 +62,9 @@ public class QueryHashAccumulatorEntry {
     
     // Read preference tracking - store detailed breakdown
     private Map<String, Long> readPreferenceCounts = new HashMap<>();
+
+    // Which nodes (processes) ran this query shape, by count
+    private final Map<String, Long> nodeCounts = new java.util.TreeMap<>();
     
     // Read preference tags tracking - store separate counts for each unique tag combination
     private Map<String, Long> readPreferenceTagsCounts = new HashMap<>();
@@ -80,6 +83,10 @@ public class QueryHashAccumulatorEntry {
     private long totalCpuNanos = 0;
     private long maxCpuNanos = Long.MIN_VALUE;
     private long cpuCount = 0;
+    // Entries carrying both cpuNanos and durationMillis, for the CPU / duration ratio
+    private long cpuWithDurationCount = 0;
+    private long cpuWithDurationCpuNanos = 0;
+    private long cpuWithDurationMs = 0;
     // fromMongos=true: mongod received command from mongos (shard-side execution)
     private long totalMongodCpuNanos = 0;
     private long mongodCpuCount = 0;
@@ -98,6 +105,9 @@ public class QueryHashAccumulatorEntry {
     public void addExecution(SlowQuery slowQuery, String logMessage) {
         if (slowQuery.durationMillis != null) {
             count++;
+            if (slowQuery.node != null) {
+                nodeCounts.merge(slowQuery.node, 1L, Long::sum);
+            }
             total += slowQuery.durationMillis;
             
             if (slowQuery.durationMillis > max) {
@@ -228,6 +238,11 @@ public class QueryHashAccumulatorEntry {
             totalCpuNanos += slowQuery.cpuNanos;
             if (slowQuery.cpuNanos > maxCpuNanos) {
                 maxCpuNanos = slowQuery.cpuNanos;
+            }
+            if (slowQuery.durationMillis != null) {
+                cpuWithDurationCount++;
+                cpuWithDurationCpuNanos += slowQuery.cpuNanos;
+                cpuWithDurationMs += slowQuery.durationMillis;
             }
             if (Boolean.TRUE.equals(slowQuery.fromMongos)) {
                 mongodCpuCount++;
@@ -389,6 +404,18 @@ public class QueryHashAccumulatorEntry {
         return totalDocsExamined;
     }
     
+    public Map<String, Long> getNodeCounts() {
+        return nodeCounts;
+    }
+
+    public long getTotalReturned() {
+        return totalReturned;
+    }
+
+    public long getTotalDurationMs() {
+        return total;
+    }
+
     public long getScannedReturnRatio() {
         if (totalReturned > 0) {
             return totalDocsExamined / totalReturned;
@@ -606,6 +633,26 @@ public class QueryHashAccumulatorEntry {
     public long getMongodCpuCount() { return mongodCpuCount; }
 
     public long getMongosDirectCpuCount() { return mongosDirectCpuCount; }
+
+    /**
+     * CPU time as a percentage of wall-clock duration, over entries that logged both cpuNanos and
+     * durationMillis. Null when those entries have no measurable duration (all 0 ms) or there are none.
+     */
+    public Double getCpuDurationPercent() {
+        return cpuDurationPercent(cpuWithDurationCpuNanos, cpuWithDurationMs);
+    }
+
+    public static Double cpuDurationPercent(long cpuNanos, long durationMs) {
+        return durationMs > 0 ? cpuNanos / 1e6 * 100.0 / durationMs : null;
+    }
+
+    public String getCpuDurationPercentCell() {
+        Double pct = getCpuDurationPercent();
+        if (pct == null) {
+            return "<td class=\"number\" data-sort-value=\"-1\" title=\"no entries with both cpuNanos and a non-zero durationMillis\">n/a</td>";
+        }
+        return "<td class=\"number\" data-sort-value=\"" + pct + "\">" + String.format("%.0f%%", pct) + "</td>";
+    }
 
     public String getCpuAvgCell() {
         long val = getAvgCpuNanos();

@@ -11,7 +11,8 @@ public class LogQueryWriter {
         "Timestamp", "Namespace", "AppName", "Operation", "QueryHash", "PlanCacheKey",
         "DurationMs", "KeysExamined", "DocsExamined", "Returned", "PlanSummary",
         "ReadPreference", "ReadPreferenceTags", "Replanned", "FromMultiPlanner", "HasSortStage",
-        "PlanningTimeMicros", "BytesRead", "SanitizedFilter"
+        "PlanningTimeMicros", "BytesRead", "SanitizedFilter", "Node", "Mirrored", "NMatched", "NModified",
+        "CpuNanos", "OriginUri", "CodeFqn"
     };
 
     private final PrintWriter writer;
@@ -79,7 +80,14 @@ public class LogQueryWriter {
             (sq.hasSortStage != null ? sq.hasSortStage : "") + "," +
             (sq.planningTimeMicros != null ? sq.planningTimeMicros : "") + "," +
             (sq.bytesRead != null ? sq.bytesRead : "") + "," +
-            escapeCsv(sq.sanitizedFilter);
+            escapeCsv(sq.sanitizedFilter) + "," +
+            escapeCsv(sq.node) + "," +
+            Boolean.TRUE.equals(sq.mirrored) + "," +
+            (sq.nMatched != null ? sq.nMatched : "") + "," +
+            (sq.nModified != null ? sq.nModified : "") + "," +
+            (sq.cpuNanos != null ? sq.cpuNanos : "") + "," +
+            escapeCsv(sq.commentTag.originUri) + "," +
+            escapeCsv(sq.commentTag.codeFqn);
     }
 
     private String escapeCsv(String value) {

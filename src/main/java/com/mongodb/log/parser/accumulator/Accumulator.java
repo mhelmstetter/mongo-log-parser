@@ -153,6 +153,24 @@ public class Accumulator {
         }
     }
 
+    /**
+     * Accumulate a parsed slow query, including mongos remote wait and write match metrics.
+     * Callers synchronize on this accumulator, as with the other accumulate methods.
+     */
+    public void accumulate(SlowQuery slowQuery, String logMessage, boolean isError) {
+        String command = slowQuery.opType.getType();
+        accumulate(null, command, slowQuery.ns, slowQuery.durationMillis,
+                slowQuery.keysExamined, slowQuery.docsExamined, slowQuery.nreturned, slowQuery.reslen,
+                slowQuery.bytesRead, slowQuery.bytesWritten, slowQuery.writeConflicts, slowQuery.nShards,
+                logMessage, isError, slowQuery.isChangeStream != null && slowQuery.isChangeStream, slowQuery.appName);
+        LogLineAccumulator accum = accumulators.get(new AccumulatorKey(null, slowQuery.ns, command, slowQuery.appName));
+        accum.addRemoteOpWait(slowQuery.remoteOpWaitMillis);
+        accum.addCpu(slowQuery.cpuNanos);
+        accum.addMatched(slowQuery.nMatched, slowQuery.nModified);
+        accum.addMirrored(slowQuery.mirrored);
+        accum.addBatchSize(slowQuery.batchSize);
+    }
+
     public LogLineAccumulator getAccumulator(AccumulatorKey key) {
         return accumulators.get(key);
     }
