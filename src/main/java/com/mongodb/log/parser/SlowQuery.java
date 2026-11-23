@@ -30,4 +30,20 @@ public class SlowQuery {
 	public Boolean isChangeStream = null;
 	public Long cpuNanos = null;
 	public Boolean fromMongos = null;
+	public Long remoteOpWaitMillis = null;
+	public Long nMatched = null;
+	public Long nModified = null;
+	public Long nInserted = null;
+	public Long nDeleted = null;
+	public Long nUpserted = null;
+	public Long keysInserted = null;
+	public Long keysDeleted = null;
+	// Mirrored reads are sent by a primary to secondaries to warm their caches
+	public Boolean mirrored = null;
+	// Statements in a batched write command (updates/documents/deletes array length)
+	public Long batchSize = null;
+	// Process the log line came from (see NodeIdentity)
+	public String node = null;
+	// Application tag parsed from the operation's comment (see CommentTag); null until extracted
+	public CommentTag commentTag = null;
 }

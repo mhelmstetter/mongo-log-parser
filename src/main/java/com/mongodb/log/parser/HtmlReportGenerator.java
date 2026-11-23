@@ -30,6 +30,11 @@ import com.mongodb.log.parser.accumulator.QueryHashAccumulatorEntry;
 import com.mongodb.log.parser.accumulator.QueryHashKey;
 import com.mongodb.log.parser.accumulator.SlowPlanningAccumulator;
 import com.mongodb.log.parser.accumulator.TransactionAccumulator;
+import com.mongodb.log.parser.accumulator.CommentTagAccumulator;
+import com.mongodb.log.parser.accumulator.MaintenanceAccumulator;
+import com.mongodb.log.parser.accumulator.WriteKeysAccumulator;
+import com.mongodb.log.parser.accumulator.TimelineAccumulator;
+import com.mongodb.log.parser.accumulator.NodeStatsAccumulator;
 import com.mongodb.log.parser.model.MainOperationEntry;
 import com.mongodb.log.parser.service.MainOperationService;
 
@@ -50,6 +55,11 @@ public class HtmlReportGenerator {
 	        IndexStatsAccumulator indexStatsAccumulator,
 	        TwoPassDriverStatsAccumulator driverStatsAccumulator,
 	        AppNameConnectionStatsAccumulator appNameConnectionStatsAccumulator,
+	        TimelineAccumulator timelineAccumulator,
+	        NodeStatsAccumulator nodeStatsAccumulator,
+	        CommentTagAccumulator commentTagAccumulator,
+	        MaintenanceAccumulator maintenanceAccumulator,
+	        WriteKeysAccumulator writeKeysAccumulator,
 	        Map<String, java.util.concurrent.atomic.AtomicLong> operationTypeStats, boolean redactQueries,
 	        String earliestTimestamp, String latestTimestamp,
 	        boolean enableShardTracking,
@@ -66,7 +76,7 @@ public class HtmlReportGenerator {
 	        writeHtmlHeader(writer);
 	        writeNavigationHeader(writer, accumulator, ttlAccumulator, planCacheAccumulator,
 	                             queryHashAccumulator, slowPlanningAccumulator, errorCodeAccumulator, transactionAccumulator,
-	                             indexStatsAccumulator, driverStatsAccumulator, appNameConnectionStatsAccumulator, operationTypeStats, earliestTimestamp, latestTimestamp,
+	                             indexStatsAccumulator, driverStatsAccumulator, appNameConnectionStatsAccumulator, timelineAccumulator, nodeStatsAccumulator, commentTagAccumulator, maintenanceAccumulator, writeKeysAccumulator, operationTypeStats, earliestTimestamp, latestTimestamp,
 	                             enableShardMatrix, shardAccumulators, shardQueryHashAccumulators);
 	        
 	        // Write tables with shard column if shard tracking is enabled
@@ -120,6 +130,36 @@ public class HtmlReportGenerator {
 	            }
 	        }
 
+	        // CPU coverage and CPU by application comment tag (not sharded)
+	        if (commentTagAccumulator != null && commentTagAccumulator.hasData()) {
+	            writeCommentTagSection(writer, commentTagAccumulator.getCoverage(earliestTimestamp, latestTimestamp), commentTagAccumulator);
+	        }
+
+	        // Flagged query shapes (excludes mirrored reads)
+	        if (queryHashAccumulator != null) {
+	            QueryFindings findings = new QueryFindings(queryHashAccumulator);
+	            if (findings.hasFindings()) {
+	                writeFindingsTables(writer, findings, redactQueries);
+	            }
+	        }
+
+	        if (maintenanceAccumulator != null && (maintenanceAccumulator.hasData() || maintenanceAccumulator.getUnparsedLines() > 0)) {
+	            writeMaintenanceSection(writer, maintenanceAccumulator);
+	        }
+	        if (writeKeysAccumulator != null && writeKeysAccumulator.hasData()) {
+	            writeWriteKeysSection(writer, writeKeysAccumulator);
+	        }
+
+	        // Per-node stats and balance
+	        if (nodeStatsAccumulator != null && nodeStatsAccumulator.hasData()) {
+	            writeNodesAndBalance(writer, nodeStatsAccumulator);
+	        }
+
+	        // Slow operation timeline (not sharded)
+	        if (timelineAccumulator != null && timelineAccumulator.hasData()) {
+	            writeTimelineTables(writer, timelineAccumulator);
+	        }
+
 	        // AppName connection stats table
 	        if (appNameConnectionStatsAccumulator != null && appNameConnectionStatsAccumulator.getAppNameCount() > 0) {
 	            writeAppNameStatsTable(writer, appNameConnectionStatsAccumulator);
@@ -157,7 +197,7 @@ public class HtmlReportGenerator {
 	        writeHtmlHeader(writer);
 	        writeNavigationHeader(writer, accumulator, ttlAccumulator, planCacheAccumulator,
 	                             queryHashAccumulator, slowPlanningAccumulator, errorCodeAccumulator, transactionAccumulator,
-	                             indexStatsAccumulator, driverStatsAccumulator, appNameConnectionStatsAccumulator, operationTypeStats, earliestTimestamp, latestTimestamp,
+	                             indexStatsAccumulator, driverStatsAccumulator, appNameConnectionStatsAccumulator, null, null, null, null, null, operationTypeStats, earliestTimestamp, latestTimestamp,
 	                             false, java.util.Collections.emptyMap(), java.util.Collections.emptyMap());
 	        writeMainOperationsTable(writer, accumulator, redactQueries);
 	        writeTtlOperationsTable(writer, ttlAccumulator);
@@ -332,6 +372,11 @@ public class HtmlReportGenerator {
 	        TransactionAccumulator transactionAccumulator, IndexStatsAccumulator indexStatsAccumulator,
 	        TwoPassDriverStatsAccumulator driverStatsAccumulator,
 	        AppNameConnectionStatsAccumulator appNameConnectionStatsAccumulator,
+	        TimelineAccumulator timelineAccumulator,
+	        NodeStatsAccumulator nodeStatsAccumulator,
+	        CommentTagAccumulator commentTagAccumulator,
+	        MaintenanceAccumulator maintenanceAccumulator,
+	        WriteKeysAccumulator writeKeysAccumulator,
 	        Map<String, java.util.concurrent.atomic.AtomicLong> operationTypeStats,
 	        String earliestTimestamp, String latestTimestamp,
 	        boolean enableShardMatrix, Map<ShardInfo, Accumulator> shardAccumulators,
@@ -377,6 +422,19 @@ public class HtmlReportGenerator {
 	        writer.println("                    <a href=\"#cpu-by-query-hash\" class=\"nav-link\">CPU by Query Hash</a>");
 	    }
 
+	    // CPU by application comment tag (origin_uri / code_fqn) and CPU coverage
+	    if (commentTagAccumulator != null && commentTagAccumulator.hasData()) {
+	        writer.println("                    <a href=\"#cpu-by-comment-tag\" class=\"nav-link\">CPU by App Tag</a>");
+	    }
+
+	    if (maintenanceAccumulator != null && (maintenanceAccumulator.hasData() || maintenanceAccumulator.getUnparsedLines() > 0)) {
+	        writer.println("                    <a href=\"#maintenance\" class=\"nav-link\">Index Builds / Migrations</a>");
+	    }
+
+	    if (writeKeysAccumulator != null && writeKeysAccumulator.hasData()) {
+	        writer.println("                    <a href=\"#write-keys\" class=\"nav-link\">Index Keys per Write</a>");
+	    }
+
 	    // Query Hash Analysis (By Shard)
 	    if (shardQueryHashAccumulators != null && shardQueryHashAccumulators.values().stream()
 	            .anyMatch(acc -> !acc.getQueryHashEntries().isEmpty())) {
@@ -398,6 +456,21 @@ public class HtmlReportGenerator {
 	        writer.println("                    <a href=\"#index-stats\" class=\"nav-link\">Index Usage Statistics</a>");
 	    }
 	    
+	    // Flagged query shapes
+	    if (queryHashAccumulator != null && new QueryFindings(queryHashAccumulator).hasFindings()) {
+	        writer.println("                    <a href=\"#findings\" class=\"nav-link\">Findings</a>");
+	    }
+
+	    // Nodes and balance
+	    if (nodeStatsAccumulator != null && nodeStatsAccumulator.hasData()) {
+	        writer.println("                    <a href=\"#nodes\" class=\"nav-link\">Nodes &amp; Balance</a>");
+	    }
+
+	    // Slow Operation Timeline
+	    if (timelineAccumulator != null && timelineAccumulator.hasData()) {
+	        writer.println("                    <a href=\"#timeline\" class=\"nav-link\">Timeline</a>");
+	    }
+
 	    // AppName Connection Statistics
 	    if (appNameConnectionStatsAccumulator != null && appNameConnectionStatsAccumulator.getAppNameCount() > 0) {
 	        writer.println("                    <a href=\"#appname-stats\" class=\"nav-link\">AppName Statistics</a>");
@@ -1645,6 +1718,9 @@ public class HtmlReportGenerator {
 		long totalCpuNanos = cpuEntries.stream().mapToLong(QueryHashAccumulatorEntry::getTotalCpuNanos).sum();
 		long mongodCpuNanos = cpuEntries.stream().mapToLong(QueryHashAccumulatorEntry::getMongodCpuNanos).sum();
 		long mongosDirectCpuNanos = cpuEntries.stream().mapToLong(QueryHashAccumulatorEntry::getMongosDirectCpuNanos).sum();
+		// The via-mongos / direct split only means something when some operation was routed through a mongos
+		// (command.fromMongos: true, i.e. shard-side work in a sharded cluster); otherwise every operation is direct.
+		boolean anyViaMongos = cpuEntries.stream().anyMatch(e -> e.getMongodCpuCount() > 0);
 
 		writer.println("        <h2 id=\"cpu-by-query-hash\">CPU Usage by Query Hash</h2>");
 		writer.println("        <div class=\"summary\">");
@@ -1654,14 +1730,16 @@ public class HtmlReportGenerator {
 		writer.println("                    <div class=\"summary-label\">Total CPU</div>");
 		writer.println("                    <div class=\"summary-value\">" + formatNanos(totalCpuNanos) + "</div>");
 		writer.println("                </div>");
-		writer.println("                <div class=\"summary-item\">");
-		writer.println("                    <div class=\"summary-label\">Mongod CPU (via mongos)</div>");
-		writer.println("                    <div class=\"summary-value\">" + formatNanos(mongodCpuNanos) + "</div>");
-		writer.println("                </div>");
-		writer.println("                <div class=\"summary-item\">");
-		writer.println("                    <div class=\"summary-label\">Mongos / Direct CPU</div>");
-		writer.println("                    <div class=\"summary-value\">" + formatNanos(mongosDirectCpuNanos) + "</div>");
-		writer.println("                </div>");
+		if (anyViaMongos) {
+			writer.println("                <div class=\"summary-item\">");
+			writer.println("                    <div class=\"summary-label\">Via mongos (shard-side)</div>");
+			writer.println("                    <div class=\"summary-value\">" + formatNanos(mongodCpuNanos) + "</div>");
+			writer.println("                </div>");
+			writer.println("                <div class=\"summary-item\">");
+			writer.println("                    <div class=\"summary-label\">Direct to mongod</div>");
+			writer.println("                    <div class=\"summary-value\">" + formatNanos(mongosDirectCpuNanos) + "</div>");
+			writer.println("                </div>");
+		}
 		writer.println("                <div class=\"summary-item\">");
 		writer.println("                    <div class=\"summary-label\">Query Hashes with CPU Data</div>");
 		writer.println("                    <div class=\"summary-value\">" + NUMBER_FORMAT.format(cpuEntries.size()) + "</div>");
@@ -1669,6 +1747,10 @@ public class HtmlReportGenerator {
 		writer.println("            </div>");
 		writer.println("        </div>");
 
+		writer.println("        <p>" + (anyViaMongos
+				? "Via mongos (shard-side) is CPU of operations a mongod received from a mongos (<code>command.fromMongos: true</code>); direct to mongod is everything else."
+				: "No operation in the input was routed through a mongos (<code>command.fromMongos</code>), so all CPU here is direct to mongod and the via-mongos split is not shown.")
+				+ "</p>");
 		writer.println("        <div class=\"table-container\">");
 		writer.println("            <div class=\"controls\">");
 		writer.println("                <input type=\"text\" id=\"cpuQueryHashFilter\" class=\"filter-input\" placeholder=\"Filter by query hash, namespace, etc...\">");
@@ -1687,8 +1769,13 @@ public class HtmlReportGenerator {
 		writer.println("                        " + generateTableHeader("cpuQueryHashTable", 4, "Avg CPU", "number"));
 		writer.println("                        " + generateTableHeader("cpuQueryHashTable", 5, "Max CPU", "number"));
 		writer.println("                        " + generateTableHeader("cpuQueryHashTable", 6, "Total CPU", "number"));
-		writer.println("                        " + generateTableHeader("cpuQueryHashTable", 7, "Mongod CPU", "number"));
-		writer.println("                        " + generateTableHeader("cpuQueryHashTable", 8, "Mongos/Direct CPU", "number"));
+		int col = 7;
+		if (anyViaMongos) {
+			writer.println("                        " + generateTableHeader("cpuQueryHashTable", col++, "Via mongos (shard-side)", "number"));
+			writer.println("                        " + generateTableHeader("cpuQueryHashTable", col++, "Direct to mongod", "number"));
+		}
+		writer.println("                        " + generateTableHeader("cpuQueryHashTable", col, "CPU % of Duration", "number"));
+		final int cpuTableColumns = col + 1;
 		writer.println("                    </tr>");
 		writer.println("                </thead>");
 		writer.println("                <tbody>");
@@ -1711,10 +1798,14 @@ public class HtmlReportGenerator {
 			writer.println(entry.getCpuMaxCell());
 			writer.print("                        ");
 			writer.println(entry.getCpuTotalCell());
+			if (anyViaMongos) {
+				writer.print("                        ");
+				writer.println(entry.getMongodCpuCell());
+				writer.print("                        ");
+				writer.println(entry.getMongosDirectCpuCell());
+			}
 			writer.print("                        ");
-			writer.println(entry.getMongodCpuCell());
-			writer.print("                        ");
-			writer.println(entry.getMongosDirectCpuCell());
+			writer.println(entry.getCpuDurationPercentCell());
 			writer.println("                    </tr>");
 
 			if (entry.getSampleLogMessage() != null) {
@@ -1724,7 +1815,7 @@ public class HtmlReportGenerator {
 				boolean isTruncated = LogRedactionUtil.isLogMessageTruncated(entry.getSampleLogMessage());
 				String cssClass = isTruncated ? "log-sample truncated-query" : "log-sample";
 				writer.println("                    <tr id=\"" + rowId + "\" class=\"accordion-content\">");
-				writer.println("                        <td colspan=\"9\">");
+				writer.println("                        <td colspan=\"" + cpuTableColumns + "\">");
 				writer.println("                            <div class=\"" + cssClass + "\">");
 				if (isTruncated) {
 					writer.println("                                <div class=\"truncated-warning\">\u26a0 Query was truncated in MongoDB logs</div>");
@@ -1746,6 +1837,167 @@ public class HtmlReportGenerator {
 		writer.println("                </tbody>");
 		writer.println("            </table>");
 		writer.println("        </div>");
+	}
+
+	private static void writeSummaryItem(PrintWriter writer, String label, String value) {
+		writer.println("                <div class=\"summary-item\">");
+		writer.println("                    <div class=\"summary-label\">" + escapeHtml(label) + "</div>");
+		writer.println("                    <div class=\"summary-value\">" + escapeHtml(value) + "</div>");
+		writer.println("                </div>");
+	}
+
+	private static String sec1(long nanos) {
+		return String.format("%.1f", nanos / 1e9);
+	}
+
+	private static void writeMaintenanceSection(PrintWriter writer, MaintenanceAccumulator m) {
+		writer.println("        <h2 id=\"maintenance\">Index Builds and Chunk Migrations</h2>");
+		writer.println("        <p>Background work read from every log line (before line filtering), to line up with slow periods. "
+				+ "Index builds are grouped by buildUUID; a build whose start or end is outside the log shows its first and last message seen. "
+				+ "Migration and other sharding events come from the shard's config changelog entries (\"About to log metadata event\").</p>");
+		java.util.List<String[]> rows = new java.util.ArrayList<>();
+		for (MaintenanceAccumulator.IndexBuild b : m.getIndexBuilds()) {
+			rows.add(new String[] { b.getNode(), b.getNamespace() != null ? b.getNamespace() : "(not in log)", String.join(", ", b.getIndexes()),
+					b.getFirstSeen() + (b.isStartSeen() ? "" : " (start not in log)"), b.getFirstMessage(), b.getLastSeen(), b.getLastMessage(),
+					b.getOutcome() + (b.getError() != null ? " (" + b.getError() + ")" : ""), b.getTotalRecords() != null ? NUMBER_FORMAT.format(b.getTotalRecords()) : "n/a",
+					b.getScanDurationMillis() != null ? String.format("%.1f", b.getScanDurationMillis() / 60000.0) : "n/a" });
+		}
+		writer.println("        <h3>Index Builds (" + rows.size() + ")</h3>");
+		if (!rows.isEmpty()) {
+			writeSimpleTable(writer, "indexBuildsTable", new String[][] { { "Node", "string" }, { "Namespace", "string" }, { "Indexes", "string" },
+					{ "First Seen", "string" }, { "First Message", "string" }, { "Last Seen", "string" }, { "Last Message", "string" },
+					{ "Outcome", "string" }, { "Records Scanned", "number" }, { "Collection Scan (min)", "number" } }, rows);
+		}
+		java.util.List<String[]> dr = new java.util.ArrayList<>();
+		for (MaintenanceAccumulator.SideWriteDrains d : m.getSideWriteDrains()) {
+			dr.add(new String[] { d.getNamespace(), d.getIndex(), NUMBER_FORMAT.format(d.getCount()), NUMBER_FORMAT.format(d.getApplied()),
+					String.format("%.1f", d.getDurationMillis() / 1000.0), d.getFirst(), d.getLast() });
+		}
+		if (!dr.isEmpty()) {
+			writer.println("        <h3>Index Build Side-Write Drains (" + dr.size() + ")</h3>");
+			writer.println("        <p>Writes made during a build are applied to the new index in drains; these lines carry namespace and index, not the build id.</p>");
+			writeSimpleTable(writer, "sideDrainsTable", new String[][] { { "Namespace", "string" }, { "Index", "string" }, { "Drains", "number" },
+					{ "Writes Applied", "number" }, { "Drain Time (s)", "number" }, { "First", "string" }, { "Last", "string" } }, dr);
+		}
+		java.util.List<String[]> inl = new java.util.ArrayList<>();
+		m.getInlineIndexes().forEach((ns, ix) -> ix.forEach((name, n) -> inl.add(new String[] { ns, name, NUMBER_FORMAT.format(n) })));
+		if (!inl.isEmpty()) {
+			writer.println("        <h3>Indexes Built Inline (" + inl.size() + ")</h3>");
+			writer.println("        <p>\"done building\" with no build id: built inline, typically <code>_id_</code> when a collection is created (including by a migration). Not background builds.</p>");
+			writeSimpleTable(writer, "inlineIndexesTable", new String[][] { { "Namespace", "string" }, { "Index", "string" }, { "Count", "number" } }, inl);
+		}
+		java.util.List<String[]> ev = new java.util.ArrayList<>();
+		for (MaintenanceAccumulator.ChangelogGroup g : m.getChangelogGroups()) {
+			ev.add(new String[] { g.getWhat(), g.getNamespace(), g.getFrom(), g.getTo(), NUMBER_FORMAT.format(g.getCount()), NUMBER_FORMAT.format(g.getAborted()),
+					NUMBER_FORMAT.format(g.getClonedDocs()), String.format("%.1f", g.getClonedBytes() / 1e6), g.getFirst(), g.getLast() });
+		}
+		writer.println("        <h3>Sharding Metadata Events (" + ev.size() + " groups)</h3>");
+		if (!ev.isEmpty()) {
+			writeSimpleTable(writer, "changelogTable", new String[][] { { "Event", "string" }, { "Namespace", "string" }, { "From", "string" }, { "To", "string" },
+					{ "Count", "number" }, { "Aborted", "number" }, { "Cloned Docs", "number" }, { "Cloned MB", "number" }, { "First", "string" }, { "Last", "string" } }, ev);
+		}
+		java.util.List<String[]> er = new java.util.ArrayList<>();
+		m.getMigrationErrors().forEach((msg, n) -> er.add(new String[] { msg, NUMBER_FORMAT.format(n[0]) }));
+		writer.println("        <h3>Migration Errors (" + er.size() + ")</h3>");
+		if (!er.isEmpty()) {
+			writeSimpleTable(writer, "migrationErrorsTable", new String[][] { { "Error", "string" }, { "Count", "number" } }, er);
+		}
+		if (m.getUnparsedLines() > 0) {
+			writer.println("        <p>" + NUMBER_FORMAT.format(m.getUnparsedLines()) + " candidate lines could not be parsed and are not counted.</p>");
+		}
+	}
+
+	private static void writeWriteKeysSection(PrintWriter writer, WriteKeysAccumulator w) {
+		writer.println("        <h2 id=\"write-keys\">Index Keys per Write</h2>");
+		writer.println("        <p>From slow write lines only (at or above slowms): index keys inserted and deleted against documents written "
+				+ "(ninserted + nModified + ndeleted + nUpserted). Keys per document approximates how many index entries each write maintains; "
+				+ "an update touches only indexes whose keys changed.</p>");
+		java.util.List<String[]> rows = new java.util.ArrayList<>();
+		for (WriteKeysAccumulator.Entry e : w.getEntries()) {
+			rows.add(new String[] { e.getNamespace(), e.getOp(), NUMBER_FORMAT.format(e.getCount()), NUMBER_FORMAT.format(e.getDocsWritten()),
+					NUMBER_FORMAT.format(e.getKeysInserted()), NUMBER_FORMAT.format(e.getKeysDeleted()),
+					e.getKeysPerDocWritten() != null ? String.format("%.1f", e.getKeysPerDocWritten()) : "n/a (no docs written)",
+					NUMBER_FORMAT.format(e.getOpsWithKeyCounts()), String.format("%.1f", e.getTotalDurationMs() / 1000.0) });
+		}
+		writeSimpleTable(writer, "writeKeysTable", new String[][] { { "Namespace", "string" }, { "Op", "string" }, { "Slow Writes", "number" },
+				{ "Docs Written", "number" }, { "Keys Inserted", "number" }, { "Keys Deleted", "number" }, { "Keys per Doc", "number" },
+				{ "Writes with Key Counts", "number" }, { "Total Duration (s)", "number" } }, rows);
+	}
+
+	private static void writeCommentTagSection(PrintWriter writer, CommentTagAccumulator.Coverage c, CommentTagAccumulator acc) {
+		writer.println("        <h2 id=\"cpu-by-comment-tag\">CPU by Application Tag</h2>");
+		writer.println("        <div class=\"summary\">");
+		writer.println("            <h3>Logged CPU Coverage</h3>");
+		writer.println("            <div class=\"summary-grid\">");
+		writeSummaryItem(writer, "Logged CPU", sec1(c.loggedCpuNanos) + " s (" + NUMBER_FORMAT.format(c.loggedCpuLines) + " lines)");
+		writeSummaryItem(writer, "Window", c.windowSeconds != null
+				? String.format("%.0f s (%s \u2192 %s)", c.windowSeconds, c.windowStart, c.windowEnd)
+				: "no timestamps in log");
+		writeSummaryItem(writer, "Avg Logged Cores", c.avgLoggedCores != null ? String.format("%.2f", c.avgLoggedCores) : "n/a (no window)");
+		String cores;
+		if (c.numCoresFound.isEmpty()) {
+			cores = "not in the log";
+		} else if (c.numCores == null) {
+			cores = "differing values in log: " + c.numCoresFound.keySet();
+		} else {
+			cores = String.valueOf(c.numCores);
+		}
+		writeSummaryItem(writer, "Host Cores", cores);
+		writeSummaryItem(writer, "% of Core Capacity", c.percentOfCapacity != null ? String.format("%.1f%%", c.percentOfCapacity)
+				: "n/a (core count " + (c.numCoresFound.isEmpty() ? "not in the log)" : "ambiguous)"));
+		writer.println("            </div>");
+		writer.println("        </div>");
+		writer.println("        <p>Logged CPU is the sum of <code>cpuNanos</code> over every log line in the window; it covers only operations slow enough to be logged, so it is a lower bound on mongod CPU. "
+				+ "Avg logged cores = logged CPU seconds / window seconds. Of the logged CPU, " + sec1(c.analyzedCpuNanos) + " s is in analyzed operations (tables below), "
+				+ sec1(c.namespaceFilteredCpuNanos) + " s in operations excluded by the namespace filter (always includes the config database), and "
+				+ sec1(c.otherUnanalyzedCpuNanos) + " s in other lines not analyzed as operations."
+				+ (c.unparsedCpuLines > 0 ? " " + NUMBER_FORMAT.format(c.unparsedCpuLines) + " lines had a cpuNanos value that could not be parsed and are not counted." : "")
+				+ "</p>");
+		writer.println("        <p>Tags come from the operation's comment: <code>command.comment</code>, then <code>filter/query.$comment</code>, then (getMore) <code>originatingCommand</code>. "
+				+ "App tags are length-prefixed (<code>7:code_ns,...</code>); proxy tags (<code>origin_uri=&lt;pod&gt;-mongobetween;...</code>) carry no application origin, so they are shown as "
+				+ escapeHtml(CommentTag.PROXY_ONLY) + " with the pod's deployment. Operations without a comment are " + escapeHtml(CommentTag.UNTAGGED)
+				+ "; comments that are not strings or match neither format are " + escapeHtml(CommentTag.UNRECOGNIZED) + ". "
+				+ "CPU % of Duration is computed over entries that logged both cpuNanos and durationMillis.</p>");
+
+		java.util.List<String[]> sourceRows = new java.util.ArrayList<>();
+		acc.getTagSources().forEach((k, v) -> sourceRows.add(new String[] { k, NUMBER_FORMAT.format(v[0]), sec1(v[1]),
+				acc.getAnalyzedCpuNanos() > 0 ? String.format("%.1f", v[1] * 100.0 / acc.getAnalyzedCpuNanos()) : "n/a" }));
+		writer.println("        <h3>Tag Sources</h3>");
+		writeSimpleTable(writer, "tagSourcesTable", new String[][] { { "Tag Status / Source", "string" }, { "Operations", "number" },
+				{ "CPU (s)", "number" }, { "% of Analyzed CPU", "number" } }, sourceRows);
+
+		writeCommentTagGroupTable(writer, "By origin_uri", "originTag", acc.getByOrigin(), acc.getAnalyzedCpuNanos());
+		writeCommentTagGroupTable(writer, "By code_fqn", "codeFqnTag", acc.getByCodeFqn(), acc.getAnalyzedCpuNanos());
+		writeCommentTagGroupTable(writer, "By origin_uri | code_fqn", "originCodeFqnTag", acc.getByOriginAndCodeFqn(), acc.getAnalyzedCpuNanos());
+	}
+
+	private static void writeCommentTagGroupTable(PrintWriter writer, String title, String idPrefix,
+			java.util.List<CommentTagAccumulator.Group> groups, long analyzedCpuNanos) {
+		writer.println("        <h3>" + escapeHtml(title) + " (" + NUMBER_FORMAT.format(groups.size()) + ")</h3>");
+		writer.println("        <div class=\"controls\">");
+		writer.println("            <input type=\"text\" id=\"" + idPrefix + "Filter\" class=\"filter-input\" placeholder=\"Filter by tag...\">");
+		writer.println("            <button class=\"clear-btn\" onclick=\"clearFilter('" + idPrefix + "Filter', '" + idPrefix + "Table')\">Clear Filter</button>");
+		writer.println("        </div>");
+		java.util.List<String[]> rows = new java.util.ArrayList<>();
+		for (CommentTagAccumulator.Group g : groups) {
+			boolean hasCpu = g.getCpuCount() > 0;
+			rows.add(new String[] {
+					g.getName(),
+					NUMBER_FORMAT.format(g.getCount()),
+					String.format("%.1f", g.getTotalDurationMs() / 1000.0),
+					g.getAvgDurationMs() != null ? String.format("%.1f", g.getAvgDurationMs()) : "n/a",
+					g.getMaxDurationMs() != null ? NUMBER_FORMAT.format(g.getMaxDurationMs()) : "n/a",
+					NUMBER_FORMAT.format(g.getCpuCount()),
+					hasCpu ? sec1(g.getTotalCpuNanos()) : "n/a",
+					hasCpu && analyzedCpuNanos > 0 ? String.format("%.1f", g.getTotalCpuNanos() * 100.0 / analyzedCpuNanos) : "n/a",
+					hasCpu ? String.format("%.2f", g.getAvgCpuNanos() / 1e6) : "n/a",
+					hasCpu ? String.format("%.1f", g.getMaxCpuNanos() / 1e6) : "n/a",
+					g.getCpuDurationPercent() != null ? String.format("%.0f", g.getCpuDurationPercent()) : "n/a" });
+		}
+		writeSimpleTable(writer, idPrefix + "Table", new String[][] { { "Tag", "string" }, { "Count", "number" },
+				{ "Total Duration (s)", "number" }, { "Avg Duration (ms)", "number" }, { "Max Duration (ms)", "number" },
+				{ "CPU Count", "number" }, { "Total CPU (s)", "number" }, { "% of Analyzed CPU", "number" },
+				{ "Avg CPU (ms)", "number" }, { "Max CPU (ms)", "number" }, { "CPU % of Duration", "number" } }, rows);
 	}
 
 	private static void writeSlowPlanningTable(PrintWriter writer, SlowPlanningAccumulator slowPlanningAccumulator, boolean redactQueries) {
@@ -2189,6 +2441,174 @@ public class HtmlReportGenerator {
 	                writer.println("                    </tr>");
 	            });
 
+	    writer.println("                </tbody>");
+	    writer.println("            </table>");
+	    writer.println("        </div>");
+	}
+
+	private static void writeSimpleTable(PrintWriter writer, String tableId, String[][] columns, java.util.List<String[]> rows) {
+	    writer.println("        <div class=\"table-container\">");
+	    writer.println("            <table id=\"" + tableId + "\">");
+	    writer.println("                <thead>");
+	    writer.println("                    <tr>");
+	    for (int i = 0; i < columns.length; i++) {
+	        writer.println("                        <th class=\"sortable\" onclick=\"sortTable('" + tableId + "', " + i
+	                + ", '" + columns[i][1] + "')\">" + columns[i][0] + "</th>");
+	    }
+	    writer.println("                    </tr>");
+	    writer.println("                </thead>");
+	    writer.println("                <tbody>");
+	    for (String[] row : rows) {
+	        writer.println("                    <tr>");
+	        for (int i = 0; i < row.length; i++) {
+	            String cls = "number".equals(columns[i][1]) ? " class=\"number\"" : "";
+	            String value = row[i] != null ? row[i] : "";
+	            if (value.length() > 120) {
+	                writer.println("                        <td class=\"truncated\" title=\"" + escapeHtml(value) + "\">"
+	                        + escapeHtml(truncate(value, 120)) + "</td>");
+	            } else {
+	                writer.println("                        <td" + cls + ">" + escapeHtml(value) + "</td>");
+	            }
+	        }
+	        writer.println("                    </tr>");
+	    }
+	    writer.println("                </tbody>");
+	    writer.println("            </table>");
+	    writer.println("        </div>");
+	}
+
+	private static void writeFindingsTables(PrintWriter writer, QueryFindings findings, boolean redactQueries) {
+	    writer.println("        <h2 id=\"findings\">Findings</h2>");
+	    writer.println("        <p>Query shapes worth fixing, ranked by total time. Mirrored reads are excluded. High scan ratio: at least "
+	            + QueryFindings.HIGH_RATIO + " docs or keys examined per document returned, with at least "
+	            + NUMBER_FORMAT.format(QueryFindings.MIN_AVG_EXAMINED) + " examined per execution. Not flagged: "
+	            + findings.getSmallCollectionScans() + " collection-scan shapes under " + QueryFindings.MIN_COLLSCAN_DOCS
+	            + " docs per execution, " + findings.getOplogScans() + " oplog-tailing shapes.</p>");
+	    String[][] columns = { { "Reason", "string" }, { "Query Hash", "string" }, { "Namespace", "string" },
+	            { "Op", "string" }, { "Count", "number" }, { "Total (s)", "number" }, { "Avg (ms)", "number" },
+	            { "Avg Docs Ex", "number" }, { "Avg Keys Ex", "number" }, { "Avg Returned", "number" },
+	            { "Plan", "string" }, { "Read Pref", "string" }, { "Nodes", "string" }, { "Query", "string" } };
+	    writer.println("        <h3>Collection Scans (" + findings.getCollectionScanCount() + " shapes)</h3>");
+	    writeSimpleTable(writer, "findingsCollscanTable", columns, findingRows(findings.getCollectionScans(), redactQueries));
+	    writer.println("        <h3>High Examined / Returned (" + findings.getHighScanRatioCount() + " shapes)</h3>");
+	    writeSimpleTable(writer, "findingsScanRatioTable", columns, findingRows(findings.getHighScanRatio(), redactQueries));
+	}
+
+	private static java.util.List<String[]> findingRows(java.util.List<QueryFindings.Finding> list, boolean redactQueries) {
+	    java.util.List<String[]> rows = new java.util.ArrayList<>();
+	    for (QueryFindings.Finding f : list) {
+	        var e = f.entry;
+	        String nodes = e.getNodeCounts().entrySet().stream()
+	                .sorted(Map.Entry.<String, Long>comparingByValue().reversed()).limit(3)
+	                .map(n -> shortNode(n.getKey()) + "×" + n.getValue())
+	                .collect(java.util.stream.Collectors.joining(", "));
+	        String query = e.getSanitizedQuery() != null ? LogRedactionUtil.processLogMessage(e.getSanitizedQuery(), redactQueries) : "";
+	        rows.add(new String[] { f.reason, e.getKey().getQueryHash(), e.getKey().getNamespace().toString(),
+	                e.getKey().getOperation(), NUMBER_FORMAT.format(e.getCount()),
+	                String.format("%.1f", e.getTotalDurationMs() / 1000.0), NUMBER_FORMAT.format(e.getAvg()),
+	                NUMBER_FORMAT.format(e.getTotalDocsExamined() / e.getCount()),
+	                NUMBER_FORMAT.format(e.getTotalKeysExamined() / e.getCount()),
+	                String.format("%.1f", (double) e.getTotalReturned() / e.getCount()), e.getPlanSummary(),
+	                e.getReadPreferenceSummary().replace("<br>", "; "), nodes, query });
+	    }
+	    return rows;
+	}
+
+	/** Shorten an Atlas host name to its shard/member part for table display. */
+	private static String shortNode(String node) {
+	    java.util.regex.Matcher m = java.util.regex.Pattern.compile("(shard|config)-\\d+-\\d+").matcher(node);
+	    String base = m.find() ? m.group() : node;
+	    return node.endsWith("(mongos)") ? base + " (mongos)" : base;
+	}
+
+	private static void writeNodesAndBalance(PrintWriter writer, NodeStatsAccumulator nodeStats) {
+	    BalanceAnalyzer balance = new BalanceAnalyzer(nodeStats);
+	    writer.println("        <h2 id=\"nodes\">Nodes &amp; Balance</h2>");
+	    writer.println("        <p>Shards and same-role nodes compared on non-mirrored slow-operation time against their group median "
+	            + "(flagged at &ge;" + BalanceAnalyzer.HIGH_RATIO + "&times; or &le;" + BalanceAnalyzer.LOW_RATIO
+	            + "&times;). Roles are inferred from each node's log.</p>");
+
+	    java.util.List<String[]> flagRows = new java.util.ArrayList<>();
+	    for (BalanceAnalyzer.Flag f : balance.getFlags()) {
+	        String top = f.topNamespaces.stream()
+	                .map(ns -> ns.namespace + " " + String.format("%.0fs", ns.durationMs / 1000.0) + " (in slow logs of " + ns.shardsInSlowLogs + " shard" + (ns.shardsInSlowLogs == 1 ? "" : "s") + ")")
+	                .collect(java.util.stream.Collectors.joining("; "));
+	        flagRows.add(new String[] { f.scope, f.group, "shard".equals(f.scope) ? "shard-" + f.subject : shortNode(f.subject),
+	                f.direction, String.format("%.1f", f.durationMs / 1000.0), String.format("%.1f", f.groupMedianMs / 1000.0),
+	                String.format("%.1f", f.ratio), top, f.likelyCause });
+	    }
+	    writer.println("        <h3>Unevenness Flags (" + flagRows.size() + ")</h3>");
+	    writeSimpleTable(writer, "balanceFlagsTable", new String[][] { { "Scope", "string" }, { "Group", "string" },
+	            { "Subject", "string" }, { "Direction", "string" }, { "Slow Time (s)", "number" }, { "Group Median (s)", "number" },
+	            { "× Median", "number" }, { "Top Namespaces", "string" }, { "Likely Cause", "string" } }, flagRows);
+
+	    java.util.List<String[]> nodeRows = new java.util.ArrayList<>();
+	    for (NodeStatsAccumulator.NodeStats n : nodeStats.getNodes()) {
+	        String readPrefs = n.getReadPreferenceCounts().entrySet().stream()
+	                .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
+	                .map(e -> e.getKey() + " " + NUMBER_FORMAT.format(e.getValue()))
+	                .collect(java.util.stream.Collectors.joining(", "));
+	        String topNs = n.getNamespaceDurationMs().entrySet().stream()
+	                .sorted(Map.Entry.<String, Long>comparingByValue().reversed()).limit(3)
+	                .map(e -> e.getKey() + " " + String.format("%.0fs", e.getValue() / 1000.0))
+	                .collect(java.util.stream.Collectors.joining("; "));
+	        nodeRows.add(new String[] { shortNode(n.getIdentity().getNode()), n.getIdentity().getProcessType(), n.getRole(),
+	                n.getRoleBasis(), NUMBER_FORMAT.format(n.getCount()), String.format("%.1f", n.getNonMirroredDurationMs() / 1000.0),
+	                NUMBER_FORMAT.format(n.getMirroredCount()), NUMBER_FORMAT.format(n.getWriteCount()),
+	                NUMBER_FORMAT.format(n.getCollscanCount()), readPrefs, topNs });
+	    }
+	    writer.println("        <h3>Nodes</h3>");
+	    writeSimpleTable(writer, "nodesTable", new String[][] { { "Node", "string" }, { "Process", "string" },
+	            { "Role", "string" }, { "Role Basis", "string" }, { "Slow Ops", "number" }, { "Non-Mirrored Time (s)", "number" },
+	            { "Mirrored Ops", "number" }, { "Writes", "number" }, { "COLLSCANs", "number" }, { "Read Preferences", "string" },
+	            { "Top Namespaces", "string" } }, nodeRows);
+	}
+
+	private static void writeTimelineTables(PrintWriter writer, TimelineAccumulator timeline) {
+	    writer.println("        <h2 id=\"timeline\">Slow Operation Timeline (UTC)</h2>");
+	    writer.println("        <p>Bursts where many operations across unrelated namespaces are slow in the same minute usually point to a stalled node or shard rather than individual queries.</p>");
+	    if (timeline.getMissingTimestamp() > 0 || timeline.getUnparseableTimestamp() > 0) {
+	        writer.println("        <p>Not in timeline: " + NUMBER_FORMAT.format(timeline.getMissingTimestamp())
+	                + " operations without a timestamp, " + NUMBER_FORMAT.format(timeline.getUnparseableTimestamp())
+	                + " with an unparseable timestamp.</p>");
+	    }
+
+	    writer.println("        <h3>Top Minutes by Total Slow Time</h3>");
+	    writeTimelineTable(writer, "timelineMinutesTable", "Minute", timeline.getTopMinutes(25));
+
+	    writer.println("        <h3>Hourly</h3>");
+	    writeTimelineTable(writer, "timelineHourlyTable", "Hour", timeline.getHourly());
+	}
+
+	private static void writeTimelineTable(PrintWriter writer, String tableId, String startLabel,
+	        java.util.List<TimelineAccumulator.Bucket> buckets) {
+	    writer.println("        <div class=\"table-container\">");
+	    writer.println("            <table id=\"" + tableId + "\">");
+	    writer.println("                <thead>");
+	    writer.println("                    <tr>");
+	    String[][] columns = { { startLabel, "string" }, { "Slow Ops", "number" }, { "Total Slow Time (s)", "number" },
+	            { "Max (ms)", "number" }, { "Shard Wait %", "number" }, { "Namespaces", "number" }, { "Top Nodes (non-mirrored)", "string" } };
+	    for (int i = 0; i < columns.length; i++) {
+	        writer.println("                        <th class=\"sortable\" onclick=\"sortTable('" + tableId + "', " + i
+	                + ", '" + columns[i][1] + "')\">" + columns[i][0] + "</th>");
+	    }
+	    writer.println("                    </tr>");
+	    writer.println("                </thead>");
+	    writer.println("                <tbody>");
+	    for (TimelineAccumulator.Bucket bucket : buckets) {
+	        writer.println("                    <tr>");
+	        writer.println("                        <td>" + escapeHtml(bucket.getStart()) + "</td>");
+	        writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(bucket.getCount()) + "</td>");
+	        writer.println("                        <td class=\"number\">" + String.format("%.1f", bucket.getTotalDurationMs() / 1000.0) + "</td>");
+	        writer.println("                        <td class=\"number\">" + NUMBER_FORMAT.format(bucket.getMaxDurationMs()) + "</td>");
+	        writer.println("                        <td class=\"number\">" + String.format("%.1f%%", bucket.getRemoteOpWaitPercentage()) + "</td>");
+	        writer.println("                        <td class=\"number\">" + bucket.getDistinctNamespaces() + "</td>");
+	        String topNodes = bucket.getTopNodes(3).stream()
+	                .map(n -> shortNode(n.getKey()) + " " + String.format("%.0fs", n.getValue()[1] / 1000.0))
+	                .collect(java.util.stream.Collectors.joining(", "));
+	        writer.println("                        <td>" + escapeHtml(topNodes) + "</td>");
+	        writer.println("                    </tr>");
+	    }
 	    writer.println("                </tbody>");
 	    writer.println("            </table>");
 	    writer.println("        </div>");
@@ -2785,6 +3205,8 @@ public class HtmlReportGenerator {
 	    writer.println("                    input.addEventListener('input', () => filterTable('queryHashFilter', 'queryHashTable'));");
 	    writer.println("                } else if (tableId === 'queryHashShardsTable') {");
 	    writer.println("                    input.addEventListener('input', () => filterTable('queryHashShardsFilter', 'queryHashShardsTable'));");
+	    writer.println("                } else if (tableId.endsWith('TagTable')) {");
+	    writer.println("                    input.addEventListener('input', () => filterTable(input.id, tableId));");
 	    writer.println("                } else if (tableId === 'cpuQueryHashTable') {");
 	    writer.println("                    input.addEventListener('input', () => filterTable('cpuQueryHashFilter', 'cpuQueryHashTable'));");
 	    writer.println("                } else if (tableId === 'errorCodesTable') {");

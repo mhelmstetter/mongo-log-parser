@@ -45,6 +45,12 @@
 								<filter>
 									<artifact>*:*</artifact>
 								</filter>
+								<filter>
+									<artifact>com.helmstetter:atlas-client</artifact>
+									<excludes>
+										<exclude>logback.xml</exclude>
+									</excludes>
+								</filter>
 							</filters>
 						</configuration>
 					</execution>
@@ -54,6 +60,39 @@
 	</build>
 
 	<dependencies>
+
+		<dependency>
+			<groupId>com.helmstetter</groupId>
+			<artifactId>atlas-client</artifactId>
+			<version>1.0.0</version>
+			<exclusions>
+				<!-- only the API clients are used; skip CLI/charting/storage dependencies -->
+				<exclusion>
+					<groupId>org.springframework.boot</groupId>
+					<artifactId>spring-boot-starter</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>org.mongodb</groupId>
+					<artifactId>mongodb-driver-sync</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>org.jfree</groupId>
+					<artifactId>jfreechart</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>org.jfree</groupId>
+					<artifactId>jfreesvg</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>com.googlecode.lanterna</groupId>
+					<artifactId>lanterna</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>info.picocli</groupId>
+					<artifactId>picocli</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
 
 		<dependency>
 			<groupId>com.fasterxml.jackson.core</groupId>

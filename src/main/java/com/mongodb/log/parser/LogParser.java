@@ -38,9 +38,15 @@ import com.mongodb.log.parser.accumulator.AppNameConnectionStatsAccumulator;
 import com.mongodb.log.parser.accumulator.TwoPassDriverStatsAccumulator;
 import com.mongodb.log.parser.accumulator.ErrorCodeAccumulator;
 import com.mongodb.log.parser.accumulator.IndexStatsAccumulator;
+import com.mongodb.log.parser.accumulator.NodeStatsAccumulator;
 import com.mongodb.log.parser.accumulator.PlanCacheAccumulator;
 import com.mongodb.log.parser.accumulator.QueryHashAccumulator;
+import com.mongodb.log.parser.accumulator.ShardAccumulatorSet;
 import com.mongodb.log.parser.accumulator.SlowPlanningAccumulator;
+import com.mongodb.log.parser.accumulator.CommentTagAccumulator;
+import com.mongodb.log.parser.accumulator.MaintenanceAccumulator;
+import com.mongodb.log.parser.accumulator.WriteKeysAccumulator;
+import com.mongodb.log.parser.accumulator.TimelineAccumulator;
 import com.mongodb.log.parser.accumulator.TransactionAccumulator;
 import com.mongodb.util.MimeTypes;
 
@@ -57,8 +63,33 @@ public class LogParser implements Callable<Integer> {
 
     static final Logger logger = LoggerFactory.getLogger(LogParser.class);
 
-    @Option(names = { "-f", "--files" }, description = "MongoDB log file(s)", required = true, arity = "1..*")
+    @Option(names = { "-f", "--files" }, description = "MongoDB log file(s)", arity = "1..*")
     private String[] fileNames;
+
+    @Option(names = {"--atlasCluster"}, description = "Download logs for this Atlas cluster via the Atlas API and parse them (instead of --files)")
+    private String atlasCluster;
+
+    @Option(names = {"--atlasProject"}, description = "Atlas project ID of --atlasCluster")
+    private String atlasProject;
+
+    @Option(names = {"--atlasStart"}, description = "Atlas log start time (2024-01-15T10:00:00Z, 2024-01-15T10:00:00 UTC, or 2024-01-15)")
+    private String atlasStart;
+
+    @Option(names = {"--atlasEnd"}, description = "Atlas log end time (same formats as --atlasStart)")
+    private String atlasEnd;
+
+    @Option(names = {"--atlasConfig"}, description = "Properties file with apiPublicKey and apiPrivateKey (e.g. atlas-client.properties)")
+    private String atlasConfigFile;
+
+    @Option(names = {"--atlasOutputDir"}, description = "Directory for downloaded Atlas logs (default: atlas-logs)", defaultValue = "atlas-logs")
+    private String atlasOutputDir;
+
+    @Option(names = {"--atlasThreads"}, description = "Atlas log files downloaded at the same time (default: 4)", defaultValue = "4")
+    private int atlasThreads;
+
+    @Option(names = {"--atlasDownloadOnly"}, description = "Download (or finish downloading) the Atlas logs and exit without parsing; "
+            + "complete files already in --atlasOutputDir are reused")
+    private boolean atlasDownloadOnly;
 
     @Option(names = { "-c", "--csv" }, description = "CSV output file")
     private String csvOutputFile;
@@ -126,6 +157,17 @@ public class LogParser implements Callable<Integer> {
     @Option(names = {"--limit"}, description = "Limit parsing to the first N lines of each log file")
     private Long lineLimit = null;
 
+    @Option(names = {"--from"}, description = "Only parse lines at or after this time (2024-01-15T10:00:00Z, 2024-01-15T10:00:00 UTC, or 2024-01-15)")
+    private String fromTime;
+
+    @Option(names = {"--to"}, description = "Only parse lines before this time (same formats as --from)")
+    private String toTime;
+
+    private java.time.Instant windowFrom;
+    private java.time.Instant windowTo;
+    private long linesOutsideWindow = 0;
+    private long linesWithoutTimestamp = 0;
+
     // Statistics tracking
     private AtomicLong totalParseErrors = new AtomicLong(0);
     private AtomicLong totalNoAttr = new AtomicLong(0);
@@ -148,6 +190,11 @@ public class LogParser implements Callable<Integer> {
     private final IndexStatsAccumulator indexStatsAccumulator;
     private final TwoPassDriverStatsAccumulator driverStatsAccumulator;
     private final AppNameConnectionStatsAccumulator appNameConnectionStatsAccumulator;
+    private final TimelineAccumulator timelineAccumulator;
+    private final NodeStatsAccumulator nodeStatsAccumulator;
+    private final CommentTagAccumulator commentTagAccumulator;
+    private final MaintenanceAccumulator maintenanceAccumulator;
+    private final WriteKeysAccumulator writeKeysAccumulator;
     
     private FilterConfig filterConfig;
     private int unmatchedCount = 0;
@@ -187,6 +234,11 @@ public class LogParser implements Callable<Integer> {
         indexStatsAccumulator = new IndexStatsAccumulator();
         driverStatsAccumulator = new TwoPassDriverStatsAccumulator();
         appNameConnectionStatsAccumulator = new AppNameConnectionStatsAccumulator();
+        timelineAccumulator = new TimelineAccumulator();
+        nodeStatsAccumulator = new NodeStatsAccumulator();
+        commentTagAccumulator = new CommentTagAccumulator();
+        maintenanceAccumulator = new MaintenanceAccumulator();
+        writeKeysAccumulator = new WriteKeysAccumulator();
         filterConfig = new FilterConfig();
     }
 
@@ -194,6 +246,21 @@ public class LogParser implements Callable<Integer> {
     public Integer call() throws Exception {
         // Improved console output
         System.out.println("🚀 MongoDB Log Analyzer");
+
+        if (atlasDownloadOnly && atlasCluster == null) {
+            throw new CommandLine.ParameterException(new CommandLine(this),
+                    "--atlasDownloadOnly requires --atlasCluster");
+        }
+        if (atlasCluster != null) {
+            downloadAtlasLogs();
+            if (atlasDownloadOnly) {
+                return 0;
+            }
+        } else if (fileNames == null) {
+            throw new CommandLine.ParameterException(new CommandLine(this),
+                    "Either --files or --atlasCluster must be specified");
+        }
+
         System.out.println("📁 Processing " + fileNames.length + " file(s)...");
         
         // Show redaction status early in processing
@@ -205,6 +272,20 @@ public class LogParser implements Callable<Integer> {
         
         if (!namespaceFilters.isEmpty()) {
             System.out.println("🔍 Namespace filters: " + String.join(", ", namespaceFilters));
+        }
+
+        if (fromTime != null) {
+            windowFrom = AtlasLogDownloader.parseTime(fromTime);
+        }
+        if (toTime != null) {
+            windowTo = AtlasLogDownloader.parseTime(toTime);
+        }
+        if (windowFrom != null && windowTo != null && !windowFrom.isBefore(windowTo)) {
+            throw new CommandLine.ParameterException(new CommandLine(this), "--from must be before --to");
+        }
+        if (windowFrom != null || windowTo != null) {
+            System.out.println("⏱️  Time window: " + (windowFrom != null ? windowFrom : "start") + " .. "
+                    + (windowTo != null ? windowTo : "end") + " (UTC; lines outside it are skipped)");
         }
 
         long overallStart = System.currentTimeMillis();
@@ -346,6 +427,11 @@ public class LogParser implements Callable<Integer> {
                     indexStatsAccumulator,
                     enableDriverStats ? driverStatsAccumulator : null,
                     enableAppNameStats ? appNameConnectionStatsAccumulator : null,
+                    timelineAccumulator,
+                    nodeStatsAccumulator,
+                    commentTagAccumulator,
+                    maintenanceAccumulator,
+                    writeKeysAccumulator,
                     operationTypeStats,
                     redactQueries,
                     earliestTimestamp,
@@ -405,10 +491,17 @@ public class LogParser implements Callable<Integer> {
                     transactionAccumulator,
                     indexStatsAccumulator,
                     driverStatsAccumulator,
+                    timelineAccumulator,
+                    nodeStatsAccumulator,
+                    commentTagAccumulator,
+                    maintenanceAccumulator,
+                    writeKeysAccumulator,
                     operationTypeStats,
                     redactQueries,
                     earliestTimestamp,
-                    latestTimestamp
+                    latestTimestamp,
+                    windowFrom != null ? windowFrom.toString() : null,
+                    windowTo != null ? windowTo.toString() : null
                 );
                 System.out.println("🎉 JSON report completed: " + jsonOutputFile);
             } catch (OutOfMemoryError e) {
@@ -438,6 +531,27 @@ public class LogParser implements Callable<Integer> {
         }
 
         return 0;
+    }
+
+    private void downloadAtlasLogs() throws IOException {
+        if (fileNames != null) {
+            throw new CommandLine.ParameterException(new CommandLine(this),
+                    "--files and --atlasCluster cannot be used together");
+        }
+        List<String> missing = new ArrayList<>();
+        if (atlasProject == null) missing.add("--atlasProject");
+        if (atlasStart == null) missing.add("--atlasStart");
+        if (atlasEnd == null) missing.add("--atlasEnd");
+        if (atlasConfigFile == null) missing.add("--atlasConfig");
+        if (!missing.isEmpty()) {
+            throw new CommandLine.ParameterException(new CommandLine(this),
+                    "--atlasCluster requires " + String.join(", ", missing));
+        }
+
+        AtlasLogDownloader downloader = new AtlasLogDownloader(atlasConfigFile);
+        List<java.nio.file.Path> files = downloader.download(atlasProject, atlasCluster,
+                AtlasLogDownloader.parseTime(atlasStart), AtlasLogDownloader.parseTime(atlasEnd), atlasOutputDir, atlasThreads);
+        fileNames = files.stream().map(java.nio.file.Path::toString).toArray(String[]::new);
     }
 
     private void loadConfiguration() {
@@ -578,6 +692,22 @@ public class LogParser implements Callable<Integer> {
         }
     }
     
+    /**
+     * The current file's shard accumulators, or null when shard tracking is off
+     * or the file name has no shard info. Tasks write to these in addition to the global ones.
+     */
+    private ShardAccumulatorSet currentShardTargets() {
+        if (!enableShardTracking || currentShardInfo == null) {
+            return null;
+        }
+        return new ShardAccumulatorSet(shardAccumulators.get(currentShardInfo),
+                shardPlanCacheAccumulators.get(currentShardInfo),
+                shardQueryHashAccumulators.get(currentShardInfo),
+                shardErrorCodeAccumulators.get(currentShardInfo),
+                shardTransactionAccumulators.get(currentShardInfo),
+                shardIndexStatsAccumulators.get(currentShardInfo));
+    }
+
     private void initializeShardAccumulators(ShardInfo shardInfo) {
         shardAccumulators.computeIfAbsent(shardInfo, k -> new Accumulator());
         shardTtlAccumulators.computeIfAbsent(shardInfo, k -> new Accumulator());
@@ -661,6 +791,17 @@ public class LogParser implements Callable<Integer> {
                 break;
             }
 
+            if (outsideTimeWindow(currentLine, true)) {
+                continue;
+            }
+
+            // Log-wide CPU coverage and host core count, before line filtering
+            recordCpuCoverage(currentLine);
+            // Index builds, chunk migrations and other sharding metadata events, before line filtering
+            if (MaintenanceAccumulator.isCandidate(currentLine)) {
+                maintenanceAccumulator.recordLine(currentLine, NodeIdentity.fromFilename(file.getName()).getNode());
+            }
+
             // Process TTL operations before filtering
             if (isTtlOperation(currentLine)) {
                 processTtlOperation(currentLine);
@@ -676,28 +817,15 @@ public class LogParser implements Callable<Integer> {
             processedCount++;
 
             if (lines.size() >= 25000) {
-                // Use shard-specific accumulators if shard tracking is enabled
-                Accumulator targetAccumulator = (enableShardTracking && currentShardInfo != null) 
-                    ? shardAccumulators.get(currentShardInfo) : accumulator;
-                PlanCacheAccumulator targetPlanCache = (enableShardTracking && currentShardInfo != null)
-                    ? shardPlanCacheAccumulators.get(currentShardInfo) : planCacheAccumulator;
-                QueryHashAccumulator targetQueryHash = (enableShardTracking && currentShardInfo != null)
-                    ? shardQueryHashAccumulators.get(currentShardInfo) : queryHashAccumulator;
-                ErrorCodeAccumulator targetErrorCode = (enableShardTracking && currentShardInfo != null)
-                    ? shardErrorCodeAccumulators.get(currentShardInfo) : errorCodeAccumulator;
-                TransactionAccumulator targetTransaction = (enableShardTracking && currentShardInfo != null)
-                    ? shardTransactionAccumulators.get(currentShardInfo) : transactionAccumulator;
-                IndexStatsAccumulator targetIndexStats = (enableShardTracking && currentShardInfo != null)
-                    ? shardIndexStatsAccumulators.get(currentShardInfo) : indexStatsAccumulator;
-                    
                 completionService.submit(
-                    new LogParserTask(new ArrayList<>(lines), targetAccumulator, targetPlanCache, targetQueryHash,
-                    		slowPlanningAccumulator, targetErrorCode, targetTransaction, targetIndexStats,
+                    new LogParserTask(new ArrayList<>(lines), accumulator, planCacheAccumulator, queryHashAccumulator,
+                    		slowPlanningAccumulator, errorCodeAccumulator, transactionAccumulator, indexStatsAccumulator,
                     		enableDriverStats ? driverStatsAccumulator : null,
                     		enableAppNameStats ? appNameConnectionStatsAccumulator : null,
                     		file.getName(),
                     		operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this,
-                    		logQueryWriter));
+                    		logQueryWriter, currentShardTargets(), timelineAccumulator,
+                    		nodeStatsAccumulator));
                 submittedTasks++;
                 lines.clear();
                 
@@ -752,28 +880,15 @@ public class LogParser implements Callable<Integer> {
 
         // Submit remaining lines
         if (!lines.isEmpty()) {
-            // Use shard-specific accumulators if shard tracking is enabled
-            Accumulator targetAccumulator = (enableShardTracking && currentShardInfo != null) 
-                ? shardAccumulators.get(currentShardInfo) : accumulator;
-            PlanCacheAccumulator targetPlanCache = (enableShardTracking && currentShardInfo != null)
-                ? shardPlanCacheAccumulators.get(currentShardInfo) : planCacheAccumulator;
-            QueryHashAccumulator targetQueryHash = (enableShardTracking && currentShardInfo != null)
-                ? shardQueryHashAccumulators.get(currentShardInfo) : queryHashAccumulator;
-            ErrorCodeAccumulator targetErrorCode = (enableShardTracking && currentShardInfo != null)
-                ? shardErrorCodeAccumulators.get(currentShardInfo) : errorCodeAccumulator;
-            TransactionAccumulator targetTransaction = (enableShardTracking && currentShardInfo != null)
-                ? shardTransactionAccumulators.get(currentShardInfo) : transactionAccumulator;
-            IndexStatsAccumulator targetIndexStats = (enableShardTracking && currentShardInfo != null)
-                ? shardIndexStatsAccumulators.get(currentShardInfo) : indexStatsAccumulator;
-                
             completionService.submit(
-                new LogParserTask(new ArrayList<>(lines), targetAccumulator, targetPlanCache, targetQueryHash,
-                		slowPlanningAccumulator, targetErrorCode, targetTransaction, targetIndexStats,
+                new LogParserTask(new ArrayList<>(lines), accumulator, planCacheAccumulator, queryHashAccumulator,
+                		slowPlanningAccumulator, errorCodeAccumulator, transactionAccumulator, indexStatsAccumulator,
                 		enableDriverStats ? driverStatsAccumulator : null,
                 		enableAppNameStats ? appNameConnectionStatsAccumulator : null,
                 		file.getName(),
                 		operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this,
-                		logQueryWriter));
+                		logQueryWriter, currentShardTargets(), timelineAccumulator,
+                    		nodeStatsAccumulator));
             submittedTasks++;
         }
 
@@ -930,6 +1045,11 @@ public class LogParser implements Callable<Integer> {
             return false;
         }
 
+        // Never ignore replica set state transitions (node roles)
+        if (line.contains("\"id\":" + LogParserTask.REPL_STATE_TRANSITION_ID + ",")) {
+            return false;
+        }
+
         // Never ignore client metadata messages (for driver statistics)
         if (line.contains("\"msg\":\"client metadata\"")) {
             return false;
@@ -978,13 +1098,18 @@ public class LogParser implements Callable<Integer> {
                     Long numDeleted = getMetric(attr, "numDeleted");
                     Long durationMs = getMetric(attr, "durationMillis");
                     
-                    // Use shard-specific accumulator if shard tracking is enabled
-                    Accumulator targetTtlAccumulator = (enableShardTracking && currentShardInfo != null)
-                        ? shardTtlAccumulators.get(currentShardInfo) : ttlAccumulator;
-                    
-                    synchronized (targetTtlAccumulator) {
-                        targetTtlAccumulator.accumulate(null, "ttl_delete", ns, durationMs, 
+                    synchronized (ttlAccumulator) {
+                        ttlAccumulator.accumulate(null, "ttl_delete", ns, durationMs,
                                                 null, null, numDeleted, null, null);
+                    }
+
+                    // Also track per shard when shard tracking is enabled
+                    if (enableShardTracking && currentShardInfo != null) {
+                        Accumulator shardTtlAccumulator = shardTtlAccumulators.get(currentShardInfo);
+                        synchronized (shardTtlAccumulator) {
+                            shardTtlAccumulator.accumulate(null, "ttl_delete", ns, durationMs,
+                                                    null, null, numDeleted, null, null);
+                        }
                     }
                 }
             }
@@ -1064,8 +1189,18 @@ public class LogParser implements Callable<Integer> {
                 totalParseErrors.get(), totalNoAttr.get(), totalNoCommand.get(), totalNoNs.get(), totalFoundOps.get());
         }
 
+        if (windowFrom != null || windowTo != null) {
+            System.out.printf("⏱️  %s: skipped %,d lines outside the time window and %,d lines without a timestamp%n",
+                    file.getName(), linesOutsideWindow, linesWithoutTimestamp);
+            linesOutsideWindow = 0;
+            linesWithoutTimestamp = 0;
+        }
+
         if (totalFoundOps.get() == 0) {
             System.err.println("⚠️  WARNING: No operations were successfully parsed!");
+            if (windowFrom != null || windowTo != null) {
+                System.err.println("   Time window applied: " + windowFrom + " .. " + windowTo + " (check that the logs cover it)");
+            }
             System.err.println("   This might indicate wrong log format, excessive filtering, or namespace filter mismatch");
             if (!namespaceFilters.isEmpty()) {
                 System.err.println("   Namespace filters applied: " + namespaceFilters);
@@ -1206,6 +1341,72 @@ public class LogParser implements Callable<Integer> {
         this.namespaceFilters.add(namespaceFilter);
     }
     
+    /**
+     * True when a --from/--to window is set and the line falls outside it. A line without a "$date"
+     * timestamp is outside the window too, and counted, so it is reported rather than silently included.
+     */
+    private boolean outsideTimeWindow(String line, boolean count) {
+        if (windowFrom == null && windowTo == null) {
+            return false;
+        }
+        int i = line.indexOf("\"$date\":\"");
+        if (i < 0) {
+            if (count && !line.isEmpty()) linesWithoutTimestamp++;
+            return true;
+        }
+        int start = i + 9;
+        int end = line.indexOf('"', start);
+        if (end < 0) {
+            throw new IllegalStateException("Unterminated $date in log line: " + line.substring(0, Math.min(200, line.length())));
+        }
+        java.time.Instant t = java.time.OffsetDateTime.parse(line.substring(start, end)).toInstant();
+        boolean outside = (windowFrom != null && t.isBefore(windowFrom)) || (windowTo != null && !t.isBefore(windowTo));
+        if (outside && count) linesOutsideWindow++;
+        return outside;
+    }
+
+    private static final java.util.regex.Pattern CPU_NANOS = java.util.regex.Pattern.compile("\"cpuNanos\":(\\d+)[,}]");
+    private static final java.util.regex.Pattern NUM_CORES = java.util.regex.Pattern.compile("\"numCores\":(\\d+)[,}]");
+
+    /**
+     * Every line carrying cpuNanos counts toward logged CPU, whether or not it becomes an analyzed
+     * operation. A line where cpuNanos does not appear exactly once as an integer is counted as unparsed.
+     */
+    private void recordCpuCoverage(String line) {
+        if (line.contains("\"cpuNanos\"")) {
+            java.util.regex.Matcher m = CPU_NANOS.matcher(line);
+            if (m.find()) {
+                long cpu = Long.parseLong(m.group(1));
+                if (m.find()) {
+                    commentTagAccumulator.recordUnparsedCpuLine();
+                } else {
+                    commentTagAccumulator.recordLoggedCpu(cpu);
+                }
+            } else {
+                commentTagAccumulator.recordUnparsedCpuLine();
+            }
+        }
+        if (line.contains("\"numCores\"")) {
+            java.util.regex.Matcher m = NUM_CORES.matcher(line);
+            while (m.find()) {
+                commentTagAccumulator.recordNumCores(Long.parseLong(m.group(1)),
+                        line.substring(0, Math.min(300, line.length())));
+            }
+        }
+    }
+
+    public CommentTagAccumulator getCommentTagAccumulator() {
+        return commentTagAccumulator;
+    }
+
+    public MaintenanceAccumulator getMaintenanceAccumulator() {
+        return maintenanceAccumulator;
+    }
+
+    public WriteKeysAccumulator getWriteKeysAccumulator() {
+        return writeKeysAccumulator;
+    }
+
     public synchronized void updateTimestamps(String timestamp) {
         if (timestamp != null) {
             if (earliestTimestamp == null || timestamp.compareTo(earliestTimestamp) < 0) {
@@ -1240,6 +1441,10 @@ public class LogParser implements Callable<Integer> {
             if (lineLimit != null && lineNum > lineLimit) {
                 System.out.printf("📊 Pass 1: Reached line limit of %d lines, stopping parsing\n", lineLimit);
                 break;
+            }
+
+            if (outsideTimeWindow(currentLine, false)) {
+                continue;
             }
 
             if (shouldIgnoreLine(currentLine)) {
@@ -1389,6 +1594,17 @@ public class LogParser implements Callable<Integer> {
                 break;
             }
 
+            if (outsideTimeWindow(currentLine, true)) {
+                continue;
+            }
+
+            // Log-wide CPU coverage and host core count, before line filtering
+            recordCpuCoverage(currentLine);
+            // Index builds, chunk migrations and other sharding metadata events, before line filtering
+            if (MaintenanceAccumulator.isCandidate(currentLine)) {
+                maintenanceAccumulator.recordLine(currentLine, NodeIdentity.fromFilename(file.getName()).getNode());
+            }
+
             // Process TTL operations before filtering
             if (isTtlOperation(currentLine)) {
                 processTtlOperation(currentLine);
@@ -1408,7 +1624,8 @@ public class LogParser implements Callable<Integer> {
                     		slowPlanningAccumulator, errorCodeAccumulator, transactionAccumulator, indexStatsAccumulator,
                     		enableDriverStats ? driverStatsAccumulator : null, enableAppNameStats ? appNameConnectionStatsAccumulator : null, file.getName(),
                     		operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this,
-                    		logQueryWriter));
+                    		logQueryWriter, currentShardTargets(), timelineAccumulator,
+                    		nodeStatsAccumulator));
                 submittedTasks++;
                 lines.clear();
             }
@@ -1421,7 +1638,8 @@ public class LogParser implements Callable<Integer> {
                 		slowPlanningAccumulator, errorCodeAccumulator, transactionAccumulator, indexStatsAccumulator,
                 		null, enableAppNameStats ? appNameConnectionStatsAccumulator : null, file.getName(),
                 		operationTypeStats, debug, namespaceFilters, totalFilteredByNamespace, redactQueries, this,
-                		logQueryWriter));
+                		logQueryWriter, currentShardTargets(), timelineAccumulator,
+                    		nodeStatsAccumulator));
             submittedTasks++;
         }
 
@@ -1438,6 +1656,12 @@ public class LogParser implements Callable<Integer> {
         executor.awaitTermination(10, TimeUnit.MINUTES);
         
         in.close();
+        if (windowFrom != null || windowTo != null) {
+            System.out.printf("⏱️  %s: skipped %,d lines outside the time window and %,d lines without a timestamp%n",
+                    file.getName(), linesOutsideWindow, linesWithoutTimestamp);
+            linesOutsideWindow = 0;
+            linesWithoutTimestamp = 0;
+        }
     }
     
     private void readPass2(File file) throws IOException {
@@ -1458,6 +1682,10 @@ public class LogParser implements Callable<Integer> {
             if (lineLimit != null && lineNum > lineLimit) {
                 System.out.printf("📊 Pass 2: Reached line limit of %d lines, stopping parsing\n", lineLimit);
                 break;
+            }
+
+            if (outsideTimeWindow(currentLine, false)) {
+                continue;
             }
 
             // Fast filtering: only process lines relevant to Pass 2

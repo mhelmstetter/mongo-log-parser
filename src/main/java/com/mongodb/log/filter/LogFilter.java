@@ -382,15 +382,11 @@ public class LogFilter implements Callable<Integer> {
                 arr.add(first);
                 arr.add(new TextNode("<truncated " + (size - 1) + " elements>"));
             }
-            // Recursively filter array elements
-            for (JsonNode arrayElement : childNode) {
-                filterJsonInternal(arrayElement, ignoreKeys, preserveText, preserveArrays);
-            }
+            // No recursion here: the caller (filterJsonInternal) descends into childNode once.
+            // Recursing here as well doubled the work at every nesting level (2^depth).
         } else if (childNode.isObject()) {
             if (childNode.isEmpty()) {
                 ((ObjectNode) parent).remove(fieldName);
-            } else {
-                filterJsonInternal(childNode, ignoreKeys, preserveText, preserveArrays);
             }
         }
     }

@@ -17,12 +17,18 @@ import com.mongodb.log.parser.accumulator.AppNameConnectionStatsAccumulator;
 import com.mongodb.log.parser.accumulator.TwoPassDriverStatsAccumulator;
 import com.mongodb.log.parser.accumulator.ErrorCodeAccumulator;
 import com.mongodb.log.parser.accumulator.IndexStatsAccumulator;
+import com.mongodb.log.parser.accumulator.NodeStatsAccumulator;
 import com.mongodb.log.parser.accumulator.PlanCacheAccumulator;
 import com.mongodb.log.parser.accumulator.QueryHashAccumulator;
+import com.mongodb.log.parser.accumulator.ShardAccumulatorSet;
 import com.mongodb.log.parser.accumulator.SlowPlanningAccumulator;
+import com.mongodb.log.parser.accumulator.CommentTagAccumulator;
+import com.mongodb.log.parser.accumulator.TimelineAccumulator;
 import com.mongodb.log.parser.accumulator.TransactionAccumulator;
 
 class LogParserTask implements Callable<ProcessingStats> {
+	/** Log message id of "Replica set state transition" */
+	static final int REPL_STATE_TRANSITION_ID = 21358;
 	private static int connectionDebugCount = 0;
 	private List<String> linesChunk;
 	private final Accumulator accumulator;
@@ -42,6 +48,11 @@ class LogParserTask implements Callable<ProcessingStats> {
 	private final boolean redactQueries;
 	private final LogParser logParser;
 	private final LogQueryWriter logQueryWriter;
+	private final ShardAccumulatorSet shardTargets;
+	private final TimelineAccumulator timelineAccumulator;
+	private final NodeStatsAccumulator nodeStatsAccumulator;
+	private final NodeIdentity nodeIdentity;
+	private final CommentTagAccumulator commentTagAccumulator;
 
 	public LogParserTask(List<String> linesChunk, Accumulator accumulator,
 			PlanCacheAccumulator planCacheAccumulator, QueryHashAccumulator queryHashAccumulator,
@@ -54,7 +65,8 @@ class LogParserTask implements Callable<ProcessingStats> {
 			String currentFilename,
 			Map<String, AtomicLong> operationTypeStats, boolean debug,
 			Set<String> namespaceFilters, AtomicLong totalFilteredByNamespace, boolean redactQueries, LogParser logParser,
-			LogQueryWriter logQueryWriter) {
+			LogQueryWriter logQueryWriter, ShardAccumulatorSet shardTargets, TimelineAccumulator timelineAccumulator,
+			NodeStatsAccumulator nodeStatsAccumulator) {
 		this.linesChunk = linesChunk;
 		this.accumulator = accumulator;
 		this.planCacheAccumulator = planCacheAccumulator;
@@ -73,6 +85,81 @@ class LogParserTask implements Callable<ProcessingStats> {
 		this.redactQueries = redactQueries;
 		this.logParser = logParser;
 		this.logQueryWriter = logQueryWriter;
+		this.shardTargets = shardTargets;
+		this.timelineAccumulator = timelineAccumulator;
+		this.nodeStatsAccumulator = nodeStatsAccumulator;
+		this.nodeIdentity = NodeIdentity.fromFilename(currentFilename);
+		this.commentTagAccumulator = logParser.getCommentTagAccumulator();
+	}
+
+	/**
+	 * Record a parsed slow query in the global accumulators and, when shard tracking
+	 * is active for this file, in the shard's accumulators as well.
+	 */
+	private void recordSlowQuery(SlowQuery slowQuery, String currentLine, boolean isError, boolean includePlanCache) {
+		// Mirrored reads are real load on the secondary, but duplicates of the primary's application
+		// queries: count them as operations, keep them out of query shape, index and plan analysis
+		boolean mirrored = Boolean.TRUE.equals(slowQuery.mirrored);
+		boolean planCache = includePlanCache && !mirrored;
+		recordSlowQuery(slowQuery, currentLine, isError, accumulator,
+				mirrored ? null : queryHashAccumulator, mirrored ? null : indexStatsAccumulator,
+				planCache ? planCacheAccumulator : null);
+		if (shardTargets != null) {
+			recordSlowQuery(slowQuery, currentLine, isError, shardTargets.accumulator,
+					mirrored ? null : shardTargets.queryHashAccumulator, mirrored ? null : shardTargets.indexStatsAccumulator,
+					planCache ? shardTargets.planCacheAccumulator : null);
+		}
+
+		if (nodeStatsAccumulator != null) {
+			nodeStatsAccumulator.accumulate(nodeIdentity, slowQuery);
+		}
+
+		if (!mirrored && slowPlanningAccumulator != null && slowQuery.planningTimeMicros != null) {
+			synchronized (slowPlanningAccumulator) {
+				slowPlanningAccumulator.accumulate(slowQuery, currentLine);
+			}
+		}
+
+		if (timelineAccumulator != null) {
+			timelineAccumulator.accumulate(slowQuery);
+		}
+
+		commentTagAccumulator.accumulate(slowQuery);
+		logParser.getWriteKeysAccumulator().accumulate(slowQuery);
+	}
+
+	private static void recordSlowQuery(SlowQuery slowQuery, String currentLine, boolean isError,
+			Accumulator targetAccumulator, QueryHashAccumulator targetQueryHash,
+			IndexStatsAccumulator targetIndexStats, PlanCacheAccumulator targetPlanCache) {
+		synchronized (targetAccumulator) {
+			targetAccumulator.accumulate(slowQuery, currentLine, isError);
+		}
+
+		if (targetQueryHash != null) {
+			synchronized (targetQueryHash) {
+				targetQueryHash.accumulate(slowQuery, currentLine);
+			}
+		}
+
+		if (targetIndexStats != null) {
+			synchronized (targetIndexStats) {
+				targetIndexStats.accumulate(slowQuery);
+			}
+		}
+
+		// Plan cache only tracks queries with a plan cache key
+		if (targetPlanCache != null && slowQuery.planCacheKey != null) {
+			synchronized (targetPlanCache) {
+				targetPlanCache.accumulate(slowQuery, currentLine);
+			}
+		}
+	}
+
+	private void recordError(String codeName, Integer errorCode, String errorMessage) {
+		errorCodeAccumulator.accumulate(codeName, errorCode, errorMessage);
+		if (shardTargets != null) {
+			shardTargets.errorCodeAccumulator.accumulate(codeName, errorCode, errorMessage);
+		}
 	}
 
 	@Override
@@ -155,9 +242,23 @@ class LogParserTask implements Callable<ProcessingStats> {
 				continue;
 			}
 
+			// Replica set state transitions tell us each node's role over the window
+			if (jo.optInt("id") == REPL_STATE_TRANSITION_ID && attr.has("newState")) {
+				if (nodeStatsAccumulator != null) {
+					nodeStatsAccumulator.recordStateTransition(nodeIdentity, lineTimestamp, attr.getString("newState"));
+				}
+				continue;
+			}
+
+			currentTruncation = jo.optJSONObject("truncated");
 			Namespace ns = null;
 			SlowQuery slowQuery = new SlowQuery();
 			slowQuery.timestamp = lineTimestamp;
+			slowQuery.node = nodeIdentity.getNode();
+			if (attr.optBoolean("mirrored", false)) {
+				slowQuery.mirrored = true;
+			}
+			slowQuery.commentTag = CommentTag.fromAttr(attr);
 
 			// Check for INDEX operations first (TTL operations, index maintenance)
 			if (jo.has("c") && "INDEX".equals(jo.getString("c"))) {
@@ -165,14 +266,8 @@ class LogParserTask implements Callable<ProcessingStats> {
 					// Apply namespace filtering
 					if (!matchesNamespaceFilter(slowQuery.ns)) {
 						localFilteredByNamespace++;
+						commentTagAccumulator.recordNamespaceFiltered(getMetric(attr, "cpuNanos"));
 						continue;
-					}
-
-					synchronized (accumulator) {
-						accumulator.accumulate(null, slowQuery.opType.getType(), slowQuery.ns, slowQuery.durationMillis,
-							slowQuery.keysExamined, slowQuery.docsExamined, slowQuery.nreturned, slowQuery.reslen,
-							slowQuery.bytesRead, slowQuery.bytesWritten, slowQuery.writeConflicts, slowQuery.nShards,
-							currentLine, isError(attr), slowQuery.isChangeStream != null && slowQuery.isChangeStream, slowQuery.appName);
 					}
 
 					// Track appName connection stats
@@ -180,26 +275,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 						appNameConnectionStatsAccumulator.recordConnection(currentFilename, slowQuery.appName, ctx);
 					}
 
-					// Add to query hash accumulator
-					if (queryHashAccumulator != null) {
-			            synchronized (queryHashAccumulator) {
-			                queryHashAccumulator.accumulate(slowQuery, currentLine);
-			            }
-			        }
-
-					// Add to slow planning accumulator
-					if (slowPlanningAccumulator != null && slowQuery.planningTimeMicros != null) {
-			            synchronized (slowPlanningAccumulator) {
-			                slowPlanningAccumulator.accumulate(slowQuery, currentLine);
-			            }
-			        }
-
-					// Add to index stats accumulator
-					if (indexStatsAccumulator != null) {
-						synchronized (indexStatsAccumulator) {
-							indexStatsAccumulator.accumulate(slowQuery);
-						}
-					}
+					recordSlowQuery(slowQuery, currentLine, isError(attr), false);
 
 					if (logQueryWriter != null) {
 						logQueryWriter.writeIfMatching(slowQuery);
@@ -219,6 +295,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 					// Apply namespace filtering
 					if (!matchesNamespaceFilter(slowQuery.ns)) {
 						localFilteredByNamespace++;
+						commentTagAccumulator.recordNamespaceFiltered(getMetric(attr, "cpuNanos"));
 						continue;
 					}
 
@@ -229,46 +306,14 @@ class LogParserTask implements Callable<ProcessingStats> {
 					processStorageMetrics(attr, slowQuery);
 
 					slowQuery.durationMillis = getMetric(attr, "durationMillis");
-
-					synchronized (accumulator) {
-						accumulator.accumulate(null, slowQuery.opType.getType(), slowQuery.ns, slowQuery.durationMillis,
-							slowQuery.keysExamined, slowQuery.docsExamined, slowQuery.nreturned, slowQuery.reslen,
-							slowQuery.bytesRead, slowQuery.bytesWritten, slowQuery.writeConflicts, slowQuery.nShards,
-							currentLine, isError(attr), slowQuery.isChangeStream != null && slowQuery.isChangeStream, slowQuery.appName);
-					}
+					slowQuery.cpuNanos = getMetric(attr, "cpuNanos");
 
 					// Track appName connection stats
 					if (appNameConnectionStatsAccumulator != null && ctx != null) {
 						appNameConnectionStatsAccumulator.recordConnection(currentFilename, slowQuery.appName, ctx);
 					}
 
-					// Add to query hash accumulator
-					if (queryHashAccumulator != null) {
-						synchronized (queryHashAccumulator) {
-							queryHashAccumulator.accumulate(slowQuery, currentLine);
-						}
-					}
-
-					// Add to slow planning accumulator
-					if (slowPlanningAccumulator != null && slowQuery.planningTimeMicros != null) {
-						synchronized (slowPlanningAccumulator) {
-							slowPlanningAccumulator.accumulate(slowQuery, currentLine);
-						}
-					}
-
-					// Add to index stats accumulator
-					if (indexStatsAccumulator != null) {
-						synchronized (indexStatsAccumulator) {
-							indexStatsAccumulator.accumulate(slowQuery);
-						}
-					}
-
-					// Add to plan cache accumulator if enabled and has plan cache key
-					if (planCacheAccumulator != null && slowQuery.planCacheKey != null) {
-						synchronized (planCacheAccumulator) {
-							planCacheAccumulator.accumulate(slowQuery, currentLine);
-						}
-					}
+					recordSlowQuery(slowQuery, currentLine, isError(attr), true);
 
 					if (logQueryWriter != null) {
 						logQueryWriter.writeIfMatching(slowQuery);
@@ -295,6 +340,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 				// Apply namespace filtering
 				if (!matchesNamespaceFilter(ns)) {
 					localFilteredByNamespace++;
+					commentTagAccumulator.recordNamespaceFiltered(getMetric(attr, "cpuNanos"));
 					continue;
 				}
 
@@ -324,39 +370,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 
 					slowQuery.durationMillis = getMetric(attr, "durationMillis");
 
-					synchronized (accumulator) {
-						accumulator.accumulate(null, slowQuery.opType.getType(), slowQuery.ns, slowQuery.durationMillis,
-							slowQuery.keysExamined, slowQuery.docsExamined, slowQuery.nreturned, slowQuery.reslen,
-							slowQuery.bytesRead, slowQuery.bytesWritten, slowQuery.writeConflicts, slowQuery.nShards,
-							currentLine, isError(attr), slowQuery.isChangeStream != null && slowQuery.isChangeStream, slowQuery.appName);
-					}
-
-					if (queryHashAccumulator != null) {
-					    synchronized (queryHashAccumulator) {
-					        queryHashAccumulator.accumulate(slowQuery, currentLine);
-					    }
-					}
-
-					// Add to slow planning accumulator
-					if (slowPlanningAccumulator != null && slowQuery.planningTimeMicros != null) {
-					    synchronized (slowPlanningAccumulator) {
-					        slowPlanningAccumulator.accumulate(slowQuery, currentLine);
-					    }
-					}
-
-					// Add to index stats accumulator
-					if (indexStatsAccumulator != null) {
-						synchronized (indexStatsAccumulator) {
-							indexStatsAccumulator.accumulate(slowQuery);
-						}
-					}
-
-					// Add to plan cache accumulator if enabled and has plan cache key
-					if (planCacheAccumulator != null && slowQuery.planCacheKey != null) {
-						synchronized (planCacheAccumulator) {
-							planCacheAccumulator.accumulate(slowQuery, currentLine);
-						}
-					}
+					recordSlowQuery(slowQuery, currentLine, isError(attr), true);
 
 					if (logQueryWriter != null) {
 						logQueryWriter.writeIfMatching(slowQuery);
@@ -832,9 +846,36 @@ class LogParserTask implements Callable<ProcessingStats> {
 			slowQuery.nShards = getMetric(attr, "nShards");
 		}
 
+		if (attr.has("remoteOpWaitMillis")) {
+			slowQuery.remoteOpWaitMillis = getMetric(attr, "remoteOpWaitMillis");
+		}
+
 		if (attr.has("cpuNanos")) {
 			slowQuery.cpuNanos = getMetric(attr, "cpuNanos");
 		}
+	}
+
+	// Top-level "truncated" object of the current log line, describing elements the server left out
+	private JSONObject currentTruncation;
+
+	/**
+	 * Statements in a batched write: mongod logs the count (e.g. "updates": 978); mongos logs the
+	 * array, and for long lines truncates it, recording the left-out count under
+	 * truncated.command.truncated.<field>.omitted.
+	 */
+	private Long batchSize(JSONObject command, String field) {
+		Object value = command.opt(field);
+		if (value instanceof JSONArray) {
+			long logged = ((JSONArray) value).length();
+			JSONObject commandTruncation = currentTruncation != null ? currentTruncation.optJSONObject("command") : null;
+			JSONObject fields = commandTruncation != null ? commandTruncation.optJSONObject("truncated") : null;
+			JSONObject fieldTruncation = fields != null ? fields.optJSONObject(field) : null;
+			return fieldTruncation != null ? logged + fieldTruncation.optLong("omitted", 0) : logged;
+		}
+		if (value instanceof Number) {
+			return ((Number) value).longValue();
+		}
+		return null;
 	}
 
 	private boolean processCommandOperation(JSONObject command, JSONObject attr, SlowQuery slowQuery, Namespace ns) {
@@ -875,6 +916,8 @@ class LogParserTask implements Callable<ProcessingStats> {
 			if (updateVal instanceof String) {
 				ns.setCollectionName((String) updateVal);
 			}
+			// A write command carries a batch of statements; its log line is for the whole batch
+			slowQuery.batchSize = batchSize(command, "updates");
 			incrementOperationStat("update");
 			return true;
 
@@ -884,6 +927,8 @@ class LogParserTask implements Callable<ProcessingStats> {
 			if (insertVal instanceof String) {
 				ns.setCollectionName((String) insertVal);
 			}
+			// A write command carries a batch of statements; its log line is for the whole batch
+			slowQuery.batchSize = batchSize(command, "documents");
 			incrementOperationStat("insert");
 			return true;
 
@@ -893,6 +938,8 @@ class LogParserTask implements Callable<ProcessingStats> {
 			if (deleteVal instanceof String) {
 				ns.setCollectionName((String) deleteVal);
 			}
+			// A write command carries a batch of statements; its log line is for the whole batch
+			slowQuery.batchSize = batchSize(command, "deletes");
 			incrementOperationStat("delete");
 			return true;
 
@@ -1027,6 +1074,8 @@ class LogParserTask implements Callable<ProcessingStats> {
 
 		// Handle write operation metrics
 		if (attr.has("nMatched") || attr.has("nModified") || attr.has("nUpserted")) {
+			slowQuery.nMatched = getMetric(attr, "nMatched");
+			slowQuery.nModified = getMetric(attr, "nModified");
 			Long nModified = getMetric(attr, "nModified");
 			Long nUpserted = getMetric(attr, "nUpserted");
 			if (nModified != null) {
@@ -1045,6 +1094,13 @@ class LogParserTask implements Callable<ProcessingStats> {
 		if (attr.has("ninserted")) {
 			slowQuery.nreturned = getMetric(attr, "ninserted");
 		}
+
+		// Raw write counts and index keys touched, for index maintenance per write
+		slowQuery.nInserted = getMetric(attr, "ninserted");
+		slowQuery.nDeleted = getMetric(attr, "ndeleted");
+		slowQuery.nUpserted = getMetric(attr, "nUpserted");
+		slowQuery.keysInserted = getMetric(attr, "keysInserted");
+		slowQuery.keysDeleted = getMetric(attr, "keysDeleted");
 
 		// Extract write conflicts
 		slowQuery.writeConflicts = getMetric(attr, "writeConflicts");
@@ -1098,7 +1154,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 	            }
 	            
 	            if (codeName != null) {
-	                errorCodeAccumulator.accumulate(codeName, errorCode, errorMessage);
+	                recordError(codeName, errorCode, errorMessage);
 	            }
 	        }
 	        
@@ -1121,9 +1177,9 @@ class LogParserTask implements Callable<ProcessingStats> {
 	            }
 	            
 	            if (codeName != null) {
-	                errorCodeAccumulator.accumulate(codeName, errorCode, errorMessage);
+	                recordError(codeName, errorCode, errorMessage);
 	            } else if (errorCode != null) {
-	                errorCodeAccumulator.accumulate("Error" + errorCode, errorCode, errorMessage);
+	                recordError("Error" + errorCode, errorCode, errorMessage);
 	            }
 	        }
 	        
@@ -1137,7 +1193,7 @@ class LogParserTask implements Callable<ProcessingStats> {
 	                    contextInfo = "opId: " + attr.get("opId").toString();
 	                }
 	                
-	                errorCodeAccumulator.accumulate("InterruptedByClientDisconnect", null, 
+	                recordError("InterruptedByClientDisconnect", null, 
 	                    "Interrupted operation as its client disconnected" + 
 	                    (contextInfo != null ? " (" + contextInfo + ")" : ""));
 	            }
@@ -1206,6 +1262,13 @@ class LogParserTask implements Callable<ProcessingStats> {
 	                    transactionAccumulator.accumulate(txnRetryCounter, terminationCause, 
 	                        commitType, durationMillis, commitDurationMicros, 
 	                        timeActiveMicros, timeInactiveMicros);
+	                }
+	                if (shardTargets != null) {
+	                    synchronized (shardTargets.transactionAccumulator) {
+	                        shardTargets.transactionAccumulator.accumulate(txnRetryCounter, terminationCause,
+	                            commitType, durationMillis, commitDurationMicros,
+	                            timeActiveMicros, timeInactiveMicros);
+	                    }
 	                }
 	            }
 	        }

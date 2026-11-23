@@ -23,6 +23,27 @@ public class LogLineAccumulator {
     private long reslen = 0;
     private long bytesRead = 0;
     private long totalShards = 0;
+    private long mirroredCount = 0;
+    private long totalBatchStatements = 0;
+    private long batchCount = 0;
+    private long shardedOpCount = 0;
+    private long multiShardOpCount = 0;
+    private long maxShards = 0;
+
+    // CPU (cpuNanos); entries without cpuNanos are not counted
+    private long cpuCount = 0;
+    private long totalCpuNanos = 0;
+    private long maxCpuNanos = 0;
+
+    // mongos time spent waiting on shard responses (remoteOpWaitMillis)
+    private long totalRemoteOpWaitMs = 0;
+    private long remoteOpWaitCount = 0;
+
+    // Write matching (nMatched / nModified)
+    private long totalMatched = 0;
+    private long totalModified = 0;
+    private long matchedCount = 0;
+    private long maxMatched = 0;
     
     // Storage bytes tracking with min/max
     private long totalStorageBytesRead = 0;
@@ -113,6 +134,79 @@ public class LogLineAccumulator {
     public void addShards(Long nShards) {
         if (nShards != null) {
             this.totalShards += nShards;
+            this.shardedOpCount++;
+            if (nShards > 1) {
+                this.multiShardOpCount++;
+            }
+            if (nShards > maxShards) {
+                maxShards = nShards;
+            }
+        }
+    }
+
+    public void addBatchSize(Long batchSize) {
+        if (batchSize != null) {
+            totalBatchStatements += batchSize;
+            batchCount++;
+        }
+    }
+
+    /** Average statements per batched write command, or 0 when the operation isn't batched. */
+    public long getAvgBatchSize() {
+        return batchCount > 0 ? totalBatchStatements / batchCount : 0;
+    }
+
+    public void addMirrored(Boolean mirrored) {
+        if (Boolean.TRUE.equals(mirrored)) {
+            mirroredCount++;
+        }
+    }
+
+    public long getMirroredCount() {
+        return mirroredCount;
+    }
+
+    public void addCpu(Long cpuNanos) {
+        if (cpuNanos != null) {
+            cpuCount++;
+            totalCpuNanos += cpuNanos;
+            if (cpuNanos > maxCpuNanos) {
+                maxCpuNanos = cpuNanos;
+            }
+        }
+    }
+
+    /** Number of entries that logged cpuNanos. */
+    public long getCpuCount() {
+        return cpuCount;
+    }
+
+    public long getTotalCpuNanos() {
+        return totalCpuNanos;
+    }
+
+    /** Max cpuNanos; only meaningful when getCpuCount() > 0. */
+    public long getMaxCpuNanos() {
+        return maxCpuNanos;
+    }
+
+    public void addRemoteOpWait(Long remoteOpWaitMillis) {
+        if (remoteOpWaitMillis != null) {
+            this.totalRemoteOpWaitMs += remoteOpWaitMillis;
+            this.remoteOpWaitCount++;
+        }
+    }
+
+    public void addMatched(Long nMatched, Long nModified) {
+        if (nMatched != null) {
+            this.totalMatched += nMatched;
+            this.matchedCount++;
+            if (nMatched > maxMatched) {
+                maxMatched = nMatched;
+            }
+            if (nModified != null) {
+                this.totalModified += nModified;
+            }
         }
     }
     
@@ -226,8 +320,61 @@ public class LogLineAccumulator {
         return minStorageBytesWritten != Long.MAX_VALUE ? maxStorageBytesWritten : 0;
     }
     
+    public long getTotalWriteConflicts() {
+        return totalWriteConflicts;
+    }
+
     public long getAvgWriteConflicts() {
         return count > 0 ? totalWriteConflicts / count : 0;
+    }
+
+    public long getShardedOpCount() {
+        return shardedOpCount;
+    }
+
+    public double getAvgShardsExact() {
+        return shardedOpCount > 0 ? (double) totalShards / shardedOpCount : 0.0;
+    }
+
+    public double getMultiShardPercentage() {
+        return shardedOpCount > 0 ? multiShardOpCount * 100.0 / shardedOpCount : 0.0;
+    }
+
+    public long getMaxShards() {
+        return maxShards;
+    }
+
+    public long getRemoteOpWaitCount() {
+        return remoteOpWaitCount;
+    }
+
+    public long getTotalRemoteOpWaitMs() {
+        return totalRemoteOpWaitMs;
+    }
+
+    public long getAvgRemoteOpWaitMs() {
+        return remoteOpWaitCount > 0 ? totalRemoteOpWaitMs / remoteOpWaitCount : 0;
+    }
+
+    // Share of total execution time spent waiting on shards
+    public double getRemoteOpWaitPercentage() {
+        return total > 0 ? totalRemoteOpWaitMs * 100.0 / total : 0.0;
+    }
+
+    public long getMatchedCount() {
+        return matchedCount;
+    }
+
+    public long getAvgMatched() {
+        return matchedCount > 0 ? totalMatched / matchedCount : 0;
+    }
+
+    public long getAvgModified() {
+        return matchedCount > 0 ? totalModified / matchedCount : 0;
+    }
+
+    public long getMaxMatched() {
+        return maxMatched;
     }
     
     // Response length (reslen) getters
