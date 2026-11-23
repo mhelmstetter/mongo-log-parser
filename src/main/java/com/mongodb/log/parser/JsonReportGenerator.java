@@ -139,6 +139,28 @@ public class JsonReportGenerator {
         }
     }
 
+    /** Dirty bytes and flow-control / write-concern waits; only written when an operation logged them. */
+    private static void putWriteWaits(ObjectNode o, com.mongodb.log.parser.accumulator.WriteWaitStats w, long totalDurationMs) {
+        if (w.getDirtyOps() > 0) {
+            o.put("txnBytesDirtyOps", w.getDirtyOps());
+            o.put("avgTxnBytesDirty", w.getAvgDirtyBytes());
+            o.put("maxTxnBytesDirty", w.getMaxDirtyBytes());
+            o.put("totalTxnBytesDirty", w.getTotalDirtyBytes());
+        }
+        if (w.getFlowControlOps() > 0) {
+            o.put("flowControlOps", w.getFlowControlOps());
+            o.put("totalFlowControlWaitMs", w.getTotalFlowControlMicros() / 1000);
+            Double p = w.flowControlPercentOf(totalDurationMs);
+            if (p != null) o.put("flowControlWaitPercentage", Math.round(p * 10.0) / 10.0);
+        }
+        if (w.getWriteConcernOps() > 0) {
+            o.put("writeConcernOps", w.getWriteConcernOps());
+            o.put("totalWriteConcernWaitMs", w.getTotalWriteConcernMillis());
+            Double p = w.writeConcernPercentOf(totalDurationMs);
+            if (p != null) o.put("writeConcernWaitPercentage", Math.round(p * 10.0) / 10.0);
+        }
+    }
+
     private static JsonNode generateMaintenanceJson(MaintenanceAccumulator m) {
         ObjectNode out = mapper.createObjectNode();
         ArrayNode builds = mapper.createArrayNode();
@@ -417,8 +439,9 @@ public class JsonReportGenerator {
                     op.put("maxBytesRead", acc.getMaxBytesRead());
                     op.put("avgBytesWritten", acc.getAvgBytesWritten());
                     op.put("maxBytesWritten", acc.getMaxBytesWritten());
-                    op.put("avgWriteConflicts", acc.getAvgWriteConflicts());
+                    op.put("avgWriteConflicts", Math.round(acc.getAvgWriteConflicts() * 100.0) / 100.0);
                     op.put("totalWriteConflicts", acc.getTotalWriteConflicts());
+                    putWriteWaits(op, acc.getWriteWaits(), acc.getTotalDurationMs());
                     // CPU over the entries that logged cpuNanos (cpuCount); null when none did
                     op.put("cpuCount", acc.getCpuCount());
                     if (acc.getCpuCount() > 0) {
@@ -765,6 +788,7 @@ public class JsonReportGenerator {
                     query.put("maxBytesRead", entry.getMaxBytesRead());
                     query.put("avgBytesWritten", entry.getAvgBytesWritten());
                     query.put("maxBytesWritten", entry.getMaxBytesWritten());
+                    putWriteWaits(query, entry.getWriteWaits(), entry.getTotalDurationMs());
                     query.put("readPreference", entry.getReadPreferenceSummary());
                     query.put("readPreferenceTags", entry.getReadPreferenceTagsSummary());
                     query.put("planSummary", entry.getPlanSummary());

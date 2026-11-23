@@ -1317,10 +1317,12 @@ public class HtmlReportGenerator {
 		writer.println("                        " + generateTableHeader("mainOpsTable", 14, "Avg Shards", "number"));
 		writer.println("                        " + generateTableHeader("mainOpsTable", 15, "Avg Read", "number"));
 		writer.println("                        " + generateTableHeader("mainOpsTable", 16, "Max Read", "number"));
-		writer.println("                        " + generateTableHeader("mainOpsTable", 17, "Avg Write", "number"));
-		writer.println("                        " + generateTableHeader("mainOpsTable", 18, "Max Write", "number"));
-		writer.println("                        " + generateTableHeader("mainOpsTable", 19, "Avg Write Conflicts", "number"));
-		writer.println("                        " + generateTableHeader("mainOpsTable", 20, "Total Reslen (" + totalReslenUnit.getSuffix() + ")", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 17, "Avg Dirty", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 18, "Max Dirty", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 19, "Write Conflicts", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 20, "Flow Ctl Wait (s)", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 21, "WC Wait (s)", "number"));
+		writer.println("                        " + generateTableHeader("mainOpsTable", 22, "Total Reslen (" + totalReslenUnit.getSuffix() + ")", "number"));
 		writer.println("                    </tr>");
 		writer.println("                </thead>");
 		writer.println("                <tbody>");
@@ -1353,10 +1355,15 @@ public class HtmlReportGenerator {
 			writer.print("                        ");
 			writer.println(op.getFormattedMaxBytesReadCell());
 			writer.print("                        ");
-			writer.println(op.getFormattedAvgBytesWrittenCell());
+			writer.println(op.getAvgDirtyCell());
 			writer.print("                        ");
-			writer.println(op.getFormattedMaxBytesWrittenCell());
-			writer.println("                        <td class=\"number\">" + op.getFormattedAvgWriteConflicts() + "</td>");
+			writer.println(op.getMaxDirtyCell());
+			writer.print("                        ");
+			writer.println(op.getWriteConflictsCell());
+			writer.print("                        ");
+			writer.println(op.getFlowControlWaitCell());
+			writer.print("                        ");
+			writer.println(op.getWriteConcernWaitCell());
 			writer.println("                        <td class=\"bytes-cell\" data-sort-value=\"" + op.getTotalReslen() + "\">" + MainOperationEntry.formatBytesWithUnit(op.getTotalReslen(), totalReslenUnit) + "</td>");
 			writer.println("                    </tr>");
 			
@@ -1368,7 +1375,7 @@ public class HtmlReportGenerator {
 				boolean isTruncated = LogRedactionUtil.isLogMessageTruncated(op.getSampleLogMessage());
 				String logCssClass = isTruncated ? "log-sample truncated-query" : "log-sample";
 				writer.println("                    <tr id=\"" + rowId + "\" class=\"accordion-content\">");
-				writer.println("                        <td colspan=\"21\">");
+				writer.println("                        <td colspan=\"23\">");
 				writer.println("                            <div class=\"" + logCssClass + "\">");
 				if (isTruncated) {
 					writer.println("                                <div class=\"truncated-warning\">⚠ Query was truncated in MongoDB logs</div>");
@@ -1562,8 +1569,8 @@ public class HtmlReportGenerator {
 		writer.println("                        " + generateTableHeader("queryHashTable", 14, "Avg Shards", "number"));
 		writer.println("                        " + generateTableHeader("queryHashTable", 15, "Avg Read", "number"));
 		writer.println("                        " + generateTableHeader("queryHashTable", 16, "Max Read", "number"));
-		writer.println("                        " + generateTableHeader("queryHashTable", 17, "Avg Write", "number"));
-		writer.println("                        " + generateTableHeader("queryHashTable", 18, "Max Write", "number"));
+		writer.println("                        " + generateTableHeader("queryHashTable", 17, "Avg Dirty", "number"));
+		writer.println("                        " + generateTableHeader("queryHashTable", 18, "Max Dirty", "number"));
 		writer.println("                        " + generateTableHeader("queryHashTable", 19, "Read Preference", "string"));
 		writer.println("                        " + generateTableHeader("queryHashTable", 20, "Read Preference Tags", "string"));
 		writer.println("                        " + generateTableHeader("queryHashTable", 21, "Plan Summary", "string"));
@@ -1621,9 +1628,9 @@ public class HtmlReportGenerator {
 					writer.print("                        ");
 					writer.println(entry.getFormattedMaxBytesReadCell());
 					writer.print("                        ");
-					writer.println(entry.getFormattedAvgBytesWrittenCell());
+					writer.println(entry.getAvgDirtyCell());
 					writer.print("                        ");
-					writer.println(entry.getFormattedMaxBytesWrittenCell());
+					writer.println(entry.getMaxDirtyCell());
 					writer.println("                        <td class=\"truncated multiline\" title=\""
 					        + escapeHtml(entry.getReadPreferenceSummary().replace("<br>", ", ")) + "\">"
 					        + entry.getReadPreferenceSummaryTruncated(30) + "</td>");
