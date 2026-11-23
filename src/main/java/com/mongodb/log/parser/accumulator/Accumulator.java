@@ -169,6 +169,7 @@ public class Accumulator {
         accum.addMatched(slowQuery.nMatched, slowQuery.nModified);
         accum.addMirrored(slowQuery.mirrored);
         accum.addBatchSize(slowQuery.batchSize);
+        accum.addWriteWaits(slowQuery);
     }
 
     public LogLineAccumulator getAccumulator(AccumulatorKey key) {

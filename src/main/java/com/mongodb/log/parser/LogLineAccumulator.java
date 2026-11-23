@@ -55,6 +55,9 @@ public class LogLineAccumulator {
     
     // Write conflicts tracking
     private long totalWriteConflicts = 0;
+
+    // Dirty bytes, flow-control and write-concern waits on writes
+    private final com.mongodb.log.parser.accumulator.WriteWaitStats writeWaits = new com.mongodb.log.parser.accumulator.WriteWaitStats();
     
     // Error count tracking
     private long errorCount = 0;
@@ -324,8 +327,21 @@ public class LogLineAccumulator {
         return totalWriteConflicts;
     }
 
-    public long getAvgWriteConflicts() {
-        return count > 0 ? totalWriteConflicts / count : 0;
+    /** Write conflicts per operation, as a decimal (an integer average hid anything below one per op). */
+    public double getAvgWriteConflicts() {
+        return count > 0 ? (double) totalWriteConflicts / count : 0.0;
+    }
+
+    public void addWriteWaits(com.mongodb.log.parser.SlowQuery q) {
+        writeWaits.add(q);
+    }
+
+    public com.mongodb.log.parser.accumulator.WriteWaitStats getWriteWaits() {
+        return writeWaits;
+    }
+
+    public long getTotalDurationMs() {
+        return total;
     }
 
     public long getShardedOpCount() {

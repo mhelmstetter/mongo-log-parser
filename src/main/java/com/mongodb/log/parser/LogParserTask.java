@@ -1101,6 +1101,11 @@ class LogParserTask implements Callable<ProcessingStats> {
 		slowQuery.nUpserted = getMetric(attr, "nUpserted");
 		slowQuery.keysInserted = getMetric(attr, "keysInserted");
 		slowQuery.keysDeleted = getMetric(attr, "keysDeleted");
+		slowQuery.writeConcernWaitMillis = getMetric(attr, "waitForWriteConcernDurationMillis");
+		JSONObject flowControl = attr.optJSONObject("flowControl");
+		if (flowControl != null) {
+			slowQuery.flowControlWaitMicros = getMetric(flowControl, "timeAcquiringMicros");
+		}
 
 		// Extract write conflicts
 		slowQuery.writeConflicts = getMetric(attr, "writeConflicts");
@@ -1119,6 +1124,10 @@ class LogParserTask implements Callable<ProcessingStats> {
 					}
 				}
 				
+				JSONObject storageData = storage.optJSONObject("data");
+				if (storageData != null && storageData.has("txnBytesDirty")) {
+					slowQuery.txnBytesDirty = getMetric(storageData, "txnBytesDirty");
+				}
 				if (storage.has("bytesWritten")) {
 					slowQuery.bytesWritten = getMetric(storage, "bytesWritten");
 				} else if (storage.has("data")) {

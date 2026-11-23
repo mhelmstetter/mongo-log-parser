@@ -31,7 +31,10 @@ public class MainOperationEntry {
     private long maxBytesRead;
     private long avgBytesWritten;
     private long maxBytesWritten;
-    private long avgWriteConflicts;
+    private double avgWriteConflicts;
+    private long totalWriteConflicts;
+    private com.mongodb.log.parser.accumulator.WriteWaitStats writeWaits;
+    private long totalDurationMs;
     private String sampleLogMessage;
     private boolean hasCollScan;
     private boolean isMirrored;
@@ -75,6 +78,9 @@ public class MainOperationEntry {
         this.avgBytesWritten = accumulator.getAvgBytesWritten();
         this.maxBytesWritten = accumulator.getMaxBytesWritten();
         this.avgWriteConflicts = accumulator.getAvgWriteConflicts();
+        this.totalWriteConflicts = accumulator.getTotalWriteConflicts();
+        this.writeWaits = accumulator.getWriteWaits();
+        this.totalDurationMs = accumulator.getTotalDurationMs();
         this.sampleLogMessage = accumulator.getSampleLogMessage();
         this.isMirrored = (accumulator.getSampleLogMessage() != null &&
                           accumulator.getSampleLogMessage().contains("\"mirrored\":true"));
@@ -262,11 +268,11 @@ public class MainOperationEntry {
         this.maxBytesWritten = maxBytesWritten;
     }
 
-    public long getAvgWriteConflicts() {
+    public double getAvgWriteConflicts() {
         return avgWriteConflicts;
     }
 
-    public void setAvgWriteConflicts(long avgWriteConflicts) {
+    public void setAvgWriteConflicts(double avgWriteConflicts) {
         this.avgWriteConflicts = avgWriteConflicts;
     }
 
@@ -445,8 +451,37 @@ public class MainOperationEntry {
     /**
      * Returns the formatted average write conflicts with thousands separator
      */
-    public String getFormattedAvgWriteConflicts() {
-        return String.format("%,d", avgWriteConflicts);
+    /** Total write conflicts, with the per-operation rate in the tooltip; blank when there were none. */
+    public String getWriteConflictsCell() {
+        String shown = totalWriteConflicts > 0 ? String.format("%,d", totalWriteConflicts) : "";
+        return "<td class=\"number\" data-sort-value=\"" + totalWriteConflicts + "\" title=\""
+                + String.format("%.2f per op", avgWriteConflicts) + "\">" + shown + "</td>";
+    }
+
+    public String getAvgDirtyCell() {
+        long v = writeWaits.getAvgDirtyBytes();
+        return "<td class=\"number\" data-sort-value=\"" + v + "\" title=\"over " + writeWaits.getDirtyOps()
+                + " ops that logged txnBytesDirty\">" + (writeWaits.getDirtyOps() > 0 ? formatBytes(v) : "") + "</td>";
+    }
+
+    public String getMaxDirtyCell() {
+        long v = writeWaits.getMaxDirtyBytes();
+        return "<td class=\"number\" data-sort-value=\"" + v + "\">" + (writeWaits.getDirtyOps() > 0 ? formatBytes(v) : "") + "</td>";
+    }
+
+    /** Total wait in seconds, with its share of the operations' total duration in the tooltip; blank when none. */
+    private String waitCell(long waitMs, long ops) {
+        String pct = totalDurationMs > 0 ? String.format("%.0f%% of duration", 100.0 * waitMs / totalDurationMs) : "no duration";
+        return "<td class=\"number\" data-sort-value=\"" + waitMs + "\" title=\"" + pct + ", " + ops + " ops\">"
+                + (waitMs > 0 ? String.format("%,.1f", waitMs / 1000.0) : "") + "</td>";
+    }
+
+    public String getFlowControlWaitCell() {
+        return waitCell(writeWaits.getTotalFlowControlMicros() / 1000, writeWaits.getFlowControlOps());
+    }
+
+    public String getWriteConcernWaitCell() {
+        return waitCell(writeWaits.getTotalWriteConcernMillis(), writeWaits.getWriteConcernOps());
     }
 
     // New field getters

@@ -38,6 +38,9 @@ public class SlowQuery {
 	public Long nUpserted = null;
 	public Long keysInserted = null;
 	public Long keysDeleted = null;
+	public Long txnBytesDirty = null;
+	public Long flowControlWaitMicros = null;
+	public Long writeConcernWaitMillis = null;
 	// Mirrored reads are sent by a primary to secondaries to warm their caches
 	public Boolean mirrored = null;
 	// Statements in a batched write command (updates/documents/deletes array length)

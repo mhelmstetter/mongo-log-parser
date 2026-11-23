@@ -33,6 +33,7 @@ public class QueryHashAccumulatorEntry {
     private long totalStorageBytesRead = 0;
     private long minStorageBytesRead = Long.MAX_VALUE;
     private long maxStorageBytesRead = Long.MIN_VALUE;
+    private final WriteWaitStats writeWaits = new WriteWaitStats();
     private long totalStorageBytesWritten = 0;
     private long minStorageBytesWritten = Long.MAX_VALUE;
     private long maxStorageBytesWritten = Long.MIN_VALUE;
@@ -156,6 +157,7 @@ public class QueryHashAccumulatorEntry {
             }
         }
         
+        writeWaits.add(slowQuery);
         if (slowQuery.bytesWritten != null) {
             totalStorageBytesWritten += slowQuery.bytesWritten;
             if (slowQuery.bytesWritten > maxStorageBytesWritten) {
@@ -410,6 +412,20 @@ public class QueryHashAccumulatorEntry {
 
     public long getTotalReturned() {
         return totalReturned;
+    }
+
+    public WriteWaitStats getWriteWaits() {
+        return writeWaits;
+    }
+
+    public String getAvgDirtyCell() {
+        long v = writeWaits.getAvgDirtyBytes();
+        return "<td class=\"number\" data-sort-value=\"" + v + "\">" + (writeWaits.getDirtyOps() > 0 ? formatBytes(v) : "") + "</td>";
+    }
+
+    public String getMaxDirtyCell() {
+        long v = writeWaits.getMaxDirtyBytes();
+        return "<td class=\"number\" data-sort-value=\"" + v + "\">" + (writeWaits.getDirtyOps() > 0 ? formatBytes(v) : "") + "</td>";
     }
 
     public long getTotalDurationMs() {
