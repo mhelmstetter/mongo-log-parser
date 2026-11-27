@@ -1960,10 +1960,12 @@ public class HtmlReportGenerator {
 				+ sec1(c.otherUnanalyzedCpuNanos) + " s in other lines not analyzed as operations."
 				+ (c.unparsedCpuLines > 0 ? " " + NUMBER_FORMAT.format(c.unparsedCpuLines) + " lines had a cpuNanos value that could not be parsed and are not counted." : "")
 				+ "</p>");
-		writer.println("        <p>Tags come from the operation's comment: <code>command.comment</code>, then <code>filter/query.$comment</code>, then (getMore) <code>originatingCommand</code>. "
+		writer.println("        <p>Tags come from the operation's comment: <code>command.comment</code>, then <code>filter/query.$comment</code>, then <code>$comment</code> in the first <code>$match</code> of an aggregate pipeline "
+				+ "(at top level or inside a top-level <code>$and</code>/<code>$or</code>), then the same on (getMore) <code>originatingCommand</code>. "
 				+ "App tags are length-prefixed (<code>7:code_ns,...</code>); proxy tags (<code>origin_uri=&lt;pod&gt;-mongobetween;...</code>) carry no application origin, so they are shown as "
-				+ escapeHtml(CommentTag.PROXY_ONLY) + " with the pod's deployment. Operations without a comment are " + escapeHtml(CommentTag.UNTAGGED)
-				+ "; comments that are not strings or match neither format are " + escapeHtml(CommentTag.UNRECOGNIZED) + ". "
+				+ escapeHtml(CommentTag.PROXY_ONLY) + " with the pod's deployment. Other comments are shown as <code>comment:&lt;text&gt;</code> with UUIDs, hex ids and numbers replaced, so per-request ids group together. "
+				+ "Operations without a comment are " + escapeHtml(CommentTag.UNTAGGED)
+				+ "; comments that are not strings, or malformed length-prefixed ones, are " + escapeHtml(CommentTag.UNRECOGNIZED) + ". "
 				+ "CPU % of Duration is computed over entries that logged both cpuNanos and durationMillis.</p>");
 
 		java.util.List<String[]> sourceRows = new java.util.ArrayList<>();

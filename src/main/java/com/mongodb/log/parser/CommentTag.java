@@ -7,23 +7,30 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 /**
- * Application tag carried in an operation's comment, in one of two formats:
+ * Application tag carried in an operation's comment:
  * <ul>
  * <li>App length-prefixed: {@code 7:code_ns,7:billing,8:code_fqn,...} — repeated
  * {@code <len>:<text>} tokens separated by commas, alternating key, value.</li>
  * <li>Proxy (mongobetween): {@code origin_uri=<pod>-mongobetween;query_shape_hash=<h>} — the origin is
- * reported as the pod's deployment, labeled as a proxy-only tag.</li>
+ * reported as the pod's deployment, labeled as a proxy-only tag. Other {@code key=value;...} comments
+ * report their origin_uri, or are treated as text when they have none.</li>
+ * <li>Free text (status TEXT): reported as {@code comment:<normalized text>}, where per whitespace token
+ * UUIDs become {@code <uuid>}, numbers / versions / timestamps {@code <n>}, and hex ids of 8+ characters
+ * with a digit {@code <hex>}, so per-request ids group into one tag.</li>
  * </ul>
- * The comment is taken from attr.command (comment, then filter.$comment / query.$comment), and only
- * when absent there from attr.originatingCommand (getMore). A comment that is not a string or matches
- * neither format is reported as unrecognized, never guessed.
+ * The comment is taken from attr.command: comment, then filter/query $comment, then $comment in the first
+ * $match stage of an aggregate pipeline ($comment at the top level of a filter or $match, or in an element
+ * of a top-level $and / $or); only when absent there, from attr.originatingCommand (getMore) the same way.
+ * A comment that is not a string, or that starts like the length-prefixed form but doesn't parse, is
+ * reported as unrecognized, never guessed.
  */
 public final class CommentTag {
 
-    public enum Status { TAGGED, UNTAGGED, UNRECOGNIZED }
+    public enum Status { TAGGED, TEXT, UNTAGGED, UNRECOGNIZED }
 
     public static final String UNTAGGED = "(untagged)";
     public static final String UNRECOGNIZED = "(unrecognized comment format)";
@@ -33,6 +40,11 @@ public final class CommentTag {
 
     private static final Pattern KV_FORMAT = Pattern.compile("^[a-z_]+=.*", Pattern.DOTALL);
     private static final Pattern MONGOBETWEEN_POD = Pattern.compile("(.+)-[0-9a-f]{8,10}-[a-z0-9]{5}-mongobetween");
+    private static final Pattern LENGTH_PREFIXED_START = Pattern.compile("^\\d+:.*", Pattern.DOTALL);
+    private static final Pattern UUID = Pattern.compile("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
+    private static final Pattern NUM_TOKEN = Pattern.compile("[vV]?\\d[\\dTZ._:+-]*");
+    private static final Pattern HEX_TOKEN = Pattern.compile("(?=[0-9a-fA-F]*\\d)[0-9a-fA-F]{8,}");
+    private static final int MAX_TEXT = 80;
 
     public final Status status;
     public final String originUri;
@@ -80,27 +92,93 @@ public final class CommentTag {
             return new Found(cmd.get("comment"));
         }
         for (String key : new String[] { "filter", "query" }) {
-            Object f = cmd.opt(key);
-            if (f instanceof JSONObject && ((JSONObject) f).has("$comment")) {
-                return new Found(((JSONObject) f).get("$comment"));
+            Found f = commentInFilter(cmd.opt(key));
+            if (f != null) {
+                return f;
+            }
+        }
+        Object pipeline = cmd.opt("pipeline");
+        if (pipeline instanceof JSONArray && ((JSONArray) pipeline).length() > 0) {
+            Object first = ((JSONArray) pipeline).opt(0);
+            if (first instanceof JSONObject) {
+                return commentInFilter(((JSONObject) first).opt("$match"));
             }
         }
         return null;
     }
 
-    /** Parse a comment string; returns an UNRECOGNIZED tag when it matches neither format. */
+    /** $comment at the top level of a filter / $match, or in an element of a top-level $and / $or. */
+    private static Found commentInFilter(Object fObj) {
+        if (!(fObj instanceof JSONObject)) {
+            return null;
+        }
+        JSONObject f = (JSONObject) fObj;
+        if (f.has("$comment")) {
+            return new Found(f.get("$comment"));
+        }
+        for (String op : new String[] { "$and", "$or" }) {
+            Object arr = f.opt(op);
+            if (arr instanceof JSONArray) {
+                for (int i = 0; i < ((JSONArray) arr).length(); i++) {
+                    Object el = ((JSONArray) arr).opt(i);
+                    if (el instanceof JSONObject && ((JSONObject) el).has("$comment")) {
+                        return new Found(((JSONObject) el).get("$comment"));
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Free-text comment with per-request ids replaced, per whitespace token. */
+    static String normalizeText(String s) {
+        StringBuilder out = new StringBuilder();
+        for (String tok : s.trim().split("\\s+")) {
+            if (tok.isEmpty()) {
+                continue;
+            }
+            tok = UUID.matcher(tok).replaceAll("<uuid>");
+            if (NUM_TOKEN.matcher(tok).matches()) {
+                tok = "<n>";
+            } else if (HEX_TOKEN.matcher(tok).matches()) {
+                tok = "<hex>";
+            }
+            if (out.length() > 0) {
+                out.append(' ');
+            }
+            out.append(tok);
+        }
+        String r = out.toString();
+        return r.length() > MAX_TEXT ? r.substring(0, MAX_TEXT) : r;
+    }
+
+    private static CommentTag text(String comment, String source) {
+        return new CommentTag(Status.TEXT, "comment:" + normalizeText(comment), NO_CODE_FQN, source);
+    }
+
+    /** Parse a comment string. A malformed length-prefixed comment is UNRECOGNIZED; other free text is TEXT. */
     public static CommentTag parse(String comment, String source) {
-        Map<String, String> fields = KV_FORMAT.matcher(comment).matches() ? parseKv(comment) : parseLengthPrefixed(comment);
+        if (KV_FORMAT.matcher(comment).matches()) {
+            Map<String, String> kv = parseKv(comment);
+            if (kv == null) {
+                return text(comment, source);
+            }
+            String pod = kv.get("origin_uri");
+            if (pod == null) {
+                return text(comment, source);
+            }
+            Matcher m = MONGOBETWEEN_POD.matcher(pod);
+            if (m.matches()) {
+                return new CommentTag(Status.TAGGED, PROXY_ONLY + " deployment=" + m.group(1), PROXY_ONLY, source);
+            }
+            return new CommentTag(Status.TAGGED, pod, kv.containsKey("code_fqn") ? kv.get("code_fqn") : NO_CODE_FQN, source);
+        }
+        if (!LENGTH_PREFIXED_START.matcher(comment).matches()) {
+            return text(comment, source);
+        }
+        Map<String, String> fields = parseLengthPrefixed(comment);
         if (fields == null) {
             return new CommentTag(Status.UNRECOGNIZED, UNRECOGNIZED, UNRECOGNIZED, source);
-        }
-        if (KV_FORMAT.matcher(comment).matches()) {
-            String pod = fields.get("origin_uri");
-            Matcher m = pod != null ? MONGOBETWEEN_POD.matcher(pod) : null;
-            if (m == null || !m.matches()) {
-                return new CommentTag(Status.UNRECOGNIZED, UNRECOGNIZED, UNRECOGNIZED, source);
-            }
-            return new CommentTag(Status.TAGGED, PROXY_ONLY + " deployment=" + m.group(1), PROXY_ONLY, source);
         }
         String origin = fields.containsKey("origin_uri") ? fields.get("origin_uri") : NO_ORIGIN_URI;
         String fqn = fields.containsKey("code_fqn") ? fields.get("code_fqn") : NO_CODE_FQN;
